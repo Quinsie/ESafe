@@ -1,0 +1,135 @@
+KESCO 전기재해위험지수 관리시스템 개발자 온보딩 상세
+작성일: 2026-03-12
+
+1. 시스템 한 줄 요약
+- Python으로 위험 분석 결과를 만들고, Oracle/H2에 적재한 뒤, Spring MVC + MyBatis + JSP로 조회하는 하이브리드 구조다.
+
+2. 기술 스택
+- 분석/전처리
+  - Python
+  - pandas, geopandas, shapely 계열
+- 웹/API
+  - Java 8 타깃
+  - Spring MVC
+  - MyBatis
+  - JSP + jQuery
+- 실행 환경
+  - Tomcat 8.5.x
+  - JDK 11
+  - Maven 3.9.x
+  - H2 / Oracle
+- 지도
+  - VWorld 2D 타일 + OpenLayers
+  - VWorld 3D
+
+3. 핵심 디렉터리
+- `api`
+  - 웹 애플리케이션 본체
+- `db`
+  - Oracle 스키마/뷰/적재용 SQL 및 배치 스크립트
+- `설비데이터`
+  - 일반용/자가용 설비 CSV
+- `사업소별 분석결과`
+  - 본부/사업소 단위 최종 분석 결과 CSV/SHP
+- `기상특보`
+  - 기상 경보 수집/가공 스크립트와 CSV
+
+4. 처음 봐야 할 코드
+- `api\src\main\java\egovframework\com\risk\web\RiskCombinedController.java`
+  - 목록/상세/요약/지도 API 진입점
+- `api\src\main\resources\egovframework\sqlmap\risk\RiskCombined_SQL.xml`
+  - 실제 조회 SQL과 지도용 쿼리
+- `api\src\main\java\egovframework\com\risk\service\impl\RiskCombinedServiceImpl.java`
+  - 설비 상세 복원 등 서비스 로직
+- `api\src\main\webapp\resources\js\risk-nationwide-risk-map.js`
+  - 전국 위험지도 프론트 로직
+- `api\src\main\java\egovframework\com\risk\util\RiskMapPolygonResolver.java`
+  - 사업소 분석 SHP에서 건물 폴리곤을 읽어 지도 응답에 붙이는 유틸
+
+5. 오늘 기준 반드시 알아야 할 변경점
+- H2 데이터 범위가 소규모 샘플이 아니라 `광주전남본부직할` 전체 건물 217,241건 기준으로 확장되어 있다.
+- 설비 이력도 전량 적재 상태다.
+  - 총 2,064,816건
+- 지도의 등급 기준은 이제 `종합점수(COMBINED_SCORE)` 기준이다.
+  - 건물 상세의 `종합`과 맞춰야 한다.
+- 지도는 줌 단계에 따라 구역/건물 포인트/건물 폴리곤을 나눠 조회한다.
+- 지도 체크박스 필터는 `riskCdList=A~E`를 서버로 넘겨 현재 선택 등급만 조회한다.
+
+6. 전국 위험지도 구조
+- JSP
+  - `api\src\main\webapp\WEB-INF\jsp\risk\nationwideRiskMap.jsp`
+- JS
+  - `api\src\main\webapp\resources\js\risk-nationwide-risk-map.js`
+- CSS
+  - `api\src\main\webapp\resources\css\risk-common.css`
+- 백엔드 API
+  - `selectRiskMapDistrictLayer.do`
+  - `selectRiskMapBuildingLayer.do`
+  - `selectRiskMapBuildingPolygonLayer.do`
+- 줌 기준
+  - 줌 14 미만: 구역 레이어
+  - 줌 14 이상: 건물 포인트
+  - 줌 16 이상: 건물 폴리곤
+- 현재 상한
+  - 건물 포인트 20,000
+  - 건물 폴리곤 1,500
+
+7. 설비 데이터 구조
+- 원본 파일
+  - `설비데이터\광주전남 일반용 점검 데이터_정제.csv`
+  - `설비데이터\광주전남 자가용 검사 데이터_정제.csv`
+- 주소 정제 로직
+  - `clean_facility_addresses.py`
+- H2 재생성 스크립트
+  - `api\scripts\regenerate_h2_full_branch_data.py`
+  - `api\scripts\regenerate_h2_full_facility_history.py`
+  - `api\scripts\regenerate_h2_facility_history.py`
+- 현재 상세 화면의 `rawJson`
+  - DB CLOB 전량 저장이 아니라
+  - 설비 상세 조회 시 원본 CSV에서 찾아 동적으로 복원한다.
+
+8. H2/Oracle 실행 방식
+- H2
+  - `api\scripts\start-tomcat-h2.ps1`
+- Oracle
+  - `api\scripts\start-tomcat-oracle.ps1`
+- DB 프로필 전환
+  - `api\scripts\switch-db-profile.ps1`
+
+9. 로컬 기본 실행값
+- Tomcat
+  - `%USERPROFILE%\dev\apache-tomcat-8.5.100`
+- JDK
+  - `%USERPROFILE%\dev\jdk-11.0.25+9`
+- Maven
+  - `%USERPROFILE%\dev\apache-maven-3.9.9\bin\mvn.cmd`
+- 기본 로그인
+  - 관리자: `localadmin / LocalAdmin123`
+  - 사용자: `localuser / LocalUser123`
+
+10. 오늘 작업 기준 확인 포인트
+- `RiskCombined_SQL.xml`
+  - 지도 쿼리가 `COMBINED_SCORE`, `COMBINED_RISK_CD` 기준인지
+- `RiskCombinedController.java`
+  - 지도 max rows, 필터 파라미터, alias 정규화 반영 여부
+- `risk-nationwide-risk-map.js`
+  - 체크박스 필터
+  - bbox 조회
+  - 포인트/폴리곤 전환
+  - 커스텀 줌 컨트롤
+  - 휠 줌 처리
+- `risk-common.css`
+  - 지도 색상과 줌 버튼 스타일
+
+11. 자주 생기는 실수
+- H2에서만 되는 코드를 Oracle까지 자동으로 된다고 가정하는 것
+- 지도 등급 기준을 `TOTAL_SCORE`로 착각하는 것
+- 설비 이력 적재 수가 원본 행 수보다 큰 이유를 주소 중복 건물 매핑 때문이라는 점을 놓치는 것
+- 캐시 때문에 이전 JS를 보고 있는데 서버 문제로 오인하는 것
+
+12. 권장 작업 순서
+1. H2로 서버 기동
+2. `riskDashboard.do`, `riskBuildingList.do`, `riskNationwideRiskMap.do` 확인
+3. `RiskCombinedController`와 `RiskCombined_SQL.xml` 읽기
+4. 설비 적재 스크립트와 원본 CSV 구조 확인
+5. Oracle 반영이 필요하면 `db` SQL과 실행 스크립트까지 같이 본다.

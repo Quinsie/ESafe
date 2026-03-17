@@ -1,0 +1,121 @@
+KESCO 프로젝트 키 / 환경변수 / 실행 기본값 정리
+작성일: 2026-03-12
+
+0. 원칙
+- 이 문서는 “무슨 값이 필요한지”, “어디서 읽는지”, “기본값이 무엇인지”를 정리한 문서다.
+- 실제 비밀값 자체는 가능하면 별도 보안 저장소나 로컬 환경변수로 관리하는 것이 좋다.
+
+1. VWorld 관련
+- 키 이름
+  - `risk.map.vworld.apiKey`
+- 사용 위치
+  - `api\src\main\resources\egovframework\spring\risk-db-h2.properties`
+  - `api\src\main\resources\egovframework\spring\risk-db-oracle.properties`
+  - `api\src\main\resources\egovframework\spring\risk-db.properties`
+- 사용 화면
+  - 건물 상세 3D 지도
+  - 전국 전기재해위험지도
+- 주입 경로
+  - `RiskViewController`가 JSP로 전달
+- 비고
+  - 환경변수 방식이 아니라 Spring property 파일에서 읽는 구조다.
+
+2. 기상청 인증키
+- 환경변수 이름
+  - `KMA_AUTH_KEY`
+- 사용 위치
+  - `api\scripts\start-tomcat-h2.ps1`
+  - `api\scripts\start-tomcat-oracle.ps1`
+  - Java 서비스의 기상 갱신 로직
+  - 기상 경보 수집 Python 스크립트
+- 역할
+  - 기상 특보 조회
+  - 기상 점수 산정용 데이터 갱신
+- 전달 방식
+  - Tomcat 시작 시 process env로 읽고
+  - 필요 시 `-Dkma.auth.key=...` 시스템 프로퍼티로 전달
+
+3. 기상 특보 구역 매핑 파일
+- 환경변수 이름
+  - `RISK_ALERT_ZONE_FILE`
+- 사용 위치
+  - `api\scripts\start-tomcat-h2.ps1`
+  - `api\scripts\start-tomcat-oracle.ps1`
+- 역할
+  - 기상 특보 구역 매핑 CSV를 외부 파일로 강제 지정
+- 기본 동작
+  - 값이 없으면 classpath fallback 사용
+  - fallback 경로: `egovframework/spring/alert-zones.csv`
+
+4. 로그인 계정 override
+- 관리자
+  - `RISK_ADMIN_USERNAME`
+  - `RISK_ADMIN_PASSWORD`
+- 일반 사용자
+  - `RISK_USER_USERNAME`
+  - `RISK_USER_PASSWORD`
+- 기본값
+  - 관리자: `localadmin / LocalAdmin123`
+  - 사용자: `localuser / LocalUser123`
+- 사용 위치
+  - `api\scripts\start-tomcat-h2.ps1`
+  - `api\scripts\start-tomcat-oracle.ps1`
+
+5. Java / Tomcat / Maven 실행 경로
+- `JAVA_HOME`
+  - 기본 fallback: `%USERPROFILE%\dev\jdk-11.0.25+9`
+- `CATALINA_HOME`
+  - 기본 fallback: `%USERPROFILE%\dev\apache-tomcat-8.5.100`
+- `MAVEN_HOME`
+  - 존재 시 `%MAVEN_HOME%\bin\mvn.cmd` 사용
+- `M2_HOME`
+  - 존재 시 `%M2_HOME%\bin\mvn.cmd` 사용
+- Maven fallback
+  - `%USERPROFILE%\dev\apache-maven-3.9.9\bin\mvn.cmd`
+
+6. DB 관련 Spring property
+- 공통 키
+  - `risk.db.driver`
+  - `risk.db.url`
+  - `risk.db.username`
+  - `risk.db.password`
+  - `risk.db.init.enabled`
+- H2 파일
+  - `api\src\main\resources\egovframework\spring\risk-db-h2.properties`
+- Oracle 파일
+  - `api\src\main\resources\egovframework\spring\risk-db-oracle.properties`
+- 현재 기본 선택 파일
+  - `api\src\main\resources\egovframework\spring\risk-db.properties`
+
+7. 현재 실행 스크립트에서 직접 다루는 시스템 프로퍼티
+- `spring.profiles.active`
+- `risk.security.admin.username`
+- `risk.security.admin.password`
+- `risk.security.user.username`
+- `risk.security.user.password`
+- `kma.auth.key`
+- `risk.weather.alert.zone.file`
+
+8. 오늘 작업 기준 운영상 중요한 설정 포인트
+- 전국 위험지도는 `COMBINED_SCORE / COMBINED_RISK_CD` 기준으로 동작한다.
+- 지도 등급 필터는 프론트 체크박스와 `riskCdList` 파라미터로 연결된다.
+- 지도 대량 조회 상한
+  - 포인트 20,000
+  - 폴리곤 1,500
+- 설비 상세 원본 데이터는 CSV 파일을 참조하므로
+  - 원본 CSV 경로/파일 유지가 중요하다.
+
+9. 관련 주요 파일
+- `api\scripts\start-tomcat-h2.ps1`
+- `api\scripts\start-tomcat-oracle.ps1`
+- `api\src\main\resources\egovframework\spring\risk-db-h2.properties`
+- `api\src\main\resources\egovframework\spring\risk-db-oracle.properties`
+- `api\src\main\resources\egovframework\spring\risk-db.properties`
+- `api\src\main\java\egovframework\com\risk\view\RiskViewController.java`
+
+10. 권장 관리 방식
+- 실제 키 값은 txt 문서에 고정하지 말고
+  - 로컬 환경변수
+  - 별도 보안 메모
+  - 배포 서버 secret 관리 방식
+  중 하나로 관리하는 것을 권장한다.

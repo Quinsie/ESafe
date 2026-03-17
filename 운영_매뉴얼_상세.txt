@@ -1,0 +1,111 @@
+KESCO 전기재해위험지수 관리시스템 운영 매뉴얼 상세
+작성일: 2026-03-12
+
+1. 운영 대상 요약
+- 웹 애플리케이션은 Tomcat에서 WAR 형태로 실행된다.
+- 개발 검증은 H2, 실제 운영 적재 검증은 Oracle 기준이다.
+- 현재 H2 검증 데이터는 `광주전남본부직할` 전체 적재 상태다.
+
+2. 현재 H2 기준 적재 상태
+- 건물
+  - 217,241건
+- 설비 이력 총계
+  - 2,064,816건
+  - 일반용 2,023,433건
+  - 자가용 41,383건
+- 지도 기준 점수
+  - `종합점수(COMBINED_SCORE)` 사용
+
+3. 기동 절차
+- H2 기동
+  - `C:\Users\user\Downloads\kescoaitest\api\scripts\start-tomcat-h2.ps1`
+- Oracle 기동
+  - `C:\Users\user\Downloads\kescoaitest\api\scripts\start-tomcat-oracle.ps1`
+- 기본 포트
+  - `18080`
+- 주요 URL
+  - 로그인: `http://localhost:18080/login.do`
+  - 대시보드: `http://localhost:18080/riskDashboard.do`
+  - 전국 위험지도: `http://localhost:18080/riskNationwideRiskMap.do`
+
+4. 기본 로그인 계정
+- 관리자
+  - `localadmin / LocalAdmin123`
+- 일반 사용자
+  - `localuser / LocalUser123`
+
+5. 전국 위험지도 운영 포인트
+- 체크박스 필터
+  - 안전, 관심, 주의, 경고, 위험 선택 가능
+- 점수 기준
+  - 건물 상세의 `종합` 점수/등급과 동일
+- 지도 레이어 단계
+  - 줌 14 미만: 구역 레이어
+  - 줌 14 이상: 건물 포인트
+  - 줌 16 이상: 건물 폴리곤
+- 표시 상한
+  - 포인트 20,000
+  - 폴리곤 1,500
+- 색상 기준
+  - 안전: 초록
+  - 관심: 파랑
+  - 주의: 노랑
+  - 경고: 주황
+  - 위험: 빨강
+
+6. 설비 이력 운영 포인트
+- 설비 주소는 2026-03-12 기준 정제 반영 상태다.
+- `-0` 번지 제거 등 주소 정리 후 적재했다.
+- 설비 상세의 원본 컬럼 표는 DB CLOB이 아니라 원본 CSV에서 동적으로 복원한다.
+- 원본 CSV가 변경되면 상세 `rawJson` 내용도 달라질 수 있으므로, CSV 변경 시 적재 스크립트와 함께 검증해야 한다.
+
+7. 오늘 반영된 운영상 중요 변경
+- 본부직할 전체 분석결과 CSV 기반 H2 재생성
+- 설비 전량 적재
+- 설비 주소 정제 반영
+- 전국 위험지도 종합점수 기준 전환
+- 위험지도 등급 체크박스 필터 추가
+- 건물 폴리곤 레이어 추가
+- 줌 버튼 커스텀 스타일 및 휠 줌 보강
+
+8. 운영 점검 체크리스트
+- 서버 기동 후 로그인 페이지가 HTTP 200인지 확인
+- 관리자 로그인 가능 여부 확인
+- 건물 목록 조회 가능 여부 확인
+- 건물 상세에서 종합 점수와 설비 이력 노출 확인
+- 설비 상세에서 원본 컬럼 표가 보이는지 확인
+- 전국 위험지도에서
+  - 등급 필터가 동작하는지
+  - 줌 단계별로 구역/포인트/폴리곤이 바뀌는지
+  - 색상과 외곽선이 정상인지
+
+9. 장애 대응 힌트
+- 지도 레이어가 안 보이면
+  - JS 캐시 문제부터 의심
+  - `Ctrl+F5` 강력 새로고침
+  - `nationwideRiskMap.jsp`의 JS 버전값 확인
+- 지도 등급이 이상하면
+  - `RiskCombined_SQL.xml`에서 `COMBINED_SCORE / COMBINED_RISK_CD` 기준 유지 여부 확인
+- 설비 상세 rawJson이 비면
+  - 원본 CSV 파일 경로와 파일 존재 여부 확인
+- H2 기동이 오래 걸리면
+  - 대용량 시드 적재 중일 수 있으므로 1~2분 이상 대기
+
+10. 주요 운영 파일
+- 기동 스크립트
+  - `api\scripts\start-tomcat-h2.ps1`
+  - `api\scripts\start-tomcat-oracle.ps1`
+- 지도
+  - `api\src\main\webapp\WEB-INF\jsp\risk\nationwideRiskMap.jsp`
+  - `api\src\main\webapp\resources\js\risk-nationwide-risk-map.js`
+  - `api\src\main\webapp\resources\css\risk-common.css`
+- 설비/H2 재생성
+  - `api\scripts\regenerate_h2_full_branch_data.py`
+  - `api\scripts\regenerate_h2_full_facility_history.py`
+  - `clean_facility_addresses.py`
+
+11. 일일 종료 전 권장 확인
+- 서버가 정상 기동 중인지
+- 오늘 변경한 CSV/SQL/JS/JSP 문서화가 끝났는지
+- H2 기준 검증 결과와 실제 적재 범위를 메모했는지
+- 다음 작업자가 바로 이어받을 수 있게 스크립트와 기준 파일 경로가 정리되어 있는지

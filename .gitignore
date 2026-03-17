@@ -1,0 +1,90 @@
+﻿# =========================
+# Local/Generated Artifacts
+# =========================
+*.log
+*.tmp
+*.bak
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# IDE / editor
+.vscode/
+.idea/
+*.iml
+.classpath
+.project
+.settings/
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Java build outputs
+api/target/
+*.class
+*.war
+
+# Local DB files
+*.mv.db
+*.trace.db
+
+# Local runtime (Tomcat 등)
+dev/
+
+# =========================
+# Data (do not upload)
+# =========================
+# 대용량 원본/보조 데이터
+건물연령/
+홍수위험/
+산사태위험/
+침수흔적도/
+용도지역지구/
+전기화재이력/
+
+# 분석 파이프라인 입력/출력 데이터
+설비데이터/
+사업소별 분석결과/
+지역별 분석결과/
+분석결과/
+보고서/
+통계분석/
+
+# 기상특보 디렉터리 내 데이터 산출물만 제외 (스크립트는 유지)
+기상특보/*.csv
+기상특보/*.html
+기상특보/__pycache__/
+
+# GIS 파일 확장자(루트/기타 경로에 생기는 산출물 방지)
+*.shp
+*.shx
+*.dbf
+*.prj
+*.cpg
+*.sbn
+*.sbx
+*.fix
+
+# Archives
+*.zip
+*.z01
+
+# Local credential notes
+LOCAL_TEST_LOGIN.txt
+# API local scratch files
+api/.tmp*
+api/.m2/
+api/.mvn-local-settings.xml
+
+# Root/local scratch helpers
+_tmp*.py

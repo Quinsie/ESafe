@@ -1,0 +1,488 @@
+﻿<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="RiskCombined">
+
+    <!-- Shared search conditions -->
+    <sql id="searchCondition">
+        <where>
+            <if test="branchNm != null and branchNm != ''">
+                AND (<include refid="normalizedBranchCase"/>) = #{branchNm}
+            </if>
+            <if test="branchNmList != null and branchNmList.size() > 0">
+                AND (<include refid="normalizedBranchCase"/>) IN
+                <foreach collection="branchNmList" item="bn" open="(" separator="," close=")">
+                    #{bn}
+                </foreach>
+            </if>
+            <if test="regionNm != null and regionNm != ''">
+                AND v.REGION_NM = #{regionNm}
+            </if>
+            <if test="districtNm != null and districtNm != ''">
+                AND v.DISTRICT_NM = #{districtNm}
+            </if>
+            <if test="riskCd != null and riskCd != ''">
+                AND v.RISK_CD = #{riskCd}
+            </if>
+            <if test="combinedRiskCd != null and combinedRiskCd != ''">
+                AND v.COMBINED_RISK_CD = #{combinedRiskCd}
+            </if>
+            <if test="gradeChangedYn != null and gradeChangedYn != ''">
+                AND v.GRADE_CHANGED_YN = #{gradeChangedYn}
+            </if>
+            <if test="searchKeyword != null and searchKeyword != ''">
+                AND (v.A13 LIKE '%' || #{searchKeyword} || '%'
+                  OR (<include refid="normalizedAddrExpr"/>) LIKE '%' || #{searchKeyword} || '%')
+            </if>
+        </where>
+    </sql>
+
+    <sql id="normalizedAddrExpr">
+        v.ADDR
+    </sql>
+
+    <sql id="normalizedBranchCase">
+        v.BRANCH_NM
+    </sql>
+
+    <sql id="hqNameCase">
+        COALESCE(
+            (SELECT MAX(m.HQ_NM)
+               FROM TB_BRANCH_HQ_MAP m
+              WHERE REPLACE(TRIM(m.BRANCH_NM), ' ', '') = REPLACE(TRIM((<include refid="normalizedBranchCase"/>)), ' ', '')
+                AND m.USE_YN = 'Y'),
+            v.REGION_NM
+        )
+    </sql>
+
+    <!-- Building list count -->
+    <select id="selectCombinedListCnt" parameterType="egovframework.com.risk.vo.RiskSearchVO" resultType="int">
+        SELECT COUNT(*) FROM VW_RISK_COMBINED v
+        <include refid="searchCondition"/>
+    </select>
+
+    <!-- Building list (paged) -->
+    <select id="selectCombinedList" parameterType="egovframework.com.risk.vo.RiskSearchVO"
+            resultType="egovframework.com.risk.vo.RiskCombinedVO">
+        SELECT
+            v.BLDG_SEQ          AS bldgSeq,
+            <include refid="normalizedBranchCase"/> AS branchNm,
+            v.A0                AS a0,
+            v.A13               AS a13,
+            v.A17               AS a17,
+            v.A19               AS a19,
+            v.A17               AS structureName,
+            v.A19               AS mainUseName,
+            v.REGION_NM         AS regionNm,
+            v.DISTRICT_NM       AS districtNm,
+            <include refid="normalizedAddrExpr"/> AS addr,
+            v.TOTAL_SCORE       AS totalScore,
+            v.TOTAL_GRADE       AS totalGrade,
+            v.RISK_CD           AS riskCd,
+            v.FACILITY_RISK_SCORE AS facilityRiskScore,
+            v.WEATHER_SCORE     AS weatherScore,
+            v.WILDFIRE_SCORE    AS wildfireScore,
+            v.COMBINED_SCORE    AS combinedScore,
+            v.COMBINED_RISK_CD  AS combinedRiskCd,
+            v.COMBINED_GRADE_NM AS combinedGradeNm,
+            v.GRADE_CHANGED_YN  AS gradeChangedYn,
+            v.APPLIED_ALERTS    AS appliedAlerts
+        FROM VW_RISK_COMBINED v
+        <include refid="searchCondition"/>
+        ORDER BY v.COMBINED_SCORE DESC
+        OFFSET #{firstIndex} ROWS FETCH NEXT #{pageSize} ROWS ONLY
+    </select>
+
+    <!-- Building detail -->
+    <select id="selectCombinedDetail" parameterType="long"
+            resultType="egovframework.com.risk.vo.RiskCombinedVO">
+        SELECT
+            v.BLDG_SEQ          AS bldgSeq,
+            <include refid="normalizedBranchCase"/> AS branchNm,
+            v.A0                AS a0,
+            v.A13               AS a13,
+            v.REGION_NM         AS regionNm,
+            v.DISTRICT_NM       AS districtNm,
+            v.REGION_CD         AS regionCd,
+            <include refid="normalizedAddrExpr"/> AS addr,
+            v.LON               AS lon,
+            v.LAT               AS lat,
+            v.BUILD_YEAR        AS buildYear,
+            v.BUILD_AGE         AS buildAge,
+            v.A24               AS completionDate,
+            v.AGE_GRADE         AS ageGrade,
+            v.AGE_SCORE         AS ageScore,
+            v.FLOOD_GRADE       AS floodGrade,
+            v.FLOOD_SCORE       AS floodScore,
+            v.LANDSLIDE_DIST    AS landslideDistance,
+            v.LANDSLIDE_GRADE   AS landslideGrade,
+            v.LANDSLIDE_SCORE   AS landslideScore,
+            v.FIRE_SCORE        AS fireScore,
+            v.PREV_FIRE_OCCUR_DATE AS prevFireOccurDate,
+            v.LAND_USE_SCORE    AS landUseScore,
+            v.FACILITY_RISK_SCORE AS facilityRiskScore,
+            v.TOTAL_SCORE       AS totalScore,
+            v.TOTAL_GRADE       AS totalGrade,
+            v.RISK_CD           AS riskCd,
+            v.RISK_DATE         AS riskDate,
+            v.WEATHER_SCORE     AS weatherScore,
+            v.WILDFIRE_SCORE    AS wildfireScore,
+            v.APPLIED_ALERTS    AS appliedAlerts,
+            v.COMBINED_SCORE    AS combinedScore,
+            v.COMBINED_RISK_CD  AS combinedRiskCd,
+            v.COMBINED_GRADE_NM AS combinedGradeNm,
+            v.GRADE_CHANGED_YN  AS gradeChangedYn,
+            v.ANAL_DATE         AS analDate
+        FROM VW_RISK_COMBINED v
+        WHERE v.BLDG_SEQ = #{bldgSeq}
+    </select>
+
+    <!-- Grade stats (before vs after weather/facility integration) -->
+    <select id="selectGradeStats" resultType="egovframework.com.risk.vo.RiskCombinedVO">
+        SELECT
+            'BEFORE'            AS totalGrade,
+            v.RISK_CD           AS riskCd,
+            COUNT(*)            AS bldgCnt
+        FROM VW_RISK_COMBINED v
+        GROUP BY v.RISK_CD
+        UNION ALL
+        SELECT
+            'AFTER'             AS totalGrade,
+            v.COMBINED_RISK_CD  AS riskCd,
+            COUNT(*)            AS bldgCnt
+        FROM VW_RISK_COMBINED v
+        GROUP BY v.COMBINED_RISK_CD
+        ORDER BY totalGrade, riskCd
+    </select>
+
+    <!-- HQ summary -->
+        <select id="selectHqSummary" resultType="egovframework.com.risk.vo.RiskCombinedVO">
+        SELECT
+            <include refid="hqNameCase"/> AS branchNm,
+            COUNT(*) AS bldgCnt,
+            ROUND(AVG(v.COMBINED_SCORE), 2) AS avgCombinedScore,
+            MAX(v.COMBINED_SCORE) AS maxCombinedScore,
+            SUM(CASE WHEN v.COMBINED_RISK_CD = 'E' THEN 1 ELSE 0 END) AS gradeE,
+            SUM(CASE WHEN v.COMBINED_RISK_CD = 'D' THEN 1 ELSE 0 END) AS gradeD,
+            SUM(CASE WHEN v.COMBINED_RISK_CD = 'C' THEN 1 ELSE 0 END) AS gradeC,
+            SUM(CASE WHEN v.COMBINED_RISK_CD = 'B' THEN 1 ELSE 0 END) AS gradeB,
+            SUM(CASE WHEN v.COMBINED_RISK_CD = 'A' THEN 1 ELSE 0 END) AS gradeA,
+            SUM(CASE WHEN v.COMBINED_RISK_CD IN ('D','E') THEN 1 ELSE 0 END) AS dangerCnt
+        FROM VW_RISK_COMBINED v
+        GROUP BY <include refid="hqNameCase"/>
+        ORDER BY dangerCnt DESC
+    </select>
+
+    <!-- Branch summary -->
+    <select id="selectBranchSummary" resultType="egovframework.com.risk.vo.RiskCombinedVO">
+        SELECT
+            <include refid="normalizedBranchCase"/> AS branchNm,
+            COUNT(*)            AS bldgCnt,
+            ROUND(AVG(v.TOTAL_SCORE), 2)    AS avgTotalScore,
+            ROUND(AVG(v.WEATHER_SCORE), 2)  AS avgWeatherScore,
+            ROUND(AVG(v.COMBINED_SCORE), 2) AS avgCombinedScore,
+            MAX(v.COMBINED_SCORE)           AS maxCombinedScore,
+            SUM(CASE WHEN v.COMBINED_RISK_CD = 'E' THEN 1 ELSE 0 END) AS gradeE,
+            SUM(CASE WHEN v.COMBINED_RISK_CD = 'D' THEN 1 ELSE 0 END) AS gradeD,
+            SUM(CASE WHEN v.COMBINED_RISK_CD = 'C' THEN 1 ELSE 0 END) AS gradeC,
+            SUM(CASE WHEN v.COMBINED_RISK_CD = 'B' THEN 1 ELSE 0 END) AS gradeB,
+            SUM(CASE WHEN v.COMBINED_RISK_CD = 'A' THEN 1 ELSE 0 END) AS gradeA,
+            SUM(CASE WHEN v.COMBINED_RISK_CD IN ('D','E') THEN 1 ELSE 0 END) AS dangerCnt
+        FROM VW_RISK_COMBINED v
+        GROUP BY <include refid="normalizedBranchCase"/>
+        ORDER BY avgCombinedScore DESC
+    </select>
+
+    <!-- Region summary -->
+    <select id="selectRegionSummary" resultType="egovframework.com.risk.vo.RiskCombinedVO">
+        SELECT
+            v.REGION_NM         AS regionNm,
+            COUNT(*)            AS bldgCnt,
+            ROUND(AVG(v.TOTAL_SCORE), 2)    AS avgTotalScore,
+            ROUND(AVG(v.WEATHER_SCORE), 2)  AS avgWeatherScore,
+            ROUND(AVG(v.COMBINED_SCORE), 2) AS avgCombinedScore,
+            MAX(v.COMBINED_SCORE)           AS maxCombinedScore,
+            SUM(CASE WHEN v.COMBINED_RISK_CD = 'E' THEN 1 ELSE 0 END) AS gradeE,
+            SUM(CASE WHEN v.COMBINED_RISK_CD = 'D' THEN 1 ELSE 0 END) AS gradeD,
+            SUM(CASE WHEN v.COMBINED_RISK_CD = 'C' THEN 1 ELSE 0 END) AS gradeC,
+            SUM(CASE WHEN v.COMBINED_RISK_CD = 'B' THEN 1 ELSE 0 END) AS gradeB,
+            SUM(CASE WHEN v.COMBINED_RISK_CD = 'A' THEN 1 ELSE 0 END) AS gradeA,
+            SUM(CASE WHEN v.COMBINED_RISK_CD IN ('D','E') THEN 1 ELSE 0 END) AS dangerCnt
+        FROM VW_RISK_COMBINED v
+        GROUP BY v.REGION_NM
+        ORDER BY avgCombinedScore DESC
+    </select>
+
+    <!-- Region + district summary -->
+    <select id="selectRegionDistrictSummary" resultType="egovframework.com.risk.vo.RiskCombinedVO">
+        SELECT
+            v.REGION_NM         AS regionNm,
+            v.DISTRICT_NM       AS districtNm,
+            COUNT(*)            AS bldgCnt,
+            ROUND(AVG(v.COMBINED_SCORE), 2) AS avgCombinedScore,
+            MAX(v.COMBINED_SCORE)           AS maxCombinedScore,
+            SUM(CASE WHEN v.COMBINED_RISK_CD = 'E' THEN 1 ELSE 0 END) AS gradeE,
+            SUM(CASE WHEN v.COMBINED_RISK_CD = 'D' THEN 1 ELSE 0 END) AS gradeD,
+            SUM(CASE WHEN v.COMBINED_RISK_CD = 'C' THEN 1 ELSE 0 END) AS gradeC,
+            SUM(CASE WHEN v.COMBINED_RISK_CD = 'B' THEN 1 ELSE 0 END) AS gradeB,
+            SUM(CASE WHEN v.COMBINED_RISK_CD = 'A' THEN 1 ELSE 0 END) AS gradeA,
+            SUM(CASE WHEN v.COMBINED_RISK_CD IN ('D','E') THEN 1 ELSE 0 END) AS dangerCnt
+        FROM VW_RISK_COMBINED v
+        GROUP BY v.REGION_NM, v.DISTRICT_NM
+        ORDER BY v.REGION_NM, avgCombinedScore DESC
+    </select>
+
+    <!-- Grade-changed buildings -->
+    <select id="selectGradeChangedList" resultType="egovframework.com.risk.vo.RiskCombinedVO">
+        SELECT
+            v.BLDG_SEQ          AS bldgSeq,
+            v.A0                AS a0,
+            v.A13               AS a13,
+            v.REGION_NM         AS regionNm,
+            v.DISTRICT_NM       AS districtNm,
+            <include refid="normalizedAddrExpr"/> AS addr,
+            v.TOTAL_SCORE       AS totalScore,
+            v.WEATHER_SCORE     AS weatherScore,
+            v.COMBINED_SCORE    AS combinedScore,
+            v.RISK_CD           AS riskCd,
+            v.COMBINED_RISK_CD  AS combinedRiskCd,
+            v.APPLIED_ALERTS    AS appliedAlerts
+        FROM VW_RISK_COMBINED v
+        WHERE v.GRADE_CHANGED_YN = 'Y'
+        ORDER BY v.COMBINED_SCORE DESC
+    </select>
+    <select id="selectLatestFacilityHistory" parameterType="long"
+            resultType="egovframework.com.risk.vo.RiskFacilityHistoryVO">
+        SELECT
+            h.FACILITY_TYPE AS facilityType,
+            h.BRANCH_NM AS branchNm,
+            h.ADDR AS addr,
+            h.KEPCO_CUST_NO AS kepcoCustNo,
+            h.RESULT_TEXT AS resultText,
+            h.ORAL_NOTICE_YN AS oralNoticeYn,
+            h.FAIL_DETAIL AS failDetail,
+            h.LINE_NO AS lineNo,
+            h.CAPACITY AS capacity,
+            h.CHECK_CYCLE AS checkCycle,
+            h.CONTRACT_TYPE AS contractType,
+            h.DEFECT_CNT AS defectCnt,
+            h.MOTOR_TYPE AS motorType,
+            TO_CHAR(h.CHECK_DT, 'YYYY-MM-DD') AS checkDt,
+            h.HIST_SEQ AS histSeq
+        FROM (
+            SELECT
+                'GENERAL' AS FACILITY_TYPE,
+                g.BRANCH_NM,
+                g.ADDR,
+                g.KEPCO_CUST_NO,
+                g.CHECK_RESULT AS RESULT_TEXT,
+                g.ORAL_NOTICE_YN,
+                g.NONCONFORMITY_DETAIL AS FAIL_DETAIL,
+                g.LINE_NO,
+                g.CAPACITY,
+                g.CHECK_CYCLE,
+                g.CONTRACT_TYPE,
+                NULL AS DEFECT_CNT,
+                NULL AS MOTOR_TYPE,
+                g.CHECK_DT,
+                g.HIST_SEQ,
+                ROW_NUMBER() OVER (
+                    PARTITION BY g.BLDG_SEQ, COALESCE(g.KEPCO_CUST_NO, '__NULL__')
+                    ORDER BY g.CHECK_DT DESC, g.REG_DT DESC, g.HIST_SEQ DESC
+                ) AS RN
+            FROM TB_FACILITY_GENERAL_HIST g
+            WHERE g.BLDG_SEQ = #{bldgSeq}
+
+            UNION ALL
+
+            SELECT
+                'SELF' AS FACILITY_TYPE,
+                s.BRANCH_NM,
+                s.ADDR,
+                s.KEPCO_CUST_NO,
+                s.INSPECTION_RESULT AS RESULT_TEXT,
+                NULL AS ORAL_NOTICE_YN,
+                s.FAIL_DETAIL AS FAIL_DETAIL,
+                NULL AS LINE_NO,
+                NULL AS CAPACITY,
+                NULL AS CHECK_CYCLE,
+                NULL AS CONTRACT_TYPE,
+                s.DEFECT_CNT AS DEFECT_CNT,
+                s.MOTOR_TYPE AS MOTOR_TYPE,
+                s.CHECK_DT,
+                s.HIST_SEQ,
+                ROW_NUMBER() OVER (
+                    PARTITION BY s.BLDG_SEQ, COALESCE(s.KEPCO_CUST_NO, '__NULL__')
+                    ORDER BY s.CHECK_DT DESC, s.REG_DT DESC, s.HIST_SEQ DESC
+                ) AS RN
+            FROM TB_FACILITY_SELF_HIST s
+            WHERE s.BLDG_SEQ = #{bldgSeq}
+        ) h
+        WHERE h.RN = 1
+        ORDER BY
+            CASE WHEN h.FACILITY_TYPE = 'GENERAL' THEN 1 ELSE 2 END,
+            h.CHECK_DT DESC,
+            h.KEPCO_CUST_NO
+    </select>
+    <select id="selectFacilityHistoryDetail" parameterType="map" resultType="map">
+        <choose>
+            <when test="facilityType != null and facilityType.toUpperCase() == 'GENERAL'">
+                SELECT
+                    'GENERAL' AS facilityType,
+                    g.HIST_SEQ AS histSeq,
+                    g.BLDG_SEQ AS bldgSeq,
+                    g.BRANCH_NM AS branchNm,
+                    g.ADDR AS addr,
+                    g.KEPCO_CUST_NO AS kepcoCustNo,
+                    g.CHECK_RESULT AS resultText,
+                    g.ORAL_NOTICE_YN AS oralNoticeYn,
+                    g.NONCONFORMITY_DETAIL AS failDetail,
+                    g.LINE_NO AS lineNo,
+                    g.CAPACITY AS capacity,
+                    g.CHECK_CYCLE AS checkCycle,
+                    g.CONTRACT_TYPE AS contractType,
+                    TO_CHAR(g.CHECK_DT, 'YYYY-MM-DD') AS checkDt,
+                    g.RAW_JSON AS rawJson
+                FROM TB_FACILITY_GENERAL_HIST g
+                WHERE g.HIST_SEQ = #{histSeq}
+            </when>
+            <otherwise>
+                SELECT
+                    'SELF' AS facilityType,
+                    s.HIST_SEQ AS histSeq,
+                    s.BLDG_SEQ AS bldgSeq,
+                    s.BRANCH_NM AS branchNm,
+                    s.ADDR AS addr,
+                    s.KEPCO_CUST_NO AS kepcoCustNo,
+                    s.INSPECTION_RESULT AS resultText,
+                    s.FAIL_DETAIL AS failDetail,
+                    s.DEFECT_CNT AS defectCnt,
+                    s.MOTOR_TYPE AS motorType,
+                    TO_CHAR(s.CHECK_DT, 'YYYY-MM-DD') AS checkDt,
+                    s.RAW_JSON AS rawJson
+                FROM TB_FACILITY_SELF_HIST s
+                WHERE s.HIST_SEQ = #{histSeq}
+            </otherwise>
+        </choose>
+    </select>
+
+    <!-- D/E grade export list -->
+    <select id="selectDangerBuildingExportList" parameterType="egovframework.com.risk.vo.RiskSearchVO"
+            resultType="map">
+        SELECT
+            <include refid="hqNameCase"/> AS "hqNm",
+            <include refid="normalizedBranchCase"/> AS "branchNm",
+            v.A13 AS "bldgNm",
+            <include refid="normalizedAddrExpr"/> AS "addr",
+            v.TOTAL_SCORE AS "baseScore",
+            v.RISK_CD AS "baseGrade",
+            v.COMBINED_SCORE AS "combinedScore",
+            v.COMBINED_RISK_CD AS "combinedGrade",
+            v.WEATHER_SCORE AS "weatherScore"
+        FROM VW_RISK_COMBINED v
+        <where>
+            AND v.COMBINED_RISK_CD IN ('D', 'E')
+            <if test="hqNm != null and hqNm != ''">
+                AND (<include refid="hqNameCase"/>) = #{hqNm}
+            </if>
+            <if test="branchNm != null and branchNm != ''">
+                AND (<include refid="normalizedBranchCase"/>) = #{branchNm}
+            </if>
+            <if test="regionNm != null and regionNm != ''">
+                AND v.REGION_NM = #{regionNm}
+            </if>
+            <if test="districtNm != null and districtNm != ''">
+                AND v.DISTRICT_NM = #{districtNm}
+            </if>
+        </where>
+        ORDER BY v.COMBINED_SCORE DESC
+    </select>
+    <!-- Nationwide risk map: district-level summary layer (combined score / grade) -->
+    <select id="selectRiskMapDistrictLayer" parameterType="map" resultType="map">
+        SELECT
+            v.REGION_NM AS regionNm,
+            v.DISTRICT_NM AS districtNm,
+            v.REGION_CD AS regionCd,
+            COUNT(*) AS bldgCnt,
+            ROUND(AVG(v.COMBINED_SCORE), 2) AS avgScore,
+            MAX(v.COMBINED_SCORE) AS maxScore,
+            ROUND(AVG(v.LON), 6) AS centerLon,
+            ROUND(AVG(v.LAT), 6) AS centerLat,
+            CASE
+                WHEN AVG(v.COMBINED_SCORE) >= 40 THEN 'E'
+                WHEN AVG(v.COMBINED_SCORE) >= 30 THEN 'D'
+                WHEN AVG(v.COMBINED_SCORE) >= 20 THEN 'C'
+                WHEN AVG(v.COMBINED_SCORE) >= 10 THEN 'B'
+                ELSE 'A'
+            END AS riskCd,
+            CASE
+                WHEN AVG(v.COMBINED_SCORE) >= 40 THEN 'DANGER'
+                WHEN AVG(v.COMBINED_SCORE) >= 30 THEN 'WARNING'
+                WHEN AVG(v.COMBINED_SCORE) >= 20 THEN 'CAUTION'
+                WHEN AVG(v.COMBINED_SCORE) >= 10 THEN 'INTEREST'
+                ELSE 'SAFE'
+            END AS riskLabel
+        FROM VW_RISK_COMBINED v
+        WHERE (<include refid="normalizedBranchCase"/>) = #{branchNm}
+        GROUP BY v.REGION_NM, v.DISTRICT_NM, v.REGION_CD
+        ORDER BY avgScore DESC
+    </select>
+
+
+    <!-- Nationwide risk map: building-level point layer (combined score / grade) -->
+    <select id="selectRiskMapBuildingLayer" parameterType="map" resultType="map">
+        SELECT q.*
+        FROM (
+            SELECT
+                v.BLDG_SEQ AS bldgSeq,
+                <include refid="normalizedBranchCase"/> AS branchNm,
+                v.REGION_NM AS regionNm,
+                v.DISTRICT_NM AS districtNm,
+                v.REGION_CD AS regionCd,
+                v.A13 AS bldgNm,
+                <include refid="normalizedAddrExpr"/> AS addr,
+                v.LON AS lon,
+                v.LAT AS lat,
+                v.TOTAL_SCORE AS baseScore,
+                v.TOTAL_GRADE AS baseGrade,
+                v.RISK_CD AS baseRiskCd,
+                v.COMBINED_SCORE AS totalScore,
+                v.COMBINED_SCORE AS combinedScore,
+                v.COMBINED_GRADE_NM AS totalGrade,
+                v.COMBINED_GRADE_NM AS combinedGradeNm,
+                v.COMBINED_RISK_CD AS riskCd,
+                v.COMBINED_RISK_CD AS combinedRiskCd,
+                COUNT(*) OVER() AS totalMatchedCount
+            FROM VW_RISK_COMBINED v
+            WHERE (<include refid="normalizedBranchCase"/>) = #{branchNm}
+            <if test="riskCdList != null and riskCdList.size() > 0">
+                AND v.COMBINED_RISK_CD IN
+                <foreach collection="riskCdList" item="riskCd" open="(" separator="," close=")">
+                    #{riskCd}
+                </foreach>
+            </if>
+            <if test="minLon != null">
+                AND v.LON <![CDATA[>=]]> #{minLon}
+            </if>
+            <if test="minLat != null">
+                AND v.LAT <![CDATA[>=]]> #{minLat}
+            </if>
+            <if test="maxLon != null">
+                AND v.LON <![CDATA[<=]]> #{maxLon}
+            </if>
+            <if test="maxLat != null">
+                AND v.LAT <![CDATA[<=]]> #{maxLat}
+            </if>
+        ) q
+        ORDER BY q.totalScore DESC
+        <if test="maxRows != null">
+            OFFSET 0 ROWS FETCH NEXT #{maxRows} ROWS ONLY
+        </if>
+    </select>
+
+</mapper>
+
+
+
+
+

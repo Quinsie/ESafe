@@ -1,0 +1,75 @@
+﻿<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="WeatherUpdate">
+
+    <delete id="deleteWeatherAlertToday">
+        DELETE FROM TB_WEATHER_ALERT
+        WHERE TRUNC(ALERT_DATE) = TRUNC(SYSDATE)
+    </delete>
+
+    <insert id="insertWeatherAlert" parameterType="egovframework.com.risk.vo.RiskWeatherVO">
+        INSERT INTO TB_WEATHER_ALERT (
+            ALERT_DATE, ALERT_TYPE, ALERT_LEVEL, ALERT_CMD,
+            REGION_NM, REGION_CD, PARENT_REGION, ISSUE_DT, EFFECT_DT
+        ) VALUES (
+            TRUNC(SYSDATE), #{alertType}, #{alertLevel}, #{alertCmd},
+            #{regionNm}, #{regionCd}, #{parentRegion}, #{issueDt}, #{effectDt}
+        )
+    </insert>
+
+    <delete id="deleteWeatherRiskToday">
+        DELETE FROM TB_WEATHER_RISK
+        WHERE TRUNC(RISK_DATE) = TRUNC(SYSDATE)
+    </delete>
+
+    <insert id="insertWeatherRisk" parameterType="egovframework.com.risk.vo.RiskWeatherVO">
+        INSERT INTO TB_WEATHER_RISK (
+            RISK_DATE, REGION_CD, REGION_NM, DISTRICT_NM,
+            WEATHER_SCORE, APPLIED_ALERTS, WILDFIRE_SCORE, WILDFIRE_GRADE, WILDFIRE_TM
+        ) VALUES (
+            TRUNC(SYSDATE), #{regionCd}, #{regionNm}, #{districtNm},
+            #{weatherScore}, #{appliedAlerts}, #{wildfireScore}, #{wildfireGrade}, #{wildfireTm}
+        )
+    </insert>
+
+    <select id="selectAlertZoneMappings" resultType="map">
+        SELECT
+            ZONE_CD AS "code",
+            ZONE_NM AS "name",
+            PARENT_REGION AS "regionNm",
+            DISTRICT_EXPR AS "districtExpr"
+        FROM TB_ALERT_ZONE_MAP
+        WHERE USE_YN = 'Y'
+        ORDER BY ZONE_CD
+    </select>
+
+    <select id="selectDistinctRegions" resultType="egovframework.com.risk.vo.RiskWeatherVO">
+        SELECT
+            COALESCE(MAX(NULLIF(TRIM(REGION_CD), '')), '') AS regionCd,
+            REGION_NM AS regionNm,
+            DISTRICT_NM AS districtNm
+        FROM TB_BLDG_RISK_STATIC
+        WHERE REGION_NM IS NOT NULL
+        GROUP BY REGION_NM, DISTRICT_NM
+        ORDER BY REGION_NM, DISTRICT_NM
+    </select>
+
+    <select id="selectRegionCoordinateStats" resultType="map">
+        SELECT
+            COALESCE(MAX(NULLIF(TRIM(REGION_CD), '')), '') AS "regionCd",
+            REGION_NM AS "regionNm",
+            DISTRICT_NM AS "districtNm",
+            AVG(LON) AS "avgLon",
+            AVG(LAT) AS "avgLat",
+            MIN(LON) AS "minLon",
+            MAX(LON) AS "maxLon",
+            MIN(LAT) AS "minLat",
+            MAX(LAT) AS "maxLat"
+        FROM TB_BLDG_RISK_STATIC
+        WHERE REGION_NM IS NOT NULL
+        GROUP BY REGION_NM, DISTRICT_NM
+    </select>
+
+</mapper>
+

@@ -1,0 +1,13 @@
+# Copy this file to risk-security.properties and replace all CHANGE_ME values.
+# You can override each value with JVM system properties in production:
+# -Drisk.security.admin.username=...
+# -Drisk.security.admin.password=...
+# -Drisk.security.user.username=...
+# -Drisk.security.user.password=...
+# -Drisk.weather.refresh.allow-legacy-get=false
+
+risk.security.admin.username=CHANGE_ME_ADMIN_USERNAME
+risk.security.admin.password=CHANGE_ME_ADMIN_PASSWORD
+risk.security.user.username=CHANGE_ME_USER_USERNAME
+risk.security.user.password=CHANGE_ME_USER_PASSWORD
+risk.weather.refresh.allow-legacy-get=false

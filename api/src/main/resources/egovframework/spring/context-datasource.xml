@@ -1,0 +1,49 @@
+﻿<?xml version="1.0" encoding="UTF-8"?>
+<beans xmlns="http://www.springframework.org/schema/beans"
+       xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+       xmlns:context="http://www.springframework.org/schema/context"
+       xmlns:jdbc="http://www.springframework.org/schema/jdbc"
+       xmlns:tx="http://www.springframework.org/schema/tx"
+       xsi:schemaLocation="http://www.springframework.org/schema/beans
+                           http://www.springframework.org/schema/beans/spring-beans.xsd
+                           http://www.springframework.org/schema/context
+                           http://www.springframework.org/schema/context/spring-context.xsd
+                           http://www.springframework.org/schema/jdbc
+                           http://www.springframework.org/schema/jdbc/spring-jdbc.xsd
+                           http://www.springframework.org/schema/tx
+                           http://www.springframework.org/schema/tx/spring-tx.xsd">
+
+    <context:property-placeholder
+            ignore-resource-not-found="false"
+            system-properties-mode="OVERRIDE"
+            location="classpath:egovframework/spring/risk-db-${spring.profiles.active}.properties"/>
+
+    <bean id="dataSource" class="org.apache.commons.dbcp2.BasicDataSource" destroy-method="close">
+        <property name="driverClassName" value="${risk.db.driver}"/>
+        <property name="url"             value="${risk.db.url}"/>
+        <property name="username"        value="${risk.db.username}"/>
+        <property name="password"        value="${risk.db.password}"/>
+        <property name="initialSize"     value="${risk.db.initialSize}"/>
+        <property name="maxTotal"        value="${risk.db.maxTotal}"/>
+        <property name="maxIdle"         value="${risk.db.maxIdle}"/>
+        <property name="minIdle"         value="${risk.db.minIdle}"/>
+        <property name="validationQuery" value="${risk.db.validationQuery}"/>
+        <property name="testOnBorrow"    value="${risk.db.testOnBorrow}"/>
+    </bean>
+
+    <jdbc:initialize-database data-source="dataSource"
+                              ignore-failures="DROPS"
+                              enabled="${risk.db.init.enabled:false}">
+        <jdbc:script location="classpath:egovframework/spring/schema-h2.sql" encoding="UTF-8"/>
+        <jdbc:script location="classpath:egovframework/spring/data-h2.sql" encoding="UTF-8"/>
+        <jdbc:script location="classpath:egovframework/spring/data-h2-weather-20260211.sql" encoding="UTF-8"/>
+        <jdbc:script location="classpath:egovframework/spring/data-h2-facility-history.sql" encoding="UTF-8"/>
+    </jdbc:initialize-database>
+
+    <bean id="txManager" class="org.springframework.jdbc.datasource.DataSourceTransactionManager">
+        <property name="dataSource" ref="dataSource"/>
+    </bean>
+    <tx:annotation-driven transaction-manager="txManager"/>
+
+</beans>
+

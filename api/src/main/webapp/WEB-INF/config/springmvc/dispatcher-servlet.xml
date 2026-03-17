@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<beans xmlns="http://www.springframework.org/schema/beans"
+       xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+       xmlns:context="http://www.springframework.org/schema/context"
+       xmlns:mvc="http://www.springframework.org/schema/mvc"
+       xmlns:task="http://www.springframework.org/schema/task"
+       xsi:schemaLocation="http://www.springframework.org/schema/beans
+                           http://www.springframework.org/schema/beans/spring-beans.xsd
+                           http://www.springframework.org/schema/context
+                           http://www.springframework.org/schema/context/spring-context.xsd
+                           http://www.springframework.org/schema/mvc
+                           http://www.springframework.org/schema/mvc/spring-mvc.xsd
+                           http://www.springframework.org/schema/task
+                           http://www.springframework.org/schema/task/spring-task.xsd">
+
+    <!-- Controller component-scan (REST API + View) -->
+    <context:component-scan base-package="egovframework.com.risk.web"/>
+    <context:component-scan base-package="egovframework.com.risk.view"/>
+
+    <context:property-placeholder
+            ignore-resource-not-found="false"
+            system-properties-mode="OVERRIDE"
+            location="classpath:egovframework/spring/risk-db-${spring.profiles.active}.properties"/>
+
+    <!-- MVC annotation-driven + JSON MessageConverter -->
+    <mvc:annotation-driven>
+        <mvc:message-converters>
+            <bean class="org.springframework.http.converter.json.MappingJackson2HttpMessageConverter">
+                <property name="supportedMediaTypes">
+                    <list>
+                        <value>application/json;charset=UTF-8</value>
+                    </list>
+                </property>
+            </bean>
+        </mvc:message-converters>
+    </mvc:annotation-driven>
+
+    <!-- Static resources -->
+    <mvc:resources mapping="/resources/**" location="/resources/"/>
+
+    <!-- Scheduler for web-context beans (e.g., RiskWeatherController map cache refresh) -->
+    <task:annotation-driven scheduler="webTaskScheduler"/>
+    <task:scheduler id="webTaskScheduler" pool-size="1"/>
+
+    <!-- JSP ViewResolver -->
+    <bean class="org.springframework.web.servlet.view.InternalResourceViewResolver">
+        <property name="prefix" value="/WEB-INF/jsp/"/>
+        <property name="suffix" value=".jsp"/>
+        <property name="contentType" value="text/html; charset=UTF-8"/>
+        <property name="order" value="1"/>
+    </bean>
+
+</beans>

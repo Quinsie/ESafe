@@ -1,0 +1,37 @@
+--------------------------------------------------------------------------------
+-- Patch: add wildfire score columns to TB_WEATHER_RISK (Oracle)
+--------------------------------------------------------------------------------
+
+DECLARE
+    v_cnt NUMBER;
+BEGIN
+    SELECT COUNT(*) INTO v_cnt
+      FROM USER_TAB_COLUMNS
+     WHERE TABLE_NAME = 'TB_WEATHER_RISK'
+       AND COLUMN_NAME = 'WILDFIRE_SCORE';
+    IF v_cnt = 0 THEN
+        EXECUTE IMMEDIATE 'ALTER TABLE TB_WEATHER_RISK ADD (WILDFIRE_SCORE NUMBER(4,1) DEFAULT 0)';
+    END IF;
+
+    SELECT COUNT(*) INTO v_cnt
+      FROM USER_TAB_COLUMNS
+     WHERE TABLE_NAME = 'TB_WEATHER_RISK'
+       AND COLUMN_NAME = 'WILDFIRE_GRADE';
+    IF v_cnt = 0 THEN
+        EXECUTE IMMEDIATE 'ALTER TABLE TB_WEATHER_RISK ADD (WILDFIRE_GRADE VARCHAR2(20) DEFAULT ''NONE'')';
+    END IF;
+
+    SELECT COUNT(*) INTO v_cnt
+      FROM USER_TAB_COLUMNS
+     WHERE TABLE_NAME = 'TB_WEATHER_RISK'
+       AND COLUMN_NAME = 'WILDFIRE_TM';
+    IF v_cnt = 0 THEN
+        EXECUTE IMMEDIATE 'ALTER TABLE TB_WEATHER_RISK ADD (WILDFIRE_TM VARCHAR2(12))';
+    END IF;
+END;
+/
+
+COMMENT ON COLUMN TB_WEATHER_RISK.WILDFIRE_SCORE IS 'wildfire score (0/2/4/6/8/10)';
+COMMENT ON COLUMN TB_WEATHER_RISK.WILDFIRE_GRADE IS 'wildfire level (NONE~DETECTED)';
+COMMENT ON COLUMN TB_WEATHER_RISK.WILDFIRE_TM IS 'wildfire source time (yyyyMMddHHmm)';
+

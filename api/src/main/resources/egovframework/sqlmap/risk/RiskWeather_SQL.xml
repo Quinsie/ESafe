@@ -1,0 +1,106 @@
+﻿<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="RiskWeather">
+
+    <select id="selectWeatherAlertToday" resultType="egovframework.com.risk.vo.RiskWeatherVO">
+        SELECT
+            a.ALERT_SEQ      AS alertSeq,
+            TO_CHAR(a.ALERT_DATE, 'YYYY-MM-DD') AS alertDate,
+            a.ALERT_TYPE     AS alertType,
+            a.ALERT_LEVEL    AS alertLevel,
+            a.ALERT_CMD      AS alertCmd,
+            a.REGION_NM      AS regionNm,
+            a.REGION_CD      AS regionCd,
+            a.PARENT_REGION  AS parentRegion,
+            a.ISSUE_DT       AS issueDt,
+            a.EFFECT_DT      AS effectDt,
+            a.CANCEL_NOTE    AS cancelNote
+        FROM TB_WEATHER_ALERT a
+        WHERE TRUNC(a.ALERT_DATE) = TRUNC(SYSDATE)
+        ORDER BY a.ALERT_TYPE, a.ALERT_LEVEL, a.REGION_NM
+    </select>
+
+    <select id="selectWeatherRiskScore" parameterType="egovframework.com.risk.vo.RiskSearchVO"
+            resultType="egovframework.com.risk.vo.RiskWeatherVO">
+        SELECT
+            w.RISK_SEQ        AS riskSeq,
+            TO_CHAR(w.RISK_DATE, 'YYYY-MM-DD') AS riskDate,
+            w.REGION_CD       AS regionCd,
+            w.REGION_NM       AS regionNm,
+            w.DISTRICT_NM     AS districtNm,
+            w.WEATHER_SCORE   AS weatherScore,
+            w.WILDFIRE_SCORE  AS wildfireScore,
+            w.WILDFIRE_GRADE  AS wildfireGrade,
+            w.WILDFIRE_TM     AS wildfireTm,
+            w.APPLIED_ALERTS  AS appliedAlerts
+        FROM TB_WEATHER_RISK w
+        WHERE TRUNC(w.RISK_DATE) = TRUNC(SYSDATE)
+          <if test="(hqNm == null or hqNm == '') and (branchNm == null or branchNm == '') and (regionNm == null or regionNm == '') and (districtNm == null or districtNm == '')">
+              AND (NVL(w.WEATHER_SCORE, 0) > 0 OR NVL(w.WILDFIRE_SCORE, 0) > 0)
+          </if>
+          <if test="regionNm != null and regionNm != ''">
+              AND w.REGION_NM = #{regionNm}
+          </if>
+          <if test="districtNm != null and districtNm != ''">
+              AND w.DISTRICT_NM = #{districtNm}
+          </if>
+          <if test="branchNm != null and branchNm != ''">
+              AND EXISTS (
+                  SELECT 1
+                  FROM TB_BLDG_RISK_STATIC b
+                  WHERE REPLACE(COALESCE(TRIM(b.REGION_NM), ''), ' ', '') = REPLACE(COALESCE(TRIM(w.REGION_NM), ''), ' ', '')
+                    AND REPLACE(COALESCE(TRIM(b.DISTRICT_NM), ''), ' ', '') = REPLACE(COALESCE(TRIM(w.DISTRICT_NM), ''), ' ', '')
+                    AND REPLACE(TRIM(COALESCE(b.BRANCH_NM, '')), ' ', '') =
+                        REPLACE(TRIM(#{branchNm}), ' ', '')
+              )
+          </if>
+          <if test="hqNm != null and hqNm != ''">
+              AND EXISTS (
+                  SELECT 1
+                  FROM TB_BLDG_RISK_STATIC b
+                  LEFT JOIN TB_BRANCH_HQ_MAP m
+                    ON REPLACE(TRIM(m.BRANCH_NM), ' ', '') = REPLACE(TRIM(b.BRANCH_NM), ' ', '')
+                   AND m.USE_YN = 'Y'
+                  WHERE REPLACE(COALESCE(TRIM(b.REGION_NM), ''), ' ', '') = REPLACE(COALESCE(TRIM(w.REGION_NM), ''), ' ', '')
+                    AND REPLACE(COALESCE(TRIM(b.DISTRICT_NM), ''), ' ', '') = REPLACE(COALESCE(TRIM(w.DISTRICT_NM), ''), ' ', '')
+                    AND COALESCE(m.HQ_NM, b.REGION_NM) = #{hqNm}
+              )
+          </if>
+        ORDER BY NVL(w.WILDFIRE_SCORE, 0) DESC, NVL(w.WEATHER_SCORE, 0) DESC
+    </select>
+
+    <select id="selectWeatherHistory" parameterType="egovframework.com.risk.vo.RiskSearchVO"
+            resultType="egovframework.com.risk.vo.RiskWeatherVO">
+        SELECT
+            TO_CHAR(w.RISK_DATE, 'YYYY-MM-DD') AS riskDate,
+            COUNT(*)                            AS regionCnt,
+            ROUND(AVG(w.WEATHER_SCORE), 2)      AS avgWeatherScore,
+            MAX(w.WEATHER_SCORE)                AS maxWeatherScore,
+            SUM(CASE WHEN w.WEATHER_SCORE > 0 THEN 1 ELSE 0 END) AS scoreRegionCnt
+        FROM TB_WEATHER_RISK w
+        <where>
+            <if test="startDate != null and startDate != ''">
+                AND w.RISK_DATE >= TO_DATE(#{startDate}, 'YYYYMMDD')
+            </if>
+            <if test="endDate != null and endDate != ''">
+                AND w.RISK_DATE &lt;= TO_DATE(#{endDate}, 'YYYYMMDD')
+            </if>
+        </where>
+        GROUP BY w.RISK_DATE
+        ORDER BY w.RISK_DATE DESC
+    </select>
+
+    <select id="selectBranchHqMap" resultType="map">
+        SELECT
+            TRIM(HQ_NM) AS "hqNm",
+            TRIM(BRANCH_NM) AS "branchNm"
+        FROM TB_BRANCH_HQ_MAP
+        WHERE USE_YN = 'Y'
+          AND HQ_NM IS NOT NULL
+          AND BRANCH_NM IS NOT NULL
+        ORDER BY HQ_NM, BRANCH_NM
+    </select>
+
+</mapper>
+

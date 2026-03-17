@@ -1,0 +1,97 @@
+KESCO 전기재해위험지수 관리시스템 프로젝트 기능 설명
+작성일: 2026-03-12
+
+1. 프로젝트 목적
+- 건물 정적 위험요소, 기상 위험, 설비 점검/검사 이력, 과거 재해 이력 등을 결합해 건물별 전기재해위험을 산정하고 조회하는 시스템이다.
+- Python 분석 파이프라인, DB 적재 스크립트, Spring MVC 기반 API/UI가 함께 있는 구조다.
+
+2. 현재 확인된 주요 기능
+- 건물 목록 조회
+  - 종합 위험도 기준 정렬, 검색, 페이징 지원
+- 건물 상세 조회
+  - 정적 점수, 기상 점수, 설비 점수, 종합 점수 확인
+  - VWorld 3D 기반 건물 위치 확인
+- 설비 이력 조회
+  - 일반용/자가용 설비 이력 분리 조회
+  - 설비 상세에서 원본 CSV 컬럼을 `rawJson` 형태로 복원 표시
+- 기상 현황 조회
+  - 오늘의 기상 경보, 기상 점수, 경보 구역 매핑 조회
+- 본부/지역 요약
+  - 종합 위험 통계와 등급 분포 조회
+- 전국 전기재해위험지도
+  - 구역 요약 레이어
+  - 고줌 건물 포인트 레이어
+  - 초고줌 건물 폴리곤 레이어
+  - 안전/관심/주의/경고/위험 체크박스 필터
+
+3. 2026-03-12 작업 반영 사항
+- 설비 주소 정제
+  - `설비데이터\광주전남 일반용 점검 데이터_정제.csv`
+  - `설비데이터\광주전남 자가용 검사 데이터_정제.csv`
+  - `-0` 번지 제거, 공백/괄호/콤마 정리 반영
+- H2 데이터 재구성
+  - `사업소별 분석결과\광주전남본부\광주전남본부직할\통합위험분석_광주전남본부직할_20260303.csv` 전체 적재
+  - 건물 217,241건 적재
+  - 설비 이력 2,064,816건 적재
+    - 일반용 2,023,433건
+    - 자가용 41,383건
+- 설비 상세 원본 데이터 복원
+  - DB `RAW_JSON` 전량 저장 대신, 설비 상세 조회 시 원본 CSV에서 찾아 `rawJson`으로 복원
+- 전국 위험지도 개선
+  - 최초 진입은 구역 레이어 위주
+  - 줌 14 이상 건물 포인트
+  - 줌 16 이상 건물 폴리곤
+  - 현재 화면 범위 기준 bbox 조회
+  - 표시 등급 필터 체크박스 추가
+  - 색상 재정의
+    - 안전: 초록
+    - 관심: 파랑
+    - 주의: 노랑
+    - 경고: 주황
+    - 위험: 빨강
+  - 검은 외곽선 강화
+  - 건물 점 크기 축소
+  - 폴리곤 상한 1,500건
+  - 줌 버튼 가시성 강화 및 휠 줌 보강
+- 지도 등급 기준 수정
+  - 기존 `TOTAL_SCORE / RISK_CD` 기준이 아니라
+  - 건물 상세의 `종합` 점수와 동일한 `COMBINED_SCORE / COMBINED_RISK_CD / COMBINED_GRADE_NM` 기준으로 지도 등급 산정
+
+4. 현재 H2 기준 데이터 범위
+- 기준 본부: 광주전남본부직할
+- 건물: 217,241건
+- 설비 이력 총계: 2,064,816건
+- 설비 주소 매칭은 건물 주소 기준으로 수행되며, 동일 주소에 여러 건물이 있으면 설비 이력이 여러 `BLDG_SEQ`에 연결된다.
+
+5. 전국 위험지도 동작 방식
+- 지도 데이터 소스
+  - 구역 레이어: `selectRiskMapDistrictLayer.do`
+  - 건물 포인트 레이어: `selectRiskMapBuildingLayer.do`
+  - 건물 폴리곤 레이어: `selectRiskMapBuildingPolygonLayer.do`
+- 등급 필터
+  - `A=안전`, `B=관심`, `C=주의`, `D=경고`, `E=위험`
+- 점수 기준
+  - 구역 평균 점수와 건물 표시 점수 모두 `COMBINED_SCORE` 기준
+- 조회 제한
+  - 건물 포인트 상한: 20,000
+  - 건물 폴리곤 상한: 1,500
+
+6. 주요 파일
+- 지도 프론트
+  - `api\src\main\webapp\WEB-INF\jsp\risk\nationwideRiskMap.jsp`
+  - `api\src\main\webapp\resources\js\risk-nationwide-risk-map.js`
+  - `api\src\main\webapp\resources\css\risk-common.css`
+- 지도 백엔드
+  - `api\src\main\java\egovframework\com\risk\web\RiskCombinedController.java`
+  - `api\src\main\java\egovframework\com\risk\util\RiskMapPolygonResolver.java`
+  - `api\src\main\resources\egovframework\sqlmap\risk\RiskCombined_SQL.xml`
+- 설비/H2 적재
+  - `api\scripts\regenerate_h2_full_branch_data.py`
+  - `api\scripts\regenerate_h2_full_facility_history.py`
+  - `api\scripts\regenerate_h2_facility_history.py`
+  - `clean_facility_addresses.py`
+
+7. 참고
+- VWorld 2D 지도는 OpenLayers 기반으로 렌더링한다.
+- 건물 상세 3D 지도는 별도 VWorld 3D 어댑터를 사용한다.
+- H2는 개발/검증용이고, Oracle은 실제 운영/적재 검증용이다.
