@@ -19,6 +19,7 @@ $ErrorActionPreference = "Stop"
 # 빠른 재기동이 필요할 때만 -SkipBuild 플래그를 붙일 것
 
 $apiDir = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
+$projectRoot = (Resolve-Path (Join-Path $apiDir "..")).Path
 $switchScript = Join-Path $PSScriptRoot "switch-db-profile.ps1"
 $serverXml = Join-Path $TomcatHome "conf\server.xml"
 $warSrc = Join-Path $apiDir "target\risk-api-1.0.0.war"
@@ -35,6 +36,7 @@ if (-not (Test-Path $switchScript)) { throw "DB switch script not found: $switch
 if (-not (Test-Path $serverXml)) { throw "server.xml not found: $serverXml" }
 
 $kmaAuthKeyTrimmed = if ($KmaAuthKey) { $KmaAuthKey.Trim() } else { "" }
+$env:RISK_PROJECT_ROOT = $projectRoot
 if (-not [string]::IsNullOrWhiteSpace($kmaAuthKeyTrimmed)) {
     # Keep secret in process env only; do not persist raw key in setenv.bat.
     $env:KMA_AUTH_KEY = $kmaAuthKeyTrimmed
@@ -67,6 +69,7 @@ set CATALINA_OPTS=%CATALINA_OPTS% -Drisk.security.admin.username=$AdminUsername
 set CATALINA_OPTS=%CATALINA_OPTS% -Drisk.security.admin.password=$AdminPassword
 set CATALINA_OPTS=%CATALINA_OPTS% -Drisk.security.user.username=$UserUsername
 set CATALINA_OPTS=%CATALINA_OPTS% -Drisk.security.user.password=$UserPassword
+if not "%RISK_PROJECT_ROOT%"=="" set CATALINA_OPTS=%CATALINA_OPTS% -Drisk.project.root="%RISK_PROJECT_ROOT%"
 if not "%KMA_AUTH_KEY%"=="" set CATALINA_OPTS=%CATALINA_OPTS% -Dkma.auth.key=%KMA_AUTH_KEY%
 if not "%RISK_ALERT_ZONE_FILE%"=="" set CATALINA_OPTS=%CATALINA_OPTS% -Drisk.weather.alert.zone.file="%RISK_ALERT_ZONE_FILE%"
 "@

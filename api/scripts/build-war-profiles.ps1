@@ -1,6 +1,6 @@
 param(
-    [string]$JavaHome = "C:\Users\user\dev\jdk-11.0.25+9",
-    [string]$MavenCmd = "C:\Users\user\dev\apache-maven-3.9.9\bin\mvn.cmd",
+    [string]$JavaHome = $(if ($env:JAVA_HOME) { $env:JAVA_HOME } else { "$env:USERPROFILE\dev\jdk-11.0.25+9" }),
+    [string]$MavenCmd = $(if ($env:MAVEN_HOME) { "$env:MAVEN_HOME\bin\mvn.cmd" } elseif ($env:M2_HOME) { "$env:M2_HOME\bin\mvn.cmd" } else { "$env:USERPROFILE\dev\apache-maven-3.9.9\bin\mvn.cmd" }),
     [ValidateSet("h2", "oracle")]
     [string[]]$Profiles = @("h2", "oracle")
 )

@@ -17,10 +17,6 @@ import java.util.stream.Stream;
 
 public final class RiskMapPolygonResolver {
 
-    private static final Path RESULT_BASE_DIR = Paths.get(
-            "C:\\Users\\user\\Downloads\\kescoaitest",
-            "\uC0AC\uC5C5\uC18C\uBCC4 \uBD84\uC11D\uACB0\uACFC");
-
     private static final ConcurrentHashMap<String, Path> SHP_PATH_CACHE = new ConcurrentHashMap<String, Path>();
     private static final ConcurrentHashMap<String, ShapefileIndex> SHAPEFILE_CACHE =
             new ConcurrentHashMap<String, ShapefileIndex>();
@@ -84,8 +80,12 @@ public final class RiskMapPolygonResolver {
         }
 
         String expectedPrefix = "\uD1B5\uD569\uC704\uD5D8\uBD84\uC11D_" + normalizedBranchNm + "_";
+        Path resultBaseDir = ProjectPathResolver.resolveFromProjectRoot("\uC0AC\uC5C5\uC18C\uBCC4 \uBD84\uC11D\uACB0\uACFC");
         Path found = null;
-        try (Stream<Path> stream = Files.walk(RESULT_BASE_DIR, 4)) {
+        if (!Files.isDirectory(resultBaseDir)) {
+            return null;
+        }
+        try (Stream<Path> stream = Files.walk(resultBaseDir, 4)) {
             found = stream
                     .filter(Files::isRegularFile)
                     .filter(path -> path.getFileName().toString().startsWith(expectedPrefix))

@@ -18,6 +18,7 @@ import javax.annotation.Resource;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import egovframework.com.risk.service.RiskCombinedService;
+import egovframework.com.risk.util.ProjectPathResolver;
 import egovframework.com.risk.vo.RiskCombinedVO;
 import egovframework.com.risk.vo.RiskFacilityHistoryVO;
 import egovframework.com.risk.vo.RiskSearchVO;
@@ -29,12 +30,10 @@ import org.springframework.stereotype.Service;
 public class RiskCombinedServiceImpl extends EgovAbstractServiceImpl implements RiskCombinedService {
 
     private static final String NAMESPACE = "RiskCombined.";
-    private static final Path GENERAL_FACILITY_CSV = Paths.get(
-            "C:\\Users\\user\\Downloads\\kescoaitest",
+    private static final Path GENERAL_FACILITY_CSV = ProjectPathResolver.resolveFromProjectRoot(
             "\uC124\uBE44\uB370\uC774\uD130",
             "\uAD11\uC8FC\uC804\uB0A8 \uC77C\uBC18\uC6A9 \uC810\uAC80 \uB370\uC774\uD130_\uC815\uC81C.csv");
-    private static final Path SELF_FACILITY_CSV = Paths.get(
-            "C:\\Users\\user\\Downloads\\kescoaitest",
+    private static final Path SELF_FACILITY_CSV = ProjectPathResolver.resolveFromProjectRoot(
             "\uC124\uBE44\uB370\uC774\uD130",
             "\uAD11\uC8FC\uC804\uB0A8 \uC790\uAC00\uC6A9 \uAC80\uC0AC \uB370\uC774\uD130_\uC815\uC81C.csv");
     private static final String COL_BRANCH = "\uC0AC\uC5C5\uC18C";

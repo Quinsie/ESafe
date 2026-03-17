@@ -1,7 +1,7 @@
 --------------------------------------------------------------------------------
 -- Oracle unified DDL entrypoint
 -- Usage (SQL*Plus / SQLcl):
---   cd C:\Users\user\Downloads\kescoaitest\db
+--   cd <project-root>\db
 --   sqlplus <user>/<password>@<tns> @00_oracle_full_setup.sql
 --------------------------------------------------------------------------------
 

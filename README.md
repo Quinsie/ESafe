@@ -94,6 +94,17 @@ powershell -ExecutionPolicy Bypass -File .\scripts\start-tomcat-h2.ps1 -HttpPort
 powershell -ExecutionPolicy Bypass -File .\scripts\start-tomcat-h2.ps1 -SkipBuild
 ```
 
+### 클린 PC 기준 동작 범위
+
+- 이 리포만 clone한 뒤 `setup-dev-env.ps1`와 `start-tomcat-h2.ps1`를 실행하면 H2 기준 서버 기동과 기본 화면 확인은 가능하다.
+- 다만 아래의 외부 데이터 폴더를 프로젝트 루트 아래에 별도로 받아 두지 않으면 일부 기능은 제한된다.
+- 외부 데이터 없을 때 제한되는 대표 기능:
+  - 설비 상세 `rawJson` 복원
+  - 전국 위험지도의 건물 폴리곤 레이어
+  - 전체 건물/H2 시드 재생성
+  - GIS 기반 통합 분석 스크립트
+- 이번 경로 정리 이후에는 clone 경로가 특정 고정 절대경로일 필요는 없다. 어디에 clone하든 외부 데이터만 같은 프로젝트 루트 아래에 놓으면 된다.
+
 ### 3. Oracle 기동
 
 Oracle은 자동 DDL 적용을 하지 않는다. 먼저 `db/00_oracle_full_setup.sql`부터 수동 실행해야 한다.
@@ -117,6 +128,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\stop-tomcat.ps1
 - `JAVA_HOME`
 - `CATALINA_HOME`
 - `MAVEN_HOME` 또는 `M2_HOME`
+- `RISK_PROJECT_ROOT`
 - `RISK_ADMIN_USERNAME`
 - `RISK_ADMIN_PASSWORD`
 - `RISK_USER_USERNAME`
@@ -130,6 +142,12 @@ powershell -ExecutionPolicy Bypass -File .\scripts\stop-tomcat.ps1
 - `api/src/main/resources/egovframework/spring/risk-db-h2.properties`
 - `api/src/main/resources/egovframework/spring/risk-db-oracle.properties`
 - `api/src/main/resources/egovframework/spring/risk-security.properties`
+
+경로 관련 동작:
+
+- Java 웹앱과 재생성 스크립트는 이제 프로젝트 루트를 기준으로 외부 데이터를 찾는다.
+- `start-tomcat-h2.ps1`, `start-tomcat-oracle.ps1`는 실행 시 자동으로 `RISK_PROJECT_ROOT`와 `-Drisk.project.root`를 설정한다.
+- 수동 실행 시에는 현재 작업 디렉터리를 프로젝트 루트로 맞추거나 `RISK_PROJECT_ROOT`를 직접 지정하는 편이 안전하다.
 
 DB 프로필 전환:
 
@@ -167,18 +185,50 @@ H2 초기화는 `api/src/main/resources/egovframework/spring/context-datasource.
 
 아래 폴더와 파일은 리포에 포함되지 않는다. 별도 로컬 저장본이 있어야 한다.
 
+프로젝트 루트 바로 아래에 다음 구조로 받아 두면 된다.
+
 - `설비데이터`
   - `광주전남 일반용 점검 데이터_정제.csv`
   - `광주전남 자가용 검사 데이터_정제.csv`
 - `사업소별 분석결과`
-  - `광주전남본부\광주전남본부직할\통합위험분석_광주전남본부직할_20260303.csv`
-- 대용량 GIS 폴더
-  - `건물연령`
-  - `홍수위험`
-  - `산사태위험`
-  - `침수흔적도`
-  - `용도지역지구`
-  - `전기화재이력`
+  - 최소 H2 재생성 기준:
+    - `광주전남본부\광주전남본부직할\통합위험분석_광주전남본부직할_20260303.csv`
+  - 전국 위험지도 건물 폴리곤 기준:
+    - 각 사업소 폴더의 최신 `통합위험분석_<사업소명>_<YYYYMMDD>.shp`
+    - 위 SHP와 같은 이름의 `.shx`, `.dbf`, `.prj`, `.cpg` 보조 파일
+- `건물연령`
+  - 지역별 건물 SHP 세트
+- `홍수위험`
+  - 지역별 홍수위험 SHP 세트
+- `산사태위험`
+  - 지역별 산사태 TIF 세트
+- `침수흔적도`
+  - `위선\TFF_FLDWTL_LN.shp`
+  - 위 SHP와 같은 이름의 `.shx`, `.dbf`, `.prj`, `.cpg`
+- `전기화재이력`
+  - `전기화재_2022_2024_좌표변환_5186.shp`
+  - 위 SHP와 같은 이름의 `.shx`, `.dbf`, `.prj`, `.cpg`
+- `용도지역지구`
+  - `전국\` 하위 용도지역지구 SHP 세트
+  - 필요 시 `UQ111_용도지역_코드.csv`
+
+외부 데이터별 실제 사용 위치:
+
+- 설비 상세 `rawJson` 복원
+  - `api/src/main/java/egovframework/com/risk/service/impl/RiskCombinedServiceImpl.java`
+  - 위 두 개의 `설비데이터\*.csv`를 직접 읽는다.
+- 전국 위험지도 건물 폴리곤
+  - `api/src/main/java/egovframework/com/risk/util/RiskMapPolygonResolver.java`
+  - `사업소별 분석결과\**\통합위험분석_<사업소명>_<YYYYMMDD>.shp`를 찾아 읽는다.
+- 전체 건물 H2 시드 재생성
+  - `api/scripts/regenerate_h2_full_branch_data.py`
+  - `사업소별 분석결과\광주전남본부\광주전남본부직할\통합위험분석_광주전남본부직할_20260303.csv`를 기본 입력으로 쓴다.
+- 전체 설비 이력 H2 시드 재생성
+  - `api/scripts/regenerate_h2_full_facility_history.py`
+  - 위 사업소 CSV 1개와 `설비데이터`의 정제 CSV 2개를 함께 쓴다.
+- GIS 기반 통합 분석
+  - `building_multi_risk_analyzer.py`
+  - `건물연령`, `홍수위험`, `산사태위험`, `침수흔적도`, `용도지역지구`, `전기화재이력` 폴더를 직접 읽는다.
 
 ### 1. 설비 주소 정제
 

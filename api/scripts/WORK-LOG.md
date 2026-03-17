@@ -8,7 +8,7 @@
 
 **발생 스크립트:** `start-tomcat-h2.ps1`, `start-tomcat-oracle.ps1`
 
-**증상:** `C:\Users\user\dev\...` 로 특정 계정에 종속된 경로가 기본값으로
+**증상:** `%USERPROFILE%\dev\...` 같은 사용자별 경로가 기본값으로
 박혀 있어 다른 PC/계정에서 실행 시 "Tomcat not found", "JAVA_HOME not found" 오류.
 
 **1차 수정 (2026-02-18):** `$env:USERPROFILE\dev\...` 로 대체 → 계정 종속 해결.

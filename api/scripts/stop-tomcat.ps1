@@ -1,6 +1,6 @@
 param(
-    [string]$TomcatHome = "C:\Users\user\dev\apache-tomcat-8.5.100",
-    [string]$JavaHome = "C:\Users\user\dev\jdk-11.0.25+9"
+    [string]$TomcatHome = $(if ($env:CATALINA_HOME) { $env:CATALINA_HOME } else { "$env:USERPROFILE\dev\apache-tomcat-8.5.100" }),
+    [string]$JavaHome = $(if ($env:JAVA_HOME) { $env:JAVA_HOME } else { "$env:USERPROFILE\dev\jdk-11.0.25+9" })
 )
 
 $ErrorActionPreference = "Stop"

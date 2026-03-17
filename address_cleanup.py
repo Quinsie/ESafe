@@ -8,8 +8,9 @@ import pandas as pd
 import re
 from pathlib import Path
 
-INPUT_FILE = Path(r"C:\Users\user\Downloads\kescoaitest\전기화재_3개년_통합.csv")
-OUTPUT_FILE = Path(r"C:\Users\user\Downloads\kescoaitest\전기화재_3개년_주소정제.csv")
+PROJECT_ROOT = Path(__file__).resolve().parent
+INPUT_FILE = PROJECT_ROOT / "전기화재_3개년_통합.csv"
+OUTPUT_FILE = PROJECT_ROOT / "전기화재_3개년_주소정제.csv"
 
 
 def extract_road_name(ri_val):

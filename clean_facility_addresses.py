@@ -16,6 +16,7 @@ EMPTY_COMMA_SEGMENT_RE = re.compile(r",\s*,\s*")
 SPACE_AFTER_OPEN_PAREN_RE = re.compile(r"\(\s+")
 SPACE_BEFORE_CLOSE_PAREN_RE = re.compile(r"\s+\)")
 MISSING_SPACE_BEFORE_PAREN_RE = re.compile(r"(?<=[^\s,(])\(")
+PROJECT_ROOT = Path(__file__).resolve().parent
 
 
 def clean_address(value: str) -> str:
@@ -107,11 +108,11 @@ def main() -> None:
 
     files = [
         (
-            Path(r"C:\Users\user\Downloads\kescoaitest\설비데이터\광주전남 일반용 점검 데이터_정제.csv"),
+            PROJECT_ROOT / "설비데이터" / "광주전남 일반용 점검 데이터_정제.csv",
             ["주소"],
         ),
         (
-            Path(r"C:\Users\user\Downloads\kescoaitest\설비데이터\광주전남 자가용 검사 데이터_정제.csv"),
+            PROJECT_ROOT / "설비데이터" / "광주전남 자가용 검사 데이터_정제.csv",
             ["지번주소", "도로명주소"],
         ),
     ]

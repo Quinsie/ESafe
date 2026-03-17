@@ -6,8 +6,8 @@ import re
 from collections import defaultdict
 from pathlib import Path
 
-
-BASE = Path(r"C:\Users\user\Downloads\kescoaitest")
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+BASE = PROJECT_ROOT
 BUILDING_CSV = (
     BASE
     / "사업소별 분석결과"

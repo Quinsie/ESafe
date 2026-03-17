@@ -10,8 +10,8 @@ from collections import defaultdict
 from http.cookiejar import CookieJar
 from pathlib import Path
 
-
-BASE = Path(r"C:\Users\user\Downloads\kescoaitest")
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+BASE = PROJECT_ROOT
 GENERAL_CSV = BASE / "설비데이터" / "광주전남 일반용 점검 데이터_정제.csv"
 SELF_CSV = BASE / "설비데이터" / "광주전남 자가용 검사 데이터_정제.csv"
 OUTPUT_SQL = (

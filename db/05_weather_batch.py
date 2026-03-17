@@ -28,6 +28,7 @@ import os
 import csv
 import argparse
 from datetime import datetime, date
+from pathlib import Path
 
 # Windows UTF-8
 if sys.platform == 'win32':
@@ -522,7 +523,7 @@ def run_batch(args):
         search_dirs = [
             os.path.join(os.path.dirname(__file__), '..', '기상특보'),
             os.path.join(os.path.dirname(__file__)),
-            r'C:\Users\user\Downloads\kescoaitest\기상특보',
+            str(Path(__file__).resolve().parents[1] / '기상특보'),
         ]
         csv_path = None
         for d in search_dirs:

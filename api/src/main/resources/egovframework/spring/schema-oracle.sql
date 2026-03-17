@@ -1,6 +1,6 @@
 -- DEPRECATED: Do not use this file for Oracle schema setup.
 -- Standard Oracle DDL entrypoint:
---   C:\Users\user\Downloads\kescoaitest\db\00_oracle_full_setup.sql
+--   <project-root>\db\00_oracle_full_setup.sql
 -- Canonical scripts:
 --   db/01_create_tables.sql
 --   db/04_create_weather_tables.sql

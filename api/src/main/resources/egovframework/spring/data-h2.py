@@ -18,7 +18,7 @@ import os
 import re
 from typing import Dict, List, Iterable
 
-BASE_DIR = r"C:\Users\user\Downloads\kescoaitest"
+BASE_DIR = str(Path(__file__).resolve().parents[6])
 CSV_DIR = os.path.join(BASE_DIR, "사업소별 분석결과", "광주전남본부", "광주전남본부직할")
 CSV_GLOB = "통합위험분석_광주전남본부직할_*.csv"
 GENERAL_CSV = os.path.join(BASE_DIR, "설비데이터", "일반용 샘플 데이터2.csv")

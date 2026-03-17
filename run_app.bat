@@ -12,6 +12,15 @@ echo 브라우저가 자동으로 열립니다.
 echo 종료하려면 이 창을 닫거나 Ctrl+C를 누르세요.
 echo.
 
-C:\Users\user\AppData\Local\Programs\Python\Python313\python.exe -m streamlit run app.py --server.port 8501
+if not "%PYTHON_EXE%"=="" (
+    "%PYTHON_EXE%" -m streamlit run app.py --server.port 8501
+) else (
+    where py >nul 2>nul
+    if not errorlevel 1 (
+        py -3.13 -m streamlit run app.py --server.port 8501
+    ) else (
+        python -m streamlit run app.py --server.port 8501
+    )
+)
 
 pause

@@ -21,7 +21,7 @@ class WeatherRiskMultiplier:
 
     def __init__(self, base_path: str = None):
         if base_path is None:
-            base_path = r"C:\Users\user\Downloads\kescoaitest"
+            base_path = str(Path(__file__).resolve().parent)
 
         self.base_path = Path(base_path)
         self.weather_path = self.base_path / "기상특보"
@@ -377,7 +377,7 @@ class WeatherRiskMultiplier:
         input_str = "\n".join(inputs) + "\n"
 
         try:
-            python_exe = r"C:\Users\user\AppData\Local\Programs\Python\Python313\python.exe"
+            python_exe = os.getenv("PYTHON_EXE") or sys.executable or "python"
             env = os.environ.copy()
             env['PYTHONIOENCODING'] = 'utf-8'
 

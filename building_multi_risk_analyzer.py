@@ -43,6 +43,7 @@ logging.basicConfig(
 
 # 분석 단계별 타임아웃 (초)
 ANALYSIS_TIMEOUT = 1200  # 20분
+PROJECT_ROOT = Path(__file__).resolve().parent
 
 try:
     import geopandas as gpd
@@ -2449,7 +2450,7 @@ def merge_results_mode():
     print("지역별 분석결과 폴더의 데이터를 사업소 또는 광역단위로 통합합니다.")
 
     # 기본 경로 설정
-    base_path = Path(r"C:\Users\user\Downloads\kescoaitest")
+    base_path = PROJECT_ROOT
 
     if not base_path.exists():
         print(f"기본 경로를 찾을 수 없습니다: {base_path}")
@@ -2997,7 +2998,7 @@ def interactive_mode():
     # =========================================================================
 
     # 기본 경로 설정
-    base_path = r"C:\Users\user\Downloads\kescoaitest"
+    base_path = str(PROJECT_ROOT)
 
     if not os.path.exists(base_path):
         print(f"기본 경로를 찾을 수 없습니다: {base_path}")
@@ -3420,7 +3421,7 @@ def quick_analyze(region_name: str, district_names=None,
         # 광역지자체 전체 분석
         quick_analyze("전북", min_age=30)
     """
-    base_path = r"C:\Users\user\Downloads\kescoaitest"
+    base_path = str(PROJECT_ROOT)
     analyzer = BuildingMultiRiskAnalyzer(base_path)
 
     all_results = []

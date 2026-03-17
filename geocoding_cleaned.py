@@ -23,8 +23,9 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 # 설정
 # ==========================================
 API_KEY = "60099EA2-ECE4-3BA3-9585-5A829AACC420"
-INPUT_FILE = Path(r"C:\Users\user\Downloads\kescoaitest\전기화재_3개년_주소정제.csv")
-OUTPUT_DIR = Path(r"C:\Users\user\Downloads\kescoaitest\분석결과")
+PROJECT_ROOT = Path(__file__).resolve().parent
+INPUT_FILE = PROJECT_ROOT / "전기화재_3개년_주소정제.csv"
+OUTPUT_DIR = PROJECT_ROOT / "분석결과"
 
 API_URL = "https://api.vworld.kr/req/address"
 MAX_RETRIES = 3

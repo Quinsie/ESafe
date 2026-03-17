@@ -3,9 +3,9 @@
     [string]$Username = "localadmin",
     [string]$Password = "LocalAdmin123",
     [int]$PageSize = 1000,
-    [string]$GeneralCsvPath = "C:\Users\user\Downloads\kescoaitest\설비데이터\일반용 샘플 데이터2.csv",
-    [string]$SelfCsvPath = "C:\Users\user\Downloads\kescoaitest\설비데이터\자가용 샘플 데이터.csv",
-    [string]$OutputSqlPath = "C:\Users\user\Downloads\kescoaitest\api\src\main\resources\egovframework\spring\data-h2-facility-history.sql",
+    [string]$GeneralCsvPath = "",
+    [string]$SelfCsvPath = "",
+    [string]$OutputSqlPath = "",
     [int]$GeneralSampleRows = 10000,
     [int]$SelfSampleRows = 10000,
     [int]$GeneralTargetInserts = 10000,
@@ -13,6 +13,11 @@
 )
 
 $ErrorActionPreference = "Stop"
+$projectRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
+
+if (-not $GeneralCsvPath) { $GeneralCsvPath = Join-Path $projectRoot "설비데이터\일반용 샘플 데이터2.csv" }
+if (-not $SelfCsvPath) { $SelfCsvPath = Join-Path $projectRoot "설비데이터\자가용 샘플 데이터.csv" }
+if (-not $OutputSqlPath) { $OutputSqlPath = Join-Path $projectRoot "api\src\main\resources\egovframework\spring\data-h2-facility-history.sql" }
 
 function New-Kr([int[]]$codes) {
     return (-join ($codes | ForEach-Object { [char]$_ }))

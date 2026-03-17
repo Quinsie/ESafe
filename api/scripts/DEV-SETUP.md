@@ -4,16 +4,16 @@
 
 ### 2026-02-18 — 하드코딩 경로 제거 (`start-tomcat-h2.ps1`)
 
-**문제:** 기본값이 `C:\Users\user\dev\...` 로 특정 계정에 종속되어 있어서
+**문제:** 기본값이 특정 사용자 홈 경로(`%USERPROFILE%\dev\...`)에 종속되어 있어서
 다른 PC나 다른 계정에서 실행하면 경로를 못 찾아 오류 발생.
 
 **해결:** `$env:USERPROFILE` 로 대체 → 실행하는 계정의 홈 폴더를 자동으로 사용.
 
 ```powershell
 # 변경 전
-[string]$TomcatHome = "C:\Users\user\dev\apache-tomcat-8.5.100"
-[string]$JavaHome   = "C:\Users\user\dev\jdk-11.0.25+9"
-[string]$MavenCmd   = "C:\Users\user\dev\apache-maven-3.9.9\bin\mvn.cmd"
+[string]$TomcatHome = "%USERPROFILE%\dev\apache-tomcat-8.5.100"
+[string]$JavaHome   = "%USERPROFILE%\dev\jdk-11.0.25+9"
+[string]$MavenCmd   = "%USERPROFILE%\dev\apache-maven-3.9.9\bin\mvn.cmd"
 
 # 변경 후
 [string]$TomcatHome = "$env:USERPROFILE\dev\apache-tomcat-8.5.100"
@@ -27,10 +27,10 @@
 
 ### 1단계: 개발 도구 설치 (최초 1회)
 
-PowerShell을 열고 프로젝트 루트(`api/`)로 이동 후 실행:
+PowerShell을 열고 프로젝트 루트의 `api/`로 이동 후 실행:
 
 ```powershell
-cd C:\...\kescoaitest\api
+cd <project-root>\api
 powershell -ExecutionPolicy Bypass -File .\scripts\setup-dev-env.ps1
 ```
 

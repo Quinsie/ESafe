@@ -18,9 +18,9 @@ KESCO 전기재해위험지수 관리시스템 운영 매뉴얼 상세
 
 3. 기동 절차
 - H2 기동
-  - `C:\Users\user\Downloads\kescoaitest\api\scripts\start-tomcat-h2.ps1`
+  - `<project-root>\api\scripts\start-tomcat-h2.ps1`
 - Oracle 기동
-  - `C:\Users\user\Downloads\kescoaitest\api\scripts\start-tomcat-oracle.ps1`
+  - `<project-root>\api\scripts\start-tomcat-oracle.ps1`
 - 기본 포트
   - `18080`
 - 주요 URL

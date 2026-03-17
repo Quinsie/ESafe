@@ -1,14 +1,20 @@
 ﻿param(
-    [string]$BranchCsvPath = "C:\Users\user\Downloads\kescoaitest\사업소별 분석결과\광주전남본부\광주전남본부직할\통합위험분석_광주전남본부직할_20260303.csv",
-    [string]$GeneralCsvPath = "C:\Users\user\Downloads\kescoaitest\설비데이터\일반용 샘플 데이터2.csv",
-    [string]$SelfCsvPath = "C:\Users\user\Downloads\kescoaitest\설비데이터\자가용 샘플 데이터.csv",
-    [string]$OutputSqlPath = "C:\Users\user\Downloads\kescoaitest\api\src\main\resources\egovframework\spring\data-h2.sql",
+    [string]$BranchCsvPath = "",
+    [string]$GeneralCsvPath = "",
+    [string]$SelfCsvPath = "",
+    [string]$OutputSqlPath = "",
     [int]$TargetRows = 10000,
     [int]$GeneralSampleRows = 10000,
     [int]$SelfSampleRows = 10000
 )
 
 $ErrorActionPreference = "Stop"
+$projectRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
+
+if (-not $BranchCsvPath) { $BranchCsvPath = Join-Path $projectRoot "사업소별 분석결과\광주전남본부\광주전남본부직할\통합위험분석_광주전남본부직할_20260303.csv" }
+if (-not $GeneralCsvPath) { $GeneralCsvPath = Join-Path $projectRoot "설비데이터\일반용 샘플 데이터2.csv" }
+if (-not $SelfCsvPath) { $SelfCsvPath = Join-Path $projectRoot "설비데이터\자가용 샘플 데이터.csv" }
+if (-not $OutputSqlPath) { $OutputSqlPath = Join-Path $projectRoot "api\src\main\resources\egovframework\spring\data-h2.sql" }
 
 function Normalize-Text([object]$v) {
     if ($null -eq $v) { return "" }

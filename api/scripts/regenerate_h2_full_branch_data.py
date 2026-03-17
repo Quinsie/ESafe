@@ -6,8 +6,8 @@ import os
 import re
 from pathlib import Path
 
-
-BASE_DIR = Path(r"C:\Users\user\Downloads\kescoaitest")
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+BASE_DIR = PROJECT_ROOT
 CSV_PATH = (
     BASE_DIR
     / "사업소별 분석결과"
