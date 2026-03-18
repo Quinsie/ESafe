@@ -52,6 +52,114 @@
   - 대용량 공간데이터 폴더
   - 현재 `.gitignore`로 제외됨
 
+## 검증된 온보딩 절차
+
+아래 절차는 실제로 별도 폴더에 새로 `clone`한 뒤 그대로 수행해 확인한 흐름이다.
+
+### 1. 저장소 clone
+
+```powershell
+git clone https://github.com/Quinsie/ESafe.git
+cd .\ESafe
+```
+
+### 2. 별도 전달받은 `data` 묶음 복사
+
+별도 압축파일이나 공유 폴더로 `data` 디렉터리를 받았다면, `data` 폴더 자체를 두는 것이 아니라 그 안의 하위 폴더들을 프로젝트 루트로 꺼내놓아야 한다.
+
+즉, 아래처럼 배치해야 한다.
+
+```text
+<clone-root>/
+  api/
+  db/
+  README.md
+  설비데이터/
+  사업소별 분석결과/
+  건물연령/
+  홍수위험/
+  산사태위험/
+  침수흔적도/
+  용도지역지구/
+  전기화재이력/
+```
+
+잘못된 예:
+
+```text
+<clone-root>/
+  data/
+    설비데이터/
+    사업소별 분석결과/
+```
+
+위처럼 `data/` 아래에 그대로 두면 현재 코드와 스크립트는 읽지 못한다.
+
+### 3. 개발 도구 자동 설치
+
+```powershell
+cd .\api
+powershell -ExecutionPolicy Bypass -File .\scripts\setup-dev-env.ps1
+```
+
+기본 설치 위치:
+
+- Tomcat: `%USERPROFILE%\dev\apache-tomcat-8.5.100`
+- JDK: `%USERPROFILE%\dev\jdk-11.0.25+9`
+- Maven: `%USERPROFILE%\dev\apache-maven-3.9.9`
+
+### 4. H2 서버 기동
+
+```powershell
+cd .\api
+powershell -ExecutionPolicy Bypass -File .\scripts\start-tomcat-h2.ps1
+```
+
+기동 시 아래 메시지는 정상이다.
+
+- `Alert zone file not set. Using classpath fallback ...`
+
+기동 완료 후 기대 출력:
+
+- `Tomcat started: http://localhost:18080/`
+- `Dashboard: http://localhost:18080/riskDashboard.do`
+- `Login (admin): localadmin / LocalAdmin123`
+
+### 5. 브라우저 확인
+
+브라우저에서 아래 URL을 순서대로 확인한다.
+
+- `http://localhost:18080/login.do`
+- `http://localhost:18080/riskDashboard.do`
+- `http://localhost:18080/riskNationwideRiskMap.do`
+
+기본 계정:
+
+- 관리자: `localadmin / LocalAdmin123`
+- 사용자: `localuser / LocalUser123`
+
+### 6. 온보딩 성공 기준
+
+아래가 되면 README 기준 온보딩은 성공이다.
+
+- 로그인 페이지가 열림
+- 관리자 계정 로그인 가능
+- 대시보드 진입 가능
+- 전국 위험지도 화면 진입 가능
+- 외부 데이터가 루트에 있으면 건물 폴리곤/설비 상세 복원까지 동작
+
+### 7. 1차 장애 대응
+
+- `login.do`가 404면:
+  - Tomcat만 떠 있고 앱 컨텍스트가 시작 실패한 상태일 가능성이 높다.
+  - `%USERPROFILE%\dev\apache-tomcat-8.5.100\logs\localhost.<날짜>.log`
+  - `%USERPROFILE%\dev\apache-tomcat-8.5.100\logs\catalina.<날짜>.log`
+  - 위 두 로그를 먼저 확인한다.
+- 다른 JDK/Tomcat/Maven이 이미 환경변수로 잡혀 있으면:
+  - 스크립트는 `JAVA_HOME`, `CATALINA_HOME`, `MAVEN_HOME` 또는 `M2_HOME`을 우선 사용한다.
+  - 자동 설치본을 쓰고 싶으면 기존 환경변수를 비우거나, 스크립트 파라미터로 경로를 직접 넘긴다.
+- 첫 기동은 WAR 빌드와 전개까지 포함하므로 시간이 조금 걸릴 수 있다.
+
 ## 빠른 시작
 
 ### 1. 개발 도구 준비
@@ -147,6 +255,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\stop-tomcat.ps1
 
 - Java 웹앱과 재생성 스크립트는 이제 프로젝트 루트를 기준으로 외부 데이터를 찾는다.
 - `start-tomcat-h2.ps1`, `start-tomcat-oracle.ps1`는 실행 시 자동으로 `RISK_PROJECT_ROOT`와 `-Drisk.project.root`를 설정한다.
+- 기존 환경변수 `JAVA_HOME`, `CATALINA_HOME`, `MAVEN_HOME`, `M2_HOME`가 있으면 자동 설치본보다 그 값을 먼저 쓴다.
 - 수동 실행 시에는 현재 작업 디렉터리를 프로젝트 루트로 맞추거나 `RISK_PROJECT_ROOT`를 직접 지정하는 편이 안전하다.
 
 DB 프로필 전환:
@@ -176,6 +285,11 @@ H2 초기화는 `api/src/main/resources/egovframework/spring/context-datasource.
   - 정적 기상 샘플 유지
 - `data-h2-facility-history.sql`
   - 전체 설비 이력 대신 빈 시드
+
+주의:
+
+- 위 H2 초기화 SQL은 현재 `UTF-8 without BOM` 기준으로 저장돼 있다.
+- 다시 생성하거나 편집할 때 BOM이 들어가면 H2 초기화 첫 문장이 깨져 앱 기동이 실패할 수 있다.
 
 즉, 지금 리포만으로도 H2는 기동되지만, 과거처럼 `광주전남본부직할` 전체 건물 217,241건 + 설비 이력 2,064,816건이 들어 있는 상태는 아니다.
 
