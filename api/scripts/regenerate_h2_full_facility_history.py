@@ -20,12 +20,8 @@ SELF_CSV = BASE / "설비데이터" / "광주전남 자가용 검사 데이터_�
 OUTPUT_SQL = (
     BASE
     / "api"
-    / "src"
-    / "main"
-    / "resources"
-    / "egovframework"
-    / "spring"
-    / "data-h2-facility-history.sql"
+    / ".local-seed"
+    / "data-h2-facility-history.full.sql"
 )
 TODAY = "2026-03-12"
 
@@ -235,6 +231,7 @@ def write_self(out, addr_to_seq: dict[str, list[int]]) -> tuple[int, int, int]:
 
 def main() -> None:
     addr_to_seq, total_count = load_addr_map()
+    OUTPUT_SQL.parent.mkdir(parents=True, exist_ok=True)
     with OUTPUT_SQL.open("w", encoding="utf-8", newline="\n") as out:
         out.write("-- Auto-generated full facility history from facility CSV\n")
         out.write("-- Generated at: 2026-03-12 12:00:00\n")

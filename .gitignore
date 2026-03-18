@@ -85,6 +85,7 @@ LOCAL_TEST_LOGIN.txt
 api/.tmp*
 api/.m2/
 api/.mvn-local-settings.xml
+api/.local-seed/
 
 # Root/local scratch helpers
 _tmp*.py

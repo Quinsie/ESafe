@@ -35,9 +35,9 @@
                               ignore-failures="DROPS"
                               enabled="${risk.db.init.enabled:false}">
         <jdbc:script location="classpath:egovframework/spring/schema-h2.sql" encoding="UTF-8"/>
-        <jdbc:script location="classpath:egovframework/spring/data-h2.sql" encoding="UTF-8"/>
+        <jdbc:script location="${risk.db.h2.data.script:classpath:egovframework/spring/data-h2.sql}" encoding="UTF-8"/>
         <jdbc:script location="classpath:egovframework/spring/data-h2-weather-20260211.sql" encoding="UTF-8"/>
-        <jdbc:script location="classpath:egovframework/spring/data-h2-facility-history.sql" encoding="UTF-8"/>
+        <jdbc:script location="${risk.db.h2.facility-history.script:classpath:egovframework/spring/data-h2-facility-history.sql}" encoding="UTF-8"/>
     </jdbc:initialize-database>
 
     <bean id="txManager" class="org.springframework.jdbc.datasource.DataSourceTransactionManager">

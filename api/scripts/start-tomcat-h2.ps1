@@ -28,6 +28,9 @@ $webRootDir = Join-Path $TomcatHome "webapps\ROOT"
 $shutdownBat  = Join-Path $TomcatHome "bin\shutdown.bat"
 $catalinaCmd  = Join-Path $TomcatHome "bin\catalina.bat"
 $setenvBat    = Join-Path $TomcatHome "bin\setenv.bat"
+$localSeedDir = Join-Path $apiDir ".local-seed"
+$localBuildingSeed = Join-Path $localSeedDir "data-h2.full.sql"
+$localFacilitySeed = Join-Path $localSeedDir "data-h2-facility-history.full.sql"
 
 if (-not (Test-Path $TomcatHome)) { throw "Tomcat not found: $TomcatHome" }
 if (-not (Test-Path $JavaHome)) { throw "JAVA_HOME not found: $JavaHome" }
@@ -59,6 +62,33 @@ if (-not [string]::IsNullOrWhiteSpace($alertZoneFileTrimmed)) {
     Write-Host "Alert zone file not set. Using classpath fallback (egovframework/spring/alert-zones.csv)."
 }
 
+function Set-OrClearEnvValue {
+    param(
+        [string]$Name,
+        [string]$Value
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Value)) {
+        Remove-Item "Env:$Name" -ErrorAction SilentlyContinue
+    } else {
+        Set-Item "Env:$Name" -Value $Value
+    }
+}
+
+$buildingSeedUri = ""
+if (Test-Path $localBuildingSeed) {
+    $buildingSeedUri = ([System.Uri](Resolve-Path $localBuildingSeed).Path).AbsoluteUri
+    Write-Host "Using local full H2 building seed: $localBuildingSeed"
+}
+Set-OrClearEnvValue -Name "RISK_H2_DATA_SCRIPT" -Value $buildingSeedUri
+
+$facilitySeedUri = ""
+if (Test-Path $localFacilitySeed) {
+    $facilitySeedUri = ([System.Uri](Resolve-Path $localFacilitySeed).Path).AbsoluteUri
+    Write-Host "Using local full H2 facility seed: $localFacilitySeed"
+}
+Set-OrClearEnvValue -Name "RISK_H2_FACILITY_HISTORY_SCRIPT" -Value $facilitySeedUri
+
 Write-Host "[0/6] Configure Tomcat setenv.bat"
 $setenvContent = @"
 @echo off
@@ -72,6 +102,8 @@ set CATALINA_OPTS=%CATALINA_OPTS% -Drisk.security.user.password=$UserPassword
 if not "%RISK_PROJECT_ROOT%"=="" set CATALINA_OPTS=%CATALINA_OPTS% -Drisk.project.root="%RISK_PROJECT_ROOT%"
 if not "%KMA_AUTH_KEY%"=="" set CATALINA_OPTS=%CATALINA_OPTS% -Dkma.auth.key=%KMA_AUTH_KEY%
 if not "%RISK_ALERT_ZONE_FILE%"=="" set CATALINA_OPTS=%CATALINA_OPTS% -Drisk.weather.alert.zone.file="%RISK_ALERT_ZONE_FILE%"
+if not "%RISK_H2_DATA_SCRIPT%"=="" set CATALINA_OPTS=%CATALINA_OPTS% -Drisk.db.h2.data.script=%RISK_H2_DATA_SCRIPT%
+if not "%RISK_H2_FACILITY_HISTORY_SCRIPT%"=="" set CATALINA_OPTS=%CATALINA_OPTS% -Drisk.db.h2.facility-history.script=%RISK_H2_FACILITY_HISTORY_SCRIPT%
 "@
 try {
     Set-Content -Path $setenvBat -Value $setenvContent -Encoding ASCII -Force

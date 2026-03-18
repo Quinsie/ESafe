@@ -18,12 +18,8 @@ CSV_PATH = (
 SQL_PATH = (
     BASE_DIR
     / "api"
-    / "src"
-    / "main"
-    / "resources"
-    / "egovframework"
-    / "spring"
-    / "data-h2.sql"
+    / ".local-seed"
+    / "data-h2.full.sql"
 )
 
 GRADE_CODE_MAP = {
@@ -140,6 +136,7 @@ def open_reader(path: Path):
 def main() -> None:
     if not CSV_PATH.exists():
         raise FileNotFoundError(CSV_PATH)
+    SQL_PATH.parent.mkdir(parents=True, exist_ok=True)
 
     branch_nm = branch_from_filename(CSV_PATH)
     anal_date = extract_anal_date(CSV_PATH)
