@@ -89,3 +89,4 @@ api/.local-seed/
 
 # Root/local scratch helpers
 _tmp*.py
+res/
