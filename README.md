@@ -3,6 +3,15 @@
 전북대학교 2026학년도 1학기 캡스톤디자인 프로젝트, 전기재해위험지도 관리시스템 E-Safe.
 건물 정적 위험요소, 기상 위험, 설비 점검/검사 이력, 과거 화재 이력을 결합해 건물별 전기재해위험도를 산정하고 조회하는 프로젝트다. Python 분석 파이프라인, H2/Oracle 적재 스크립트, Spring MVC + MyBatis + JSP 웹 애플리케이션이 함께 들어 있다.
 
+## 공통 개발 환경 규칙
+
+- Python 명령은 항상 conda 환경 `esafe`에서 실행한다.
+- 환경이 없으면 저장소 루트에서 `conda env create -f environment.yml`로 생성한다.
+- 대화형 셸에서는 `conda activate esafe`를 사용하고, Codex 같은 비대화형 환경에서는 `conda run -n esafe <command>`를 사용한다.
+- `environment.yml`에는 Python 분석 스택뿐 아니라 로컬 온보딩에 필요한 `openjdk`, `maven`도 포함되어 있다.
+- Linux/Codex 환경의 H2 기동은 `api/scripts/start-jetty-h2.sh`를 기준으로 하고, Maven 캐시는 프로젝트 루트 `.m2/`를 사용한다.
+- Codex sandbox에서 Jetty/Tomcat이 `Operation not permitted`로 `8080` 포트를 열지 못하면, 같은 명령을 권한 상승으로 다시 실행한다.
+
 ## 온보딩 목표
 
 이 저장소의 기본 온보딩 기준은 `광주전남본부직할` 전체 데이터다.
@@ -122,7 +131,26 @@ git clone https://github.com/Quinsie/ESafe.git
 cd .\ESafe
 ```
 
-### 2. 외부 데이터 복사
+### 2. conda 환경 생성 및 활성화
+
+프로젝트 루트에서 실행:
+
+```bash
+conda env list
+conda env create -f environment.yml
+conda activate esafe
+```
+
+이미 `esafe` 환경이 있으면 `conda activate esafe`만 실행하면 된다.
+
+Codex에서는 활성화가 유지되지 않으므로 아래 형식을 사용한다.
+
+```bash
+conda run -n esafe python --version
+conda run -n esafe mvn -version
+```
+
+### 3. 외부 데이터 복사
 
 별도 전달받은 데이터 묶음에서 아래 폴더들을 clone한 프로젝트 루트에 복사한다.
 
@@ -135,7 +163,7 @@ cd .\ESafe
 - `용도지역지구`
 - `전기화재이력`
 
-### 3. 개발 도구 설치
+### 4. 개발 도구 준비
 
 ```powershell
 cd .\api
@@ -151,7 +179,9 @@ cd ..
 
 이미 `JAVA_HOME`, `CATALINA_HOME`, `MAVEN_HOME`, `M2_HOME`가 잡혀 있으면 그 값을 우선 사용한다.
 
-### 4. 설비 주소 정제 여부 확인
+Windows에서는 위 스크립트로 Tomcat/JDK/Maven을 설치한다. Linux/Codex에서는 별도 Tomcat 설치 없이 `esafe` 환경의 `openjdk`와 `maven`, 그리고 `api/scripts/start-jetty-h2.sh`를 사용한다.
+
+### 5. 설비 주소 정제 여부 확인
 
 전달받은 파일이 이미 아래 두 파일이면 이 단계는 건너뛰면 된다.
 
@@ -164,7 +194,13 @@ cd ..
 powershell -ExecutionPolicy Bypass -File .\run_kesco_py.ps1 .\clean_facility_addresses.py
 ```
 
-### 5. 전체 건물 H2 시드 생성
+Linux/Codex:
+
+```bash
+conda run -n esafe python clean_facility_addresses.py
+```
+
+### 6. 전체 건물 H2 시드 생성
 
 프로젝트 루트에서 실행:
 
@@ -180,7 +216,13 @@ powershell -ExecutionPolicy Bypass -File .\run_kesco_py.ps1 .\api\scripts\regene
 
 - `Output building rows : 217241`
 
-### 6. 전체 설비 이력 H2 시드 생성
+Linux/Codex:
+
+```bash
+conda run -n esafe python api/scripts/regenerate_h2_full_branch_data.py
+```
+
+### 7. 전체 설비 이력 H2 시드 생성
 
 사전 규모 확인:
 
@@ -209,26 +251,42 @@ powershell -ExecutionPolicy Bypass -File .\run_kesco_py.ps1 .\api\scripts\regene
 - `general_inserts=2023433`
 - `self_inserts=41383`
 
-### 7. H2 서버 기동
+Linux/Codex:
+
+```bash
+conda run -n esafe python api/scripts/estimate_full_facility_load.py
+conda run -n esafe python api/scripts/regenerate_h2_full_facility_history.py
+```
+
+### 8. H2 서버 기동
 
 ```powershell
 cd .\api
-powershell -ExecutionPolicy Bypass -File .\scripts\start-tomcat-h2.ps1
+powershell -ExecutionPolicy Bypass -File .\scripts\start-tomcat-h2.ps1 -HttpPort 8080
 ```
 
 정상일 때 스크립트 출력에 아래 문구가 포함된다.
 
 - `Using local full H2 building seed:`
 - `Using local full H2 facility seed:`
-- `Tomcat started: http://localhost:18080/`
+- `Tomcat started: http://localhost:8080/`
 
 `start-tomcat-h2.ps1`는 `api/.local-seed/` 아래의 전체 SQL이 존재하면 자동으로 그 파일들을 사용한다.
 
-### 8. 브라우저 확인
+Linux/Codex:
 
-- `http://localhost:18080/login.do`
-- `http://localhost:18080/riskDashboard.do`
-- `http://localhost:18080/riskNationwideRiskMap.do`
+```bash
+cd api
+bash ./scripts/start-jetty-h2.sh
+```
+
+최초 실행 시 Jetty 관련 Maven 의존성을 다운로드하며, 캐시는 프로젝트 루트 `.m2/`에 저장된다.
+
+### 9. 브라우저 확인
+
+- `http://localhost:8080/login.do`
+- `http://localhost:8080/riskDashboard.do`
+- `http://localhost:8080/riskNationwideRiskMap.do`
 
 기본 계정:
 
@@ -250,10 +308,10 @@ PowerShell에서 관리자 로그인 후 총건수를 확인하려면:
 
 ```powershell
 $session = New-Object Microsoft.PowerShell.Commands.WebRequestSession
-$loginPage = Invoke-WebRequest -Uri 'http://localhost:18080/login.do' -WebSession $session -UseBasicParsing
+$loginPage = Invoke-WebRequest -Uri 'http://localhost:8080/login.do' -WebSession $session -UseBasicParsing
 $token = ([regex]::Match($loginPage.Content, 'name="_csrf" value="([^"]+)"')).Groups[1].Value
-Invoke-WebRequest -Uri 'http://localhost:18080/perform_login.do' -Method Post -Body @{ username='localadmin'; password='LocalAdmin123'; _csrf=$token } -WebSession $session -MaximumRedirection 5 -UseBasicParsing | Out-Null
-$resp = Invoke-WebRequest -Uri 'http://localhost:18080/selectCombinedList.do?pageIndex=1&pageSize=1' -WebSession $session -UseBasicParsing
+Invoke-WebRequest -Uri 'http://localhost:8080/perform_login.do' -Method Post -Body @{ username='localadmin'; password='LocalAdmin123'; _csrf=$token } -WebSession $session -MaximumRedirection 5 -UseBasicParsing | Out-Null
+$resp = Invoke-WebRequest -Uri 'http://localhost:8080/selectCombinedList.do?pageIndex=1&pageSize=1' -WebSession $session -UseBasicParsing
 ($resp.Content | ConvertFrom-Json).totalCount
 ```
 
@@ -278,7 +336,7 @@ Tomcat만 떠 있고 웹 애플리케이션 컨텍스트가 시작 실패했을 
 
 1. `api/.local-seed/data-h2.full.sql` 존재 여부
 2. `api/.local-seed/data-h2-facility-history.full.sql` 존재 여부
-3. `start-tomcat-h2.ps1` 실행 시 `Using local full H2 ...` 문구 출력 여부
+3. `start-tomcat-h2.ps1 -HttpPort 8080` 또는 `start-jetty-h2.sh` 실행 시 전체 H2 시드 사용 문구 출력 여부
 4. 외부 데이터 폴더가 프로젝트 루트 바로 아래에 있는지 여부
 5. `통합위험분석_광주전남본부직할_20260303.csv` 파일 존재 여부
 6. `_정제.csv` 설비 파일 존재 여부
@@ -313,6 +371,7 @@ H2 초기화 SQL은 `UTF-8 without BOM`으로 저장해야 한다. BOM이 들어
 
 - `setup-dev-env.ps1`: Tomcat/JDK/Maven 설치
 - `start-tomcat-h2.ps1`: H2 WAR 빌드/배포/기동
+- `start-jetty-h2.sh`: Linux/Codex용 H2 Jetty 기동
 - `start-tomcat-oracle.ps1`: Oracle WAR 빌드/배포/기동
 - `stop-tomcat.ps1`: Tomcat 중지
 - `switch-db-profile.ps1`: H2/Oracle 설정 전환
@@ -341,4 +400,6 @@ H2 초기화 SQL은 `UTF-8 without BOM`으로 저장해야 한다. BOM이 들어
 
 - `설비데이터/`, `사업소별 분석결과/`, GIS 원본 폴더는 커밋하지 않는다.
 - `api/.local-seed/`에 생성된 전체 H2 SQL은 커밋하지 않는다.
+- 프로젝트 로컬 Maven 캐시 `.m2/`와 conda 환경에서 생성한 임시 산출물은 커밋하지 않는다.
+- 모든 커밋 메시지는 Conventional Commits 규칙을 따른다. 예: `docs: add esafe conda onboarding guide`
 - 공유 리포에는 스크립트와 코드, 소형 참조 자산만 남긴다.
