@@ -93,3 +93,4 @@ _tmp*.py
 res/
 원천데이터_목록.md
 데이터구조_진단.md
+train/
