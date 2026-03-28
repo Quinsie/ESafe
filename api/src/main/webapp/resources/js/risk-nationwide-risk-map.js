@@ -5,8 +5,8 @@
     var DISTRICT_URL = 'selectRiskMapDistrictLayer.do';
     var BUILDING_URL = 'selectRiskMapBuildingLayer.do';
     var BUILDING_POLYGON_URL = 'selectRiskMapBuildingPolygonLayer.do';
-    var ZOOM_BUILDING = 14;
-    var ZOOM_POLYGON = 16;
+    var ZOOM_BUILDING = 15.8;
+    var ZOOM_POLYGON = 17.0;
     var BUILDING_POINT_MAX_ROWS = 20000;
     var BUILDING_POLYGON_MAX_ROWS = 1500;
     var DEFAULT_CENTER = [126.8514, 35.1601];
@@ -22,20 +22,29 @@
         D: { label: '\uACBD\uACE0', color: '#ea7a19', fill: 'rgba(234, 122, 25, 0.75)' },
         E: { label: '\uC704\uD5D8', color: '#cf2f22', fill: 'rgba(207, 47, 34, 0.76)' }
     };
+    var RISK_PRIORITY = { A: 1, B: 2, C: 3, D: 4, E: 5 };
 
     var state = {
         map: null,
         mapEngine: 'openlayers',
         mapTarget: null,
+        rankingListElement: null,
         districtSource: null,
         buildingSource: null,
+        buildingLayer: null,
+        polygonLayer: null,
+        highlightSource: null,
         polygonSource: null,
         popupOverlay: null,
         popupElement: null,
         popupContentElement: null,
         statusElement: null,
         districtRows: [],
+        rankingRows: [],
+        selectedRankingRow: null,
         activeRiskCodes: ['A', 'B', 'C', 'D', 'E'],
+        rankingFilter: 'danger',
+        rankingRequest: null,
         pointRequest: null,
         polygonRequest: null,
         requestTimer: null,
@@ -45,7 +54,8 @@
         styleCache: {
             district: {},
             building: {},
-            polygon: {}
+            polygon: {},
+            selectedBuilding: {}
         }
     };
 
@@ -197,6 +207,20 @@
         return RISK_META[riskCd] || { label: riskCd || '-', color: '#7d8794', fill: 'rgba(125, 135, 148, 0.68)' };
     }
 
+    function getRiskPriority(riskCd) {
+        return RISK_PRIORITY[String(riskCd || '').toUpperCase()] || 0;
+    }
+
+    function getNumericScore(row) {
+        var score = toNumber(row && (row.totalScore || row.combinedScore || row.avgScore));
+        return isFinite(score) ? score : -1;
+    }
+
+    function getMaxDistrictScore(row) {
+        var score = toNumber(row && row.maxScore);
+        return isFinite(score) ? score : -1;
+    }
+
     function getSelectedRiskCodes() {
         return $('#nationwideGradeFilter input[type="checkbox"]:checked').map(function() {
             return String(this.value || '').toUpperCase();
@@ -216,6 +240,192 @@
         }).join(', ');
     }
 
+    function getDistrictCenterCoordinate(row) {
+        var projected = epsg5186ToWgs84(toNumber(row && row.centerLon), toNumber(row && row.centerLat));
+        if (!projected) {
+            return null;
+        }
+        return ol.proj.fromLonLat([projected.lon, projected.lat]);
+    }
+
+    function injectRankingCoordinates(rows) {
+        return (rows || []).map(function(row) {
+            var copied = $.extend({}, row);
+            copied.lon5186 = copied.lon;
+            copied.lat5186 = copied.lat;
+            var coordinate = getBuildingCoordinate(copied);
+            if (coordinate) {
+                copied._mapCoordinate = coordinate;
+            }
+            return copied;
+        });
+    }
+
+    function getStoredRankingCoordinate(row) {
+        if (row && $.isArray(row._mapCoordinate) && row._mapCoordinate.length === 2) {
+            return row._mapCoordinate;
+        }
+        return null;
+    }
+
+    function getBuildingCoordinate(row) {
+        var stored = getStoredRankingCoordinate(row);
+        if (stored) {
+            return stored;
+        }
+        var projected = epsg5186ToWgs84(toNumber(row && (row.lon5186 || row.lon)), toNumber(row && (row.lat5186 || row.lat)));
+        if (!projected) {
+            var directLon = toNumber(row && row.lon);
+            var directLat = toNumber(row && row.lat);
+            if (isValidLatLon(directLat, directLon)) {
+                return ol.proj.fromLonLat([directLon, directLat]);
+            }
+            return null;
+        }
+        return ol.proj.fromLonLat([projected.lon, projected.lat]);
+    }
+
+    function findBuildingFeature(row) {
+        if (!state.buildingSource || !row) {
+            return null;
+        }
+        var targetSeq = String(row.bldgSeq || '');
+        var features = state.buildingSource.getFeatures();
+        for (var i = 0; i < features.length; i += 1) {
+            var feature = features[i];
+            var featureRow = feature.get('row') || {};
+            if (String(featureRow.bldgSeq || '') === targetSeq) {
+                return feature;
+            }
+        }
+        return null;
+    }
+
+    function getRankingRiskCodes() {
+        if (state.rankingFilter === 'warning') {
+            return ['D'];
+        }
+        if (state.rankingFilter === 'danger') {
+            return ['E'];
+        }
+        return state.activeRiskCodes.slice();
+    }
+
+    function moveToRankingRow(row, event) {
+        if (!state.map) {
+            return;
+        }
+        clearPopup();
+        var coordinate = null;
+        var buildingFeature = findBuildingFeature(row);
+        if (buildingFeature && buildingFeature.getGeometry()) {
+            coordinate = ol.extent.getCenter(buildingFeature.getGeometry().getExtent());
+        }
+        if (!coordinate) {
+            coordinate = getBuildingCoordinate(row);
+        }
+        if (!coordinate) {
+            return;
+        }
+        var view = state.map.getView();
+        var currentZoom = view.getZoom();
+        var targetZoom = isFinite(currentZoom) ? currentZoom : DEFAULT_ZOOM;
+        if (targetZoom < ZOOM_BUILDING) {
+            targetZoom = ZOOM_BUILDING;
+        }
+        if (typeof view.cancelAnimations === 'function') {
+            view.cancelAnimations();
+        }
+        if (typeof view.animate === 'function') {
+            view.animate({
+                center: coordinate,
+                zoom: clampZoom(targetZoom),
+                duration: 700
+            });
+        } else {
+            view.setCenter(coordinate);
+            view.setZoom(clampZoom(targetZoom));
+        }
+        updateSelectedBuildingHighlight(row);
+        if (event) {
+            showRankingPopupAtEvent(row, event);
+        } else if (state.popupContentElement && state.popupOverlay) {
+            state.popupContentElement.innerHTML = buildBuildingPopup(row);
+            state.popupOverlay.setPosition(coordinate);
+        }
+    }
+
+    function renderRankingPanel() {
+        if (!state.rankingListElement) {
+            return;
+        }
+
+        var rows = state.rankingRows || [];
+        if (!rows.length) {
+            state.rankingListElement.innerHTML = '<div class="nationwide-ranking-empty">\uD604\uC7AC \uD544\uD130 \uC870\uAC74\uC5D0 \uB9DE\uB294 \uAC74\uBB3C\uC774 \uC5C6\uC2B5\uB2C8\uB2E4.</div>';
+            return;
+        }
+
+        var html = rows.map(function(row, index) {
+            var riskCd = String(row.riskCd || '').toUpperCase();
+            var meta = getRiskMeta(riskCd);
+            return ''
+                + '<button type="button" class="nationwide-ranking-item" data-ranking-index="' + index + '">'
+                + '<span class="nationwide-ranking-rank">' + (index + 1) + '</span>'
+                + '<span class="nationwide-ranking-main">'
+                + '<span class="nationwide-ranking-name">' + escapeHtml(row.addr || row.bldgNm || '-') + '</span>'
+                + '<span class="nationwide-ranking-meta">'
+                + '<span class="nationwide-ranking-badge" style="background:' + meta.color + ';">' + escapeHtml(meta.label) + '</span>'
+                + '<span>' + escapeHtml(row.bldgNm || '\uAC74\uBB3C') + ' · \uC810\uC218 ' + escapeHtml(row.totalScore || row.combinedScore || '-') + '</span>'
+                + '</span>'
+                + '</span>'
+                + '<span class="nationwide-ranking-count">' + escapeHtml(row.districtNm || row.regionNm || '-') + '</span>'
+                + '</button>';
+        }).join('');
+
+        state.rankingListElement.innerHTML = html;
+        state.rankingListElement.setAttribute('data-ranking-size', rows.length);
+    }
+
+    function fetchRankingRows() {
+        if (!state.rankingListElement) {
+            return;
+        }
+        if (state.rankingRequest && typeof state.rankingRequest.abort === 'function') {
+            state.rankingRequest.abort();
+        }
+        var riskCodes = getRankingRiskCodes();
+        if (!riskCodes.length) {
+            state.rankingRows = [];
+            renderRankingPanel();
+            return;
+        }
+        state.rankingListElement.innerHTML = '<div class="nationwide-ranking-empty">\uC0C1\uC704 \uC704\uD5D8 \uAC74\uBB3C\uC744 \uBD88\uB7EC\uC624\uB294 \uC911\uC785\uB2C8\uB2E4.</div>';
+        state.rankingRequest = $.ajax({
+            url: BUILDING_URL,
+            method: 'GET',
+            dataType: 'json',
+            traditional: true,
+            data: {
+                branchNm: BRANCH_NAME,
+                maxRows: 10,
+                riskCdList: riskCodes
+            }
+        }).done(function(response) {
+            var rows = response && $.isArray(response.data) ? response.data.slice(0, 10) : [];
+            state.rankingRows = injectRankingCoordinates(rows);
+            renderRankingPanel();
+        }).fail(function(xhr, textStatus) {
+            if (textStatus === 'abort') {
+                return;
+            }
+            state.rankingRows = [];
+            state.rankingListElement.innerHTML = '<div class="nationwide-ranking-empty">\uAC74\uBB3C \uC21C\uC704 \uC870\uD68C\uC5D0 \uC2E4\uD328\uD588\uC2B5\uB2C8\uB2E4.</div>';
+        }).always(function() {
+            state.rankingRequest = null;
+        });
+    }
+
     function getMode() {
         var zoom = state.map ? state.map.getView().getZoom() : DEFAULT_ZOOM;
         if (zoom >= ZOOM_POLYGON) {
@@ -227,20 +437,38 @@
         return 'district';
     }
 
+    function getDistrictRadius() {
+        var zoom = state.map ? state.map.getView().getZoom() : DEFAULT_ZOOM;
+        if (!isFinite(zoom)) {
+            zoom = DEFAULT_ZOOM;
+        }
+        if (zoom <= 7.5) {
+            return 22;
+        }
+        if (zoom <= 8.5) {
+            return 18;
+        }
+        if (zoom <= 9.5) {
+            return 14;
+        }
+        return 10;
+    }
+
     function getDistrictStyle(riskCd) {
-        var cacheKey = riskCd || 'default';
+        var cacheKey = (riskCd || 'default') + ':' + getDistrictRadius();
         if (!state.styleCache.district[cacheKey]) {
             var meta = getRiskMeta(riskCd);
+            var radius = getDistrictRadius();
             state.styleCache.district[cacheKey] = new ol.style.Style({
                 image: new ol.style.Circle({
-                    radius: 9.6,
-                    fill: new ol.style.Fill({ color: meta.fill }),
-                    stroke: new ol.style.Stroke({ color: '#111111', width: 2.8 })
+                    radius: radius,
+                    fill: new ol.style.Fill({ color: meta.fill.replace('0.72', '0.42').replace('0.74', '0.42').replace('0.75', '0.42').replace('0.76', '0.42') }),
+                    stroke: new ol.style.Stroke({ color: 'rgba(255,255,255,0.12)', width: 0.7 })
                 }),
                 text: new ol.style.Text({
                     font: '600 11px "Malgun Gothic", sans-serif',
-                    fill: new ol.style.Fill({ color: '#17202a' }),
-                    stroke: new ol.style.Stroke({ color: 'rgba(255,255,255,0.9)', width: 3 }),
+                    fill: new ol.style.Fill({ color: 'rgba(0,0,0,0)' }),
+                    stroke: new ol.style.Stroke({ color: 'rgba(0,0,0,0)', width: 0 }),
                     offsetY: 20
                 })
             });
@@ -248,17 +476,59 @@
         return state.styleCache.district[cacheKey];
     }
 
+    function buildPinIconDataUrl(fillColor, strokeColor, holeColor) {
+        var svg = ''
+            + '<svg xmlns="http://www.w3.org/2000/svg" width="26" height="34" viewBox="0 0 26 34">'
+            + '<path d="M13 1.5C6.45 1.5 1.5 6.51 1.5 12.76c0 8.29 8.31 14.87 10.65 19.36.38.73 1.33.73 1.71 0 2.34-4.49 10.64-11.07 10.64-19.36C24.5 6.51 19.55 1.5 13 1.5z"'
+            + ' fill="' + fillColor + '" stroke="' + (strokeColor || 'rgba(255,255,255,0.92)') + '" stroke-width="1.6"/>'
+            + '<circle cx="13" cy="12.4" r="4.1" fill="' + (holeColor || 'rgba(255,255,255,0.94)') + '"/>'
+            + '</svg>';
+        return 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(svg);
+    }
+
+    function getSelectedBuildingStyle(riskCd) {
+        var cacheKey = riskCd || 'default';
+        if (!state.styleCache.selectedBuilding[cacheKey]) {
+            var meta = getRiskMeta(riskCd);
+            state.styleCache.selectedBuilding[cacheKey] = new ol.style.Style({
+                image: new ol.style.Icon({
+                    src: buildPinIconDataUrl(meta.color, '#111111', '#fff8c5'),
+                    anchor: [0.5, 1],
+                    anchorXUnits: 'fraction',
+                    anchorYUnits: 'fraction',
+                    imgSize: [26, 34],
+                    scale: 1.08
+                }),
+                zIndex: 999
+            });
+        }
+        return state.styleCache.selectedBuilding[cacheKey];
+    }
+
     function getBuildingStyle(riskCd) {
         var cacheKey = riskCd || 'default';
         if (!state.styleCache.building[cacheKey]) {
             var meta = getRiskMeta(riskCd);
-            state.styleCache.building[cacheKey] = new ol.style.Style({
-                image: new ol.style.Circle({
-                    radius: 5.2,
-                    fill: new ol.style.Fill({ color: meta.color }),
-                    stroke: new ol.style.Stroke({ color: '#111111', width: 2.2 })
-                })
-            });
+            if (riskCd === 'E') {
+                state.styleCache.building[cacheKey] = new ol.style.Style({
+                    image: new ol.style.Icon({
+                        src: buildPinIconDataUrl(meta.color),
+                        anchor: [0.5, 1],
+                        anchorXUnits: 'fraction',
+                        anchorYUnits: 'fraction',
+                        imgSize: [26, 34],
+                        scale: 0.74
+                    })
+                });
+            } else {
+                state.styleCache.building[cacheKey] = new ol.style.Style({
+                    image: new ol.style.Circle({
+                        radius: 4.4,
+                        fill: new ol.style.Fill({ color: meta.color }),
+                        stroke: new ol.style.Stroke({ color: 'rgba(255,255,255,0.22)', width: 0.8 })
+                    })
+                });
+            }
         }
         return state.styleCache.building[cacheKey];
     }
@@ -273,6 +543,36 @@
             });
         }
         return state.styleCache.polygon[cacheKey];
+    }
+
+    function clearSelectedBuildingHighlight() {
+        state.selectedRankingRow = null;
+        if (state.highlightSource) {
+            state.highlightSource.clear();
+        }
+    }
+
+    function updateSelectedBuildingHighlight(row) {
+        if (!state.highlightSource) {
+            return;
+        }
+        state.highlightSource.clear();
+        state.selectedRankingRow = row || null;
+        if (!row) {
+            return;
+        }
+        var coordinate = getBuildingCoordinate(row);
+        if (!coordinate) {
+            return;
+        }
+        var feature = new ol.Feature({
+            geometry: new ol.geom.Point(coordinate)
+        });
+        feature.setProperties({
+            layerType: 'ranking-highlight',
+            row: row
+        });
+        state.highlightSource.addFeature(feature);
     }
 
     function setStatus(message) {
@@ -482,7 +782,7 @@
     function renderDistrictFeatures() {
         state.districtSource.clear();
         if (getMode() !== 'district') {
-            return 0;
+            return { visibleCount: 0 };
         }
         var visibleRows = state.districtRows.filter(function(row) {
             return isRiskVisible(row.riskCd);
@@ -493,7 +793,9 @@
                 state.districtSource.addFeature(feature);
             }
         });
-        return visibleRows.length;
+        return {
+            visibleCount: state.districtSource.getFeatures().length
+        };
     }
 
     function clearBuildingLayers() {
@@ -524,21 +826,27 @@
         };
     }
 
-    function updateStatusForDistrict(count) {
+    function updateStatusForDistrict(summary) {
         setStatus(
-            '\uAD6C\uC5ED \uB808\uC774\uC5B4 ' + count + '\uAC1C'
+            '\uAD6C\uC5ED \uACBD\uACE0\uC810 ' + (summary.visibleCount || 0) + '\uAC1C'
             + ' | \uD45C\uC2DC \uB4F1\uAE09: ' + describeActiveGrades()
             + ' | \uD655\uB300 \uC90C ' + ZOOM_BUILDING + '+\uC5D0\uC11C \uAC74\uBB3C \uB808\uC774\uC5B4 \uD45C\uC2DC'
         );
     }
 
     function updateStatusForBuilding(mode, response) {
-        var subject = mode === 'polygon'
-            ? '\uAC74\uBB3C \uD3F4\uB9AC\uACE4'
-            : '\uAC74\uBB3C \uD3EC\uC778\uD2B8';
+        var subject;
+        if (mode === 'polygon') {
+            subject = '\uAC74\uBB3C \uD3F4\uB9AC\uACE4';
+        } else {
+            subject = '\uAC74\uBB3C \uD3EC\uC778\uD2B8';
+        }
         var summary = subject + ' ' + (response.visibleCount || 0) + '\uAC1C';
         if (response.totalCount !== undefined && response.totalCount !== null) {
             summary += ' / \uC804\uCCB4 ' + response.totalCount + '\uAC1C';
+        }
+        if (mode === 'point' && response.reducedCount > 0) {
+            summary += ' | \uD654\uBA74 \uC911\uBCF5 \uC815\uB9AC ' + response.reducedCount + '\uAC1C';
         }
         if (response.truncated) {
             summary += ' (' + (response.maxRows || 0) + '\uAC1C \uC0C1\uD55C)';
@@ -562,7 +870,11 @@
             }
             count += 1;
         });
-        return count;
+        return {
+            visibleCount: count,
+            totalCount: rows.length,
+            reducedCount: 0
+        };
     }
 
     function requestBuildingLayer(mode) {
@@ -608,8 +920,8 @@
                 return;
             }
             var rows = response && $.isArray(response.data) ? response.data : [];
-            renderBuildingRows(rows, mode);
-            updateStatusForBuilding(mode, response || {});
+            var renderSummary = renderBuildingRows(rows, mode);
+            updateStatusForBuilding(mode, $.extend({}, response || {}, renderSummary));
         }).fail(function(xhr, textStatus) {
             if (textStatus === 'abort') {
                 return;
@@ -632,15 +944,25 @@
         if (!state.activeRiskCodes.length) {
             state.districtSource.clear();
             clearBuildingLayers();
+            state.rankingRows = [];
+            clearSelectedBuildingHighlight();
+            renderRankingPanel();
             setStatus('\uD45C\uC2DC\uD560 \uB4F1\uAE09\uC744 \uC120\uD0DD\uD558\uC138\uC694.');
             return;
         }
 
+        fetchRankingRows();
         var mode = getMode();
-        var districtCount = renderDistrictFeatures();
+        if (state.buildingLayer) {
+            state.buildingLayer.setVisible(mode === 'point');
+        }
+        if (state.polygonLayer) {
+            state.polygonLayer.setVisible(mode === 'polygon');
+        }
+        var districtSummary = renderDistrictFeatures();
         if (mode === 'district') {
             clearBuildingLayers();
-            updateStatusForDistrict(districtCount);
+            updateStatusForDistrict(districtSummary);
             return;
         }
 
@@ -692,10 +1014,14 @@
     function buildBuildingPopup(row) {
         var meta = getRiskMeta(row.riskCd);
         var detailUrl = 'riskBuildingDetail.do?bldgSeq=' + encodeURIComponent(row.bldgSeq || '');
+        var aggregateText = row.aggregateCount > 1
+            ? '<div style="margin-bottom:4px;">\uC778\uC811 \uAC74\uBB3C <strong>' + escapeHtml(row.aggregateCount) + '\uAC1C</strong>\uB97C \uB300\uD45C \uD45C\uC2DC</div>'
+            : '';
         return ''
             + '<div style="font-weight:700;font-size:13px;margin-bottom:6px;">' + escapeHtml(row.bldgNm || '\uAC74\uBB3C') + '</div>'
             + '<div style="margin-bottom:4px;">' + escapeHtml(row.addr || '-') + '</div>'
             + '<div style="margin-bottom:4px;">\uB4F1\uAE09: <strong style="color:' + meta.color + ';">' + escapeHtml(meta.label) + '</strong></div>'
+            + aggregateText
             + '<div style="margin-bottom:8px;">\uC885\uD569\uC810\uC218: <strong>' + escapeHtml(row.totalScore || row.combinedScore || '-') + '</strong></div>'
             + '<a href="' + detailUrl + '" style="color:#1c5db6;font-weight:700;text-decoration:none;">\uAC74\uBB3C \uC0C1\uC138 \uBCF4\uAE30</a>';
     }
@@ -703,6 +1029,11 @@
     function clearPopup() {
         if (state.popupOverlay) {
             state.popupOverlay.setPosition(undefined);
+        }
+        if (state.popupElement) {
+            state.popupElement.style.position = 'absolute';
+            state.popupElement.style.left = '';
+            state.popupElement.style.top = '';
         }
     }
 
@@ -755,6 +1086,11 @@
     function showFeaturePopup(feature, coordinate) {
         var row = feature.get('row') || {};
         var layerType = feature.get('layerType');
+        if (state.popupElement) {
+            state.popupElement.style.position = 'absolute';
+            state.popupElement.style.left = '';
+            state.popupElement.style.top = '';
+        }
         if (layerType === 'district') {
             state.popupContentElement.innerHTML = buildDistrictPopup(row);
         } else {
@@ -763,9 +1099,39 @@
         state.popupOverlay.setPosition(coordinate);
     }
 
+    function showRankingPopupAtEvent(row, event) {
+        if (!state.popupElement || !state.popupContentElement) {
+            return;
+        }
+        if (state.popupOverlay) {
+            state.popupOverlay.setPosition(undefined);
+        }
+        state.popupContentElement.innerHTML = buildBuildingPopup(row);
+        state.popupElement.style.position = 'fixed';
+        state.popupElement.style.left = Math.min(event.clientX + 14, Math.max(40, window.innerWidth - 320)) + 'px';
+        state.popupElement.style.top = Math.min(event.clientY + 10, Math.max(40, window.innerHeight - 240)) + 'px';
+    }
+
+    function zoomIntoFeature(feature) {
+        if (!state.map) {
+            return;
+        }
+        var geometry = feature.getGeometry();
+        if (!geometry) {
+            return;
+        }
+        var targetCoordinate = ol.extent.getCenter(geometry.getExtent());
+        state.map.getView().animate({
+            center: targetCoordinate,
+            zoom: ZOOM_BUILDING,
+            duration: 700
+        });
+    }
+
     function initMap() {
         var target = document.getElementById('nationwideMapCanvas');
         state.statusElement = document.getElementById('nationwideMapStatus');
+        state.rankingListElement = document.getElementById('nationwideRankingList');
         if (!target || typeof ol === 'undefined') {
             setStatus('\uC9C0\uB3C4 \uC5D4\uC9C4\uC744 \uBD88\uB7EC\uC624\uC9C0 \uBABB\uD588\uC2B5\uB2C8\uB2E4.');
             return;
@@ -774,6 +1140,7 @@
 
         state.districtSource = new ol.source.Vector();
         state.buildingSource = new ol.source.Vector();
+        state.highlightSource = new ol.source.Vector();
         state.polygonSource = new ol.source.Vector();
 
         var districtLayer = new ol.layer.Vector({
@@ -794,6 +1161,14 @@
             }
         });
 
+        var highlightLayer = new ol.layer.Vector({
+            source: state.highlightSource,
+            style: function(feature) {
+                var row = feature.get('row') || {};
+                return getSelectedBuildingStyle(row.riskCd);
+            }
+        });
+
         var polygonLayer = new ol.layer.Vector({
             source: state.polygonSource,
             style: function(feature) {
@@ -801,6 +1176,8 @@
                 return getPolygonStyle(row.riskCd);
             }
         });
+        state.buildingLayer = buildingLayer;
+        state.polygonLayer = polygonLayer;
 
         var interactions = ol.interaction.defaults({
             altShiftDragRotate: false,
@@ -823,7 +1200,7 @@
         });
         state.map = new ol.Map({
             target: target,
-            layers: [baseLayer, districtLayer, polygonLayer, buildingLayer],
+            layers: [baseLayer, districtLayer, polygonLayer, buildingLayer, highlightLayer],
             view: view,
             controls: controls,
             interactions: interactions,
@@ -852,6 +1229,12 @@
                 clearPopup();
                 return;
             }
+            var layerType = feature.get('layerType');
+            if (layerType === 'district') {
+                zoomIntoFeature(feature);
+                showFeaturePopup(feature, evt.coordinate);
+                return;
+            }
             showFeaturePopup(feature, evt.coordinate);
         });
 
@@ -868,6 +1251,22 @@
 
         $('#nationwideGradeFilter').on('change', 'input[type="checkbox"]', function() {
             scheduleRefresh(false);
+        });
+
+        $('#nationwideRankingTabs').on('click', 'button[data-ranking-filter]', function() {
+            var filter = String(this.getAttribute('data-ranking-filter') || 'danger');
+            state.rankingFilter = filter;
+            $('#nationwideRankingTabs button').removeClass('is-active');
+            $(this).addClass('is-active');
+            fetchRankingRows();
+        });
+
+        $('#nationwideRankingList').on('click', '.nationwide-ranking-item', function(event) {
+            var index = Number(this.getAttribute('data-ranking-index'));
+            if (!state.rankingRows || !isFinite(index) || index < 0 || index >= state.rankingRows.length) {
+                return;
+            }
+            moveToRankingRow(state.rankingRows[index], event);
         });
     }
 

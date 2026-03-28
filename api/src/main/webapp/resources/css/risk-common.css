@@ -312,12 +312,18 @@ a { color: inherit; text-decoration: none; }
 }
 
 /* ===== nationwide risk map page ===== */
+.nationwide-map-layout {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 320px;
+    gap: 16px;
+    align-items: start;
+    margin-bottom: 16px;
+}
 .nationwide-map-shell {
     background: #fff;
     border-radius: 6px;
     box-shadow: 0 1px 3px rgba(0,0,0,0.1);
     padding: 16px;
-    margin-bottom: 16px;
 }
 .nationwide-map-toolbar {
     display: flex;
@@ -448,6 +454,145 @@ a { color: inherit; text-decoration: none; }
     line-height: 1.4;
     pointer-events: none;
 }
+.nationwide-ranking-shell {
+    background: #fff;
+    border-radius: 6px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+    padding: 16px;
+    min-height: 552px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+}
+.nationwide-ranking-header h3 {
+    margin: 0;
+    color: #203040;
+    font-size: 17px;
+    font-weight: 800;
+}
+.nationwide-ranking-header p {
+    margin: 5px 0 0;
+    color: #66788a;
+    font-size: 12px;
+    line-height: 1.45;
+}
+.nationwide-ranking-tabs {
+    display: flex;
+    gap: 8px;
+}
+.nationwide-ranking-tabs button {
+    flex: 1;
+    border: 1px solid #d7e0ea;
+    border-radius: 999px;
+    background: #f6f9fc;
+    color: #4d5d6d;
+    font-size: 12px;
+    font-weight: 800;
+    padding: 9px 0;
+    cursor: pointer;
+    transition: background 0.18s ease, color 0.18s ease, border-color 0.18s ease;
+}
+.nationwide-ranking-tabs button.is-active {
+    background: #17324f;
+    border-color: #17324f;
+    color: #fff;
+}
+.nationwide-ranking-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    min-height: 0;
+    max-height: 472px;
+    overflow-y: auto;
+    padding-right: 4px;
+}
+.nationwide-ranking-list::-webkit-scrollbar {
+    width: 8px;
+}
+.nationwide-ranking-list::-webkit-scrollbar-thumb {
+    border-radius: 999px;
+    background: #c5d1dd;
+}
+.nationwide-ranking-list::-webkit-scrollbar-track {
+    background: transparent;
+}
+.nationwide-ranking-item {
+    display: grid;
+    grid-template-columns: 34px minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    border: 1px solid #e0e7ef;
+    border-radius: 12px;
+    background: #fbfdff;
+    padding: 12px 13px;
+    text-align: left;
+    cursor: pointer;
+}
+.nationwide-ranking-item:hover,
+.nationwide-ranking-item:focus {
+    border-color: #b8c8da;
+    background: #f4f8fc;
+    outline: none;
+}
+.nationwide-ranking-rank {
+    width: 34px;
+    height: 34px;
+    border-radius: 50%;
+    background: #edf3f9;
+    color: #17324f;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 13px;
+    font-weight: 800;
+}
+.nationwide-ranking-main {
+    min-width: 0;
+}
+.nationwide-ranking-name {
+    display: block;
+    color: #223243;
+    font-size: 14px;
+    font-weight: 800;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.nationwide-ranking-meta {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 4px;
+    color: #647586;
+    font-size: 12px;
+}
+.nationwide-ranking-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 44px;
+    padding: 4px 8px;
+    border-radius: 999px;
+    color: #fff;
+    font-size: 11px;
+    font-weight: 800;
+}
+.nationwide-ranking-count {
+    color: #223243;
+    font-size: 15px;
+    font-weight: 800;
+    white-space: nowrap;
+}
+.nationwide-ranking-empty {
+    border: 1px dashed #d7e0ea;
+    border-radius: 12px;
+    background: #fbfdff;
+    color: #6c7d8d;
+    font-size: 13px;
+    line-height: 1.55;
+    padding: 18px 14px;
+}
 .nationwide-brief-shell {
     background: #fff;
     border-radius: 6px;
@@ -465,6 +610,9 @@ a { color: inherit; text-decoration: none; }
 }
 
 @media (max-width: 900px) {
+    .nationwide-map-layout {
+        grid-template-columns: 1fr;
+    }
     .facility-detail-grid {
         grid-template-columns: 1fr;
     }
@@ -488,5 +636,8 @@ a { color: inherit; text-decoration: none; }
     }
     .nationwide-grade-filter {
         justify-content: flex-start;
+    }
+    .nationwide-ranking-shell {
+        min-height: 0;
     }
 }
