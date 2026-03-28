@@ -70,7 +70,18 @@ public class RiskWeatherController {
 
     @PostConstruct
     public void warmUpWeatherMapCaches() {
-        refreshMapCachesNow(true, true, true);
+        Thread warmUpThread = new Thread(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    refreshMapCachesNow(true, true, true);
+                } catch (Exception e) {
+                    LOGGER.warn("weather map cache warm-up failed during startup", e);
+                }
+            }
+        }, "risk-weather-map-warmup");
+        warmUpThread.setDaemon(true);
+        warmUpThread.start();
     }
 
     @Scheduled(cron = "0 0 * * * *", zone = KST_ZONE_ID)
