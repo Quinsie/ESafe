@@ -5,8 +5,8 @@
     var DISTRICT_URL = 'selectRiskMapDistrictLayer.do';
     var BUILDING_URL = 'selectRiskMapBuildingLayer.do';
     var BUILDING_POLYGON_URL = 'selectRiskMapBuildingPolygonLayer.do';
-    var ZOOM_BUILDING = 15.8;
-    var ZOOM_POLYGON = 17.0;
+    var ZOOM_BUILDING = 14.0;
+    var ZOOM_POLYGON = 16.0;
     var BUILDING_POINT_MAX_ROWS = 20000;
     var BUILDING_POLYGON_MAX_ROWS = 1500;
     var DEFAULT_CENTER = [126.8514, 35.1601];

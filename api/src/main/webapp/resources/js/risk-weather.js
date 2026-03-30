@@ -2,6 +2,27 @@
  * risk-weather.js - 기상특보 현황
  */
 (function() {
+    var activeWeatherMapKind = 'wrn';
+    var weatherMapMetaByKind = {
+        wrn: {
+            title: '종합 특보',
+            description: '전국 기상 특보 상황을 한눈에 볼 수 있는 종합 지도입니다.',
+            alt: '종합 특보 현황 지도',
+            wrn: 'W,R,C,D,O,N,V,T,S,Y,H,F'
+        },
+        gk2a: {
+            title: '실시간 위성',
+            description: 'GK2A 가시영상 기준으로 현재 구름 분포를 확인할 수 있습니다.',
+            alt: '위성지도',
+            wrn: ''
+        },
+        wildfire: {
+            title: '산불위험도',
+            description: '기상청 산불위험도를 단계별로 확인할 수 있는 지도입니다.',
+            alt: '산불위험지도',
+            wrn: ''
+        }
+    };
     var weatherScoreFilterData = {
         hqList: [],
         branchList: [],
@@ -11,8 +32,9 @@
     };
 
     $(function() {
-        // Initial load: all maps + today's alert/score tables
-        loadWeatherMaps(['wrn', 'gk2a', 'wildfire'], { forceRefresh: false });
+        // Initial load: active map + today's alert/score tables
+        initWeatherMapTabs();
+        loadWeatherMaps([activeWeatherMapKind], { forceRefresh: false });
         loadAlertToday();
         initWeatherScoreFilters(function() {
             loadWeatherScore();
@@ -28,7 +50,7 @@
                 // Manual refresh must sync DB-backed data and all map images immediately.
                 loadAlertToday();
                 loadWeatherScore();
-                loadWeatherMaps(['wrn', 'gk2a', 'wildfire'], { forceRefresh: true });
+                loadWeatherMaps([activeWeatherMapKind], { forceRefresh: true });
             }, {
                 method: 'POST',
                 onFail: function(res, msg) {
@@ -38,6 +60,32 @@
             });
         });
     });
+
+    function initWeatherMapTabs() {
+        updateWeatherMapMeta(activeWeatherMapKind);
+        $('#weatherMapTabs').off('click', 'button').on('click', 'button', function() {
+            var mapKind = String($(this).data('mapKind') || '').toLowerCase();
+            if (!mapKind || mapKind === activeWeatherMapKind) {
+                return;
+            }
+            activeWeatherMapKind = mapKind;
+            $('#weatherMapTabs button').removeClass('is-active');
+            $(this).addClass('is-active');
+            updateWeatherMapMeta(mapKind);
+            loadWeatherMaps([mapKind], { forceRefresh: false });
+        });
+    }
+
+    function updateWeatherMapMeta(mapKind) {
+        var meta = weatherMapMetaByKind[mapKind] || weatherMapMetaByKind.wrn;
+        var $img = $('#weatherMapPrimary');
+        if ($img.length) {
+            $img.attr('alt', meta.alt || '기상 지도');
+            $img.attr('data-map-kind', mapKind);
+            $img.attr('data-wrn', meta.wrn || '');
+        }
+        $('#weatherMapLayerDescription').text(meta.description || '');
+    }
 
     function initWeatherScoreFilters(onReady) {
         loadWeatherScoreFilterOptions(function() {
@@ -268,12 +316,12 @@
 
         $('.weather-map-image').each(function() {
             var $img = $(this);
-            var mapKind = String($img.data('mapKind') || 'wrn').toLowerCase();
+            var mapKind = String($img.attr('data-map-kind') || 'wrn').toLowerCase();
             if (kindSet && !kindSet[mapKind]) {
                 return;
             }
 
-            var wrn = String($img.data('wrn') || '').toUpperCase();
+            var wrn = String($img.attr('data-wrn') || '').toUpperCase();
             var $frame = $img.closest('.weather-map-frame');
             var $state = $frame.find('.weather-map-state');
             $frame.removeClass('map-ready');

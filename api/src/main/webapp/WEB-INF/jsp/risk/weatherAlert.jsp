@@ -24,31 +24,30 @@
 
             <div class="grid-section weather-map-section">
                 <div class="weather-map-header">
-                    <h3>특보 현황 지도</h3>
-                    <span id="weatherMapUpdatedAt" class="weather-map-updated"></span>
+                    <div>
+                        <h3>특보 현황 지도</h3>
+                        <p class="weather-map-layer-description">기상 지도 레이어를 선택해서 한 화면에서 전환해 볼 수 있습니다.</p>
+                    </div>
                 </div>
-                <div class="weather-map-grid">
-                    <figure class="weather-map-card">
-                        <figcaption>종합 지도</figcaption>
-                        <div class="weather-map-frame">
+                <div class="weather-map-viewer">
+                    <div class="weather-map-main">
+                        <div class="weather-map-frame weather-map-frame-large">
                             <span class="weather-map-state">불러오는 중...</span>
-                            <img id="weatherMapComposite" class="weather-map-image" data-map-kind="wrn" data-wrn="W,R,C,D,O,N,V,T,S,Y,H,F" alt="종합 특보 현황 지도">
+                            <img id="weatherMapPrimary" class="weather-map-image" data-map-kind="wrn" data-wrn="W,R,C,D,O,N,V,T,S,Y,H,F" alt="기상 지도">
                         </div>
-                    </figure>
-                    <figure class="weather-map-card">
-                        <figcaption>위성지도</figcaption>
-                        <div class="weather-map-frame">
-                            <span class="weather-map-state">불러오는 중...</span>
-                            <img id="weatherMapSatellite" class="weather-map-image" data-map-kind="gk2a" alt="위성지도">
+                    </div>
+                    <aside class="weather-map-side">
+                        <div class="weather-map-side-header">
+                            <span class="weather-map-side-title">지도 레이어</span>
+                            <span id="weatherMapUpdatedAt" class="weather-map-updated"></span>
                         </div>
-                    </figure>
-                    <figure class="weather-map-card">
-                        <figcaption>산불위험지도</figcaption>
-                        <div class="weather-map-frame">
-                            <span class="weather-map-state">불러오는 중...</span>
-                            <img id="weatherMapWildfire" class="weather-map-image" data-map-kind="wildfire" alt="산불위험지도">
+                        <div class="weather-map-tabs" id="weatherMapTabs">
+                            <button type="button" class="is-active" data-map-kind="wrn" data-wrn="W,R,C,D,O,N,V,T,S,Y,H,F"><span class="weather-map-tab-dot is-warning"></span><span>종합 특보</span></button>
+                            <button type="button" data-map-kind="gk2a"><span class="weather-map-tab-dot is-satellite"></span><span>실시간 위성</span></button>
+                            <button type="button" data-map-kind="wildfire"><span class="weather-map-tab-dot is-wildfire"></span><span>산불위험도</span></button>
                         </div>
-                    </figure>
+                        <p id="weatherMapLayerDescription" class="weather-map-side-description">기상청 종합 특보 현황 지도를 표시합니다.</p>
+                    </aside>
                 </div>
             </div>
 
