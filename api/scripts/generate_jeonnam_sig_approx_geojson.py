@@ -40,6 +40,7 @@ from shapely.ops import transform, unary_union
 ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_INPUT = ROOT / "api/.local-seed/data-h2.full.sql"
 DEFAULT_OUTPUT = ROOT / "api/src/main/webapp/resources/data/jeonnam-risk-area/jeonnam-sig-approx-risk.geojson"
+DEFAULT_LINE_OUTPUT = ROOT / "api/src/main/webapp/resources/data/jeonnam-risk-area/jeonnam-sig-approx-risk-internal-lines.geojson"
 TARGET_REGIONS = {"광주", "전남"}
 
 FIELD_INDEX = {
@@ -74,6 +75,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--input", type=Path, default=DEFAULT_INPUT, help="Path to data-h2.full.sql")
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT, help="GeoJSON output path")
+    parser.add_argument("--line-output", type=Path, default=DEFAULT_LINE_OUTPUT, help="Internal boundary GeoJSON output path")
     parser.add_argument("--sample-grid-size", type=float, default=700.0, help="District-aware sampling grid size in EPSG:5186 meters")
     parser.add_argument("--mask-buffer", type=float, default=1200.0, help="Outer buffer for the regional soft mask in meters")
     parser.add_argument("--mask-simplify", type=float, default=220.0, help="Simplify tolerance for the regional mask in meters")
@@ -416,6 +418,7 @@ def main() -> int:
 
     to_wgs84 = Transformer.from_crs("EPSG:5186", "EPSG:4326", always_xy=True).transform
     features = []
+    region_geometry_index: Dict[str, List[Tuple[str, object]]] = defaultdict(list)
     district_geometries_by_region: Dict[str, Dict[str, object]] = {}
 
     if "광주" in grouped_by_region:
@@ -447,6 +450,7 @@ def main() -> int:
         district_geometries = district_geometries_by_region[region_nm]
         for district_nm, geometry in sorted(district_geometries.items()):
             district_rows = grouped_by_region_district[(region_nm, district_nm)]
+            region_geometry_index[region_nm].append((district_nm, geometry))
             geometry_wgs84 = transform(to_wgs84, geometry)
             summary = summarize_group(district_rows)
             features.append({
@@ -483,10 +487,66 @@ def main() -> int:
         "features": features,
     }
 
+    line_features = []
+    for region_nm, entries in sorted(region_geometry_index.items()):
+        geometries = [geom for _, geom in entries]
+        if not geometries:
+            continue
+        merged = unary_union(geometries)
+        outer_boundary = merged.boundary
+        all_boundaries = unary_union([geom.boundary for geom in geometries])
+        internal = all_boundaries.difference(outer_boundary.buffer(0.000001))
+        internal = normalize_geometry(internal)
+        if internal.is_empty:
+            pass
+        else:
+            internal_wgs84 = transform(to_wgs84, internal)
+            line_features.append({
+                "type": "Feature",
+                "properties": {
+                    "regionNm": region_nm,
+                    "lineType": "internal-boundary",
+                },
+                "geometry": mapping(internal_wgs84),
+            })
+
+        if region_nm == "광주" and not outer_boundary.is_empty:
+            outer_wgs84 = transform(to_wgs84, outer_boundary)
+            line_features.append({
+                "type": "Feature",
+                "properties": {
+                    "regionNm": region_nm,
+                    "lineType": "outer-boundary",
+                },
+                "geometry": mapping(outer_wgs84),
+            })
+
+    line_collection = {
+        "type": "FeatureCollection",
+        "name": "gwangju_jeonnam_sig_approx_risk_internal_lines",
+        "crs": {
+            "type": "name",
+            "properties": {
+                "name": "EPSG:4326",
+            },
+        },
+        "metadata": {
+            "description": "Internal shared district boundaries only (outer boundary removed).",
+            "sourceSql": str(args.input.relative_to(ROOT)),
+            "regionNames": sorted(TARGET_REGIONS),
+            "featureCount": len(line_features),
+            "method": "voronoi-coverage-internal-lines",
+        },
+        "features": line_features,
+    }
+
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(feature_collection, ensure_ascii=False), encoding="utf-8")
+    args.line_output.parent.mkdir(parents=True, exist_ok=True)
+    args.line_output.write_text(json.dumps(line_collection, ensure_ascii=False), encoding="utf-8")
 
     print(f"Wrote {len(features)} features to {args.output}")
+    print(f"Wrote {len(line_features)} internal line features to {args.line_output}")
     for feature in features:
         props = feature["properties"]
         print(

@@ -6,6 +6,7 @@
     var BUILDING_URL = 'selectRiskMapBuildingLayer.do';
     var BUILDING_POLYGON_URL = 'selectRiskMapBuildingPolygonLayer.do';
     var JEONNAM_APPROX_GEOJSON_URL = 'resources/data/jeonnam-risk-area/jeonnam-sig-approx-risk.geojson';
+    var JEONNAM_APPROX_LINE_GEOJSON_URL = 'resources/data/jeonnam-risk-area/jeonnam-sig-approx-risk-internal-lines.geojson';
     var ZOOM_APPROX_DISTRICT_MIN = 11.0;
     var ZOOM_APPROX_DISTRICT_MAX = 14.0;
     var ZOOM_BUILDING = 14.0;
@@ -34,9 +35,11 @@
         rankingListElement: null,
         districtSource: null,
         approxDistrictSource: null,
+        approxDistrictLineSource: null,
         buildingSource: null,
         buildingLayer: null,
         approxDistrictLayer: null,
+        approxDistrictLineLayer: null,
         polygonLayer: null,
         highlightSource: null,
         polygonSource: null,
@@ -522,10 +525,26 @@
                 .replace('0.76', '0.28');
             state.styleCache.approxDistrict[cacheKey] = new ol.style.Style({
                 fill: new ol.style.Fill({ color: fillColor }),
-                stroke: new ol.style.Stroke({ color: 'rgba(43, 54, 66, 0.38)', width: 1.5 })
+                stroke: null
             });
         }
         return state.styleCache.approxDistrict[cacheKey];
+    }
+
+    function getApproxDistrictLineStyle(lineType, regionNm) {
+        if (lineType === 'outer-boundary') {
+            return new ol.style.Style({
+                stroke: new ol.style.Stroke({ color: 'rgba(43, 54, 66, 0.56)', width: 1.9 })
+            });
+        }
+        if (regionNm === '\uAD11\uC8FC') {
+            return new ol.style.Style({
+                stroke: new ol.style.Stroke({ color: 'rgba(43, 54, 66, 0.52)', width: 1.8 })
+            });
+        }
+        return new ol.style.Style({
+            stroke: new ol.style.Stroke({ color: 'rgba(43, 54, 66, 0.46)', width: 1.7 })
+        });
     }
 
     function buildPinIconDataUrl(fillColor, strokeColor, holeColor) {
@@ -855,11 +874,13 @@
             return;
         }
         var zoom = state.map ? state.map.getView().getZoom() : DEFAULT_ZOOM;
-        state.approxDistrictLayer.setVisible(
-            getMode() === 'district'
+        var visible = getMode() === 'district'
             && zoom >= ZOOM_APPROX_DISTRICT_MIN
-            && zoom < ZOOM_APPROX_DISTRICT_MAX
-        );
+            && zoom < ZOOM_APPROX_DISTRICT_MAX;
+        state.approxDistrictLayer.setVisible(visible);
+        if (state.approxDistrictLineLayer) {
+            state.approxDistrictLineLayer.setVisible(visible);
+        }
     }
 
     function isApproxDistrictVisible() {
@@ -1288,6 +1309,20 @@
             filterApproxDistrictFeatures();
             syncApproxDistrictVisibility();
         });
+
+        if (state.approxDistrictLineSource) {
+            $.getJSON(JEONNAM_APPROX_LINE_GEOJSON_URL).done(function(collection) {
+                var format = new ol.format.GeoJSON();
+                var features = format.readFeatures(collection, {
+                    dataProjection: 'EPSG:4326',
+                    featureProjection: 'EPSG:3857'
+                });
+                features.forEach(function(feature) {
+                    state.approxDistrictLineSource.addFeature(feature);
+                });
+                syncApproxDistrictVisibility();
+            });
+        }
     }
 
     function initMap() {
@@ -1302,6 +1337,7 @@
 
         state.districtSource = new ol.source.Vector();
         state.approxDistrictSource = new ol.source.Vector();
+        state.approxDistrictLineSource = new ol.source.Vector();
         state.buildingSource = new ol.source.Vector();
         state.highlightSource = new ol.source.Vector();
         state.polygonSource = new ol.source.Vector();
@@ -1311,6 +1347,13 @@
             style: function(feature) {
                 var row = feature.get('row') || {};
                 return getApproxDistrictStyle(row.riskCd);
+            }
+        });
+
+        var approxDistrictLineLayer = new ol.layer.Vector({
+            source: state.approxDistrictLineSource,
+            style: function(feature) {
+                return getApproxDistrictLineStyle(feature.get('lineType'), feature.get('regionNm'));
             }
         });
 
@@ -1349,6 +1392,7 @@
         });
         state.buildingLayer = buildingLayer;
         state.approxDistrictLayer = approxDistrictLayer;
+        state.approxDistrictLineLayer = approxDistrictLineLayer;
         state.polygonLayer = polygonLayer;
 
         var interactions = ol.interaction.defaults({
@@ -1372,7 +1416,7 @@
         });
         state.map = new ol.Map({
             target: target,
-            layers: [baseLayer, approxDistrictLayer, districtLayer, polygonLayer, buildingLayer, highlightLayer],
+            layers: [baseLayer, approxDistrictLayer, approxDistrictLineLayer, districtLayer, polygonLayer, buildingLayer, highlightLayer],
             view: view,
             controls: controls,
             interactions: interactions,
