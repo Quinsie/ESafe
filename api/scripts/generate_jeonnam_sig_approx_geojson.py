@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import Dict, Iterable, List, Optional
 
 from pyproj import Transformer
-from shapely.geometry import MultiPoint, Point, mapping
+from shapely.geometry import MultiPoint, MultiPolygon, Point, Polygon, mapping
 from shapely.ops import transform, unary_union
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -57,8 +57,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--input", type=Path, default=DEFAULT_INPUT, help="Path to data-h2.full.sql")
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT, help="GeoJSON output path")
     parser.add_argument("--grid-size", type=float, default=320.0, help="Grid size in EPSG:5186 meters")
-    parser.add_argument("--buffer-size", type=float, default=260.0, help="Cell buffer radius in meters")
-    parser.add_argument("--smooth-buffer", type=float, default=140.0, help="Extra smoothing buffer in meters")
+    parser.add_argument("--buffer-size", type=float, default=220.0, help="Cell buffer radius in meters")
+    parser.add_argument("--smooth-buffer", type=float, default=90.0, help="Extra smoothing buffer in meters")
     parser.add_argument("--simplify", type=float, default=90.0, help="Simplify tolerance in meters")
     return parser.parse_args()
 
@@ -162,10 +162,34 @@ def build_geometry(points: Iterable[Point], grid_size: float, buffer_size: float
         geometry = geometry.buffer(smooth_buffer).buffer(-smooth_buffer * 0.78)
 
     geometry = geometry.simplify(simplify_tolerance, preserve_topology=True)
+    geometry = remove_small_holes(geometry, min_hole_area=250000.0)
     if geometry.is_empty:
         multipoint = MultiPoint([Point(gx * grid_size, gy * grid_size) for gx, gy in sorted(occupied)])
         geometry = multipoint.convex_hull.buffer(buffer_size * 0.75)
     return geometry
+
+
+def remove_small_holes(geometry, min_hole_area: float):
+    if geometry.is_empty:
+        return geometry
+
+    if isinstance(geometry, Polygon):
+        kept_interiors = []
+        for interior in geometry.interiors:
+            hole = Polygon(interior)
+            if hole.area >= min_hole_area:
+                kept_interiors.append(interior.coords)
+        return Polygon(geometry.exterior.coords, kept_interiors)
+
+    if isinstance(geometry, MultiPolygon):
+        polygons = [remove_small_holes(poly, min_hole_area) for poly in geometry.geoms]
+        polygons = [poly for poly in polygons if not poly.is_empty]
+        if not polygons:
+            return geometry
+        return MultiPolygon(polygons)
+
+    return geometry
+
 
 
 def summarize_group(rows: List[Dict[str, object]]) -> Dict[str, object]:
