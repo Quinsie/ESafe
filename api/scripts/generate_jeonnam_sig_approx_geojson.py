@@ -1,16 +1,24 @@
 #!/usr/bin/env python3
 """Generate approximate Gwangju/Jeonnam district polygons from local building risk SQL.
 
-This script does not try to reconstruct official administrative boundaries.
-It creates visualization-friendly area polygons by:
-1. Reading building coordinates from the local H2 full seed SQL.
-2. Filtering target rows for Gwangju and Jeollanam-do.
-3. Grouping buildings by `DISTRICT_NM`.
-4. Snapping points to a coarse grid and unioning buffered cell centroids.
-5. Writing a lightweight GeoJSON for OpenLayers consumption.
+This script creates visualization-oriented polygons that:
+- touch each other like puzzle pieces
+- avoid gaps / overlaps inside the generated regional coverage
+- follow district building distributions instead of exact administrative borders
+
+Implementation strategy:
+1. Read building risk rows from the local H2 full seed SQL.
+2. Filter target rows for Gwangju and Jeollanam-do.
+3. Downsample building points on a district-aware grid.
+4. Build a soft regional mask from all sampled points.
+5. Generate a Voronoi coverage from sampled points.
+6. Clip Voronoi cells to the regional mask and dissolve them by district.
+
+The result is not an official administrative boundary dataset.
+It is a coverage-style visualization layer meant for map readability.
 
 Input coordinates in the seed SQL are stored in EPSG:5186 meters.
-The output GeoJSON is written in EPSG:4326.
+Output GeoJSON is written in EPSG:4326.
 """
 
 from __future__ import annotations
@@ -20,10 +28,13 @@ import json
 import math
 from collections import Counter, defaultdict
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional
+from typing import Dict, Iterable, List, Optional, Tuple
 
+import numpy as np
 from pyproj import Transformer
-from shapely.geometry import MultiPoint, MultiPolygon, Point, Polygon, mapping
+from scipy.spatial import Voronoi
+from shapely import concave_hull, coverage_union_all
+from shapely.geometry import GeometryCollection, MultiPoint, MultiPolygon, Point, Polygon, box, mapping
 from shapely.ops import transform, unary_union
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -39,27 +50,35 @@ FIELD_INDEX = {
     "lon": 9,
     "lat": 10,
     "totalScore": 24,
-    "totalGrade": 25,
     "riskCd": 26,
 }
 
 SCORE_TO_RISK = (
-    (80.0, "E"),
-    (60.0, "D"),
-    (40.0, "C"),
-    (20.0, "B"),
+    (40.0, "E"),
+    (30.0, "D"),
+    (20.0, "C"),
+    (10.0, "B"),
     (-math.inf, "A"),
 )
+
+RISK_TO_COLOR = {
+    "A": "#1e934c",
+    "B": "#215fd1",
+    "C": "#d8b300",
+    "D": "#ea7a19",
+    "E": "#cf2f22",
+}
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--input", type=Path, default=DEFAULT_INPUT, help="Path to data-h2.full.sql")
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT, help="GeoJSON output path")
-    parser.add_argument("--grid-size", type=float, default=320.0, help="Grid size in EPSG:5186 meters")
-    parser.add_argument("--buffer-size", type=float, default=220.0, help="Cell buffer radius in meters")
-    parser.add_argument("--smooth-buffer", type=float, default=90.0, help="Extra smoothing buffer in meters")
-    parser.add_argument("--simplify", type=float, default=90.0, help="Simplify tolerance in meters")
+    parser.add_argument("--sample-grid-size", type=float, default=700.0, help="District-aware sampling grid size in EPSG:5186 meters")
+    parser.add_argument("--mask-buffer", type=float, default=1200.0, help="Outer buffer for the regional soft mask in meters")
+    parser.add_argument("--mask-simplify", type=float, default=220.0, help="Simplify tolerance for the regional mask in meters")
+    parser.add_argument("--hull-ratio", type=float, default=0.22, help="Concave hull ratio for the regional mask")
+    parser.add_argument("--boundary-simplify", type=float, default=45.0, help="Light topology-preserving simplify for dissolved district polygons")
     return parser.parse_args()
 
 
@@ -111,6 +130,10 @@ def score_to_risk(score: float) -> str:
     return "A"
 
 
+def risk_to_color(risk_cd: str) -> str:
+    return RISK_TO_COLOR.get(str(risk_cd or "").upper(), "#7d8794")
+
+
 def read_rows(sql_path: Path) -> List[Dict[str, object]]:
     rows: List[Dict[str, object]] = []
     with sql_path.open("r", encoding="utf-8", errors="ignore") as handle:
@@ -142,34 +165,79 @@ def read_rows(sql_path: Path) -> List[Dict[str, object]]:
     return rows
 
 
-def build_geometry(points: Iterable[Point], grid_size: float, buffer_size: float, smooth_buffer: float, simplify_tolerance: float):
-    occupied = set()
-    for point in points:
-        gx = int(round(point.x / grid_size))
-        gy = int(round(point.y / grid_size))
-        occupied.add((gx, gy))
+def summarize_group(rows: List[Dict[str, object]]) -> Dict[str, object]:
+    scores = [float(row["totalScore"]) for row in rows]
+    risk_counts = Counter(str(row.get("riskCd") or "").upper() for row in rows)
+    avg_score = round(sum(scores) / len(scores), 2) if scores else 0.0
+    max_score = round(max(scores), 2) if scores else 0.0
+    raw_avg_risk_cd = score_to_risk(avg_score)
+    dominant_risk = risk_counts.most_common(1)[0][0] if risk_counts else raw_avg_risk_cd
+    return {
+        "buildingCount": len(rows),
+        "avgScore": avg_score,
+        "avgTotalScore": avg_score,
+        "maxScore": max_score,
+        "dominantRiskCd": dominant_risk or raw_avg_risk_cd,
+        "rawAvgRiskCd": raw_avg_risk_cd,
+        "avgTotalRiskCd": raw_avg_risk_cd,
+        "fillColor": risk_to_color(raw_avg_risk_cd),
+    }
 
-    cell_buffers = [
-        Point(gx * grid_size, gy * grid_size).buffer(buffer_size, quad_segs=4)
-        for gx, gy in sorted(occupied)
-    ]
 
-    if not cell_buffers:
-        return None
+def sample_region_rows(rows: List[Dict[str, object]], sample_grid_size: float) -> List[Dict[str, object]]:
+    buckets: Dict[Tuple[str, int, int], Dict[str, object]] = {}
+    for row in rows:
+        lon = float(row["lon"])
+        lat = float(row["lat"])
+        gx = int(round(lon / sample_grid_size))
+        gy = int(round(lat / sample_grid_size))
+        key = (str(row["districtNm"]), gx, gy)
+        bucket = buckets.get(key)
+        if bucket is None:
+            bucket = {
+                "regionNm": row["regionNm"],
+                "regionCd": row["regionCd"],
+                "districtNm": row["districtNm"],
+                "sumX": 0.0,
+                "sumY": 0.0,
+                "count": 0,
+            }
+            buckets[key] = bucket
+        bucket["sumX"] += lon
+        bucket["sumY"] += lat
+        bucket["count"] += 1
 
-    geometry = unary_union(cell_buffers)
-    if smooth_buffer > 0:
-        geometry = geometry.buffer(smooth_buffer).buffer(-smooth_buffer * 0.78)
+    sampled = []
+    for bucket in buckets.values():
+        count = max(int(bucket["count"]), 1)
+        sampled.append({
+            "regionNm": bucket["regionNm"],
+            "regionCd": bucket["regionCd"],
+            "districtNm": bucket["districtNm"],
+            "x": bucket["sumX"] / count,
+            "y": bucket["sumY"] / count,
+            "count": count,
+        })
+    return sampled
 
-    geometry = geometry.simplify(simplify_tolerance, preserve_topology=True)
-    geometry = remove_small_holes(geometry, min_hole_area=250000.0)
+
+def normalize_geometry(geometry):
     if geometry.is_empty:
-        multipoint = MultiPoint([Point(gx * grid_size, gy * grid_size) for gx, gy in sorted(occupied)])
-        geometry = multipoint.convex_hull.buffer(buffer_size * 0.75)
+        return geometry
+    if isinstance(geometry, (Polygon, MultiPolygon)):
+        return geometry
+    if isinstance(geometry, GeometryCollection):
+        polygons = [geom for geom in geometry.geoms if isinstance(geom, (Polygon, MultiPolygon)) and not geom.is_empty]
+        if not polygons:
+            return geometry
+        if len(polygons) == 1:
+            return polygons[0]
+        return coverage_union_all(polygons)
     return geometry
 
 
 def remove_small_holes(geometry, min_hole_area: float):
+    geometry = normalize_geometry(geometry)
     if geometry.is_empty:
         return geometry
 
@@ -191,21 +259,142 @@ def remove_small_holes(geometry, min_hole_area: float):
     return geometry
 
 
+def build_region_mask(sampled_rows: List[Dict[str, object]], hull_ratio: float, mask_buffer: float, mask_simplify: float):
+    points = MultiPoint([Point(float(row["x"]), float(row["y"])) for row in sampled_rows])
+    mask = concave_hull(points, ratio=hull_ratio, allow_holes=False)
+    if mask.is_empty:
+        mask = points.convex_hull
+    if mask_buffer > 0:
+        mask = mask.buffer(mask_buffer)
+    if mask_simplify > 0:
+        mask = mask.simplify(mask_simplify, preserve_topology=True)
+    return remove_small_holes(mask, min_hole_area=500000.0)
 
-def summarize_group(rows: List[Dict[str, object]]) -> Dict[str, object]:
-    scores = [float(row["totalScore"]) for row in rows]
-    risk_counts = Counter(str(row.get("riskCd") or "").upper() for row in rows)
-    avg_score = round(sum(scores) / len(scores), 2) if scores else 0.0
-    max_score = round(max(scores), 2) if scores else 0.0
-    raw_avg_risk_cd = score_to_risk(avg_score)
-    dominant_risk = risk_counts.most_common(1)[0][0] if risk_counts else raw_avg_risk_cd
-    return {
-        "buildingCount": len(rows),
-        "avgScore": avg_score,
-        "maxScore": max_score,
-        "dominantRiskCd": dominant_risk or raw_avg_risk_cd,
-        "rawAvgRiskCd": raw_avg_risk_cd,
-    }
+
+def unique_seed_coords(sampled_rows: List[Dict[str, object]]) -> np.ndarray:
+    seen = set()
+    coords = []
+    epsilon = 0.001
+    for idx, row in enumerate(sampled_rows):
+        x = float(row["x"])
+        y = float(row["y"])
+        while (round(x, 3), round(y, 3)) in seen:
+            x += epsilon * ((idx % 7) + 1)
+            y += epsilon * ((idx % 11) + 1)
+        seen.add((round(x, 3), round(y, 3)))
+        row["x"] = x
+        row["y"] = y
+        coords.append((x, y))
+    return np.asarray(coords, dtype=float)
+
+
+def voronoi_finite_polygons_2d(vor: Voronoi, radius: Optional[float] = None):
+    if vor.points.shape[1] != 2:
+        raise ValueError("Requires 2D input")
+
+    new_regions = []
+    new_vertices = vor.vertices.tolist()
+    center = vor.points.mean(axis=0)
+    if radius is None:
+        radius = vor.points.ptp().max() * 2
+
+    all_ridges: Dict[int, List[Tuple[int, int, int]]] = defaultdict(list)
+    for (p1, p2), (v1, v2) in zip(vor.ridge_points, vor.ridge_vertices):
+        all_ridges[p1].append((p2, v1, v2))
+        all_ridges[p2].append((p1, v1, v2))
+
+    for p1, region_index in enumerate(vor.point_region):
+        vertices = vor.regions[region_index]
+        if all(v >= 0 for v in vertices):
+            new_regions.append(vertices)
+            continue
+
+        ridges = all_ridges[p1]
+        new_region = [v for v in vertices if v >= 0]
+        for p2, v1, v2 in ridges:
+            if v2 < 0:
+                v1, v2 = v2, v1
+            if v1 >= 0:
+                continue
+
+            tangent = vor.points[p2] - vor.points[p1]
+            tangent /= np.linalg.norm(tangent)
+            normal = np.array([-tangent[1], tangent[0]])
+            midpoint = vor.points[[p1, p2]].mean(axis=0)
+            direction = np.sign(np.dot(midpoint - center, normal)) * normal
+            far_point = vor.vertices[v2] + direction * radius
+
+            new_region.append(len(new_vertices))
+            new_vertices.append(far_point.tolist())
+
+        region_vertices = np.asarray([new_vertices[v] for v in new_region])
+        region_center = region_vertices.mean(axis=0)
+        angles = np.arctan2(region_vertices[:, 1] - region_center[1], region_vertices[:, 0] - region_center[0])
+        new_region = [v for _, v in sorted(zip(angles, new_region))]
+        new_regions.append(new_region)
+
+    return new_regions, np.asarray(new_vertices)
+
+
+def build_region_geometries(
+    rows: List[Dict[str, object]],
+    sample_grid_size: float,
+    hull_ratio: float,
+    mask_buffer: float,
+    mask_simplify: float,
+    boundary_simplify: float,
+    exclusion_mask=None,
+) -> Dict[str, object]:
+    sampled_rows = sample_region_rows(rows, sample_grid_size)
+    if len(sampled_rows) < 3:
+        district_points: Dict[str, List[Point]] = defaultdict(list)
+        for row in sampled_rows:
+            district_points[str(row["districtNm"])].append(Point(float(row["x"]), float(row["y"])))
+        fallback = {}
+        for district_nm, points in district_points.items():
+            hull = MultiPoint(points).convex_hull.buffer(sample_grid_size * 0.75)
+            if exclusion_mask is not None:
+                hull = hull.difference(exclusion_mask)
+            fallback[district_nm] = remove_small_holes(hull, min_hole_area=500000.0)
+        return fallback
+
+    mask = build_region_mask(sampled_rows, hull_ratio, mask_buffer, mask_simplify)
+    if exclusion_mask is not None:
+        mask = normalize_geometry(mask.difference(exclusion_mask))
+    if mask.is_empty:
+        return {}
+    coords = unique_seed_coords(sampled_rows)
+    vor = Voronoi(coords)
+
+    minx, miny, maxx, maxy = mask.bounds
+    radius = max(maxx - minx, maxy - miny) * 3.0
+    regions, vertices = voronoi_finite_polygons_2d(vor, radius=radius)
+    clip_box = box(minx - radius * 0.05, miny - radius * 0.05, maxx + radius * 0.05, maxy + radius * 0.05)
+
+    district_cells: Dict[str, List[Polygon]] = defaultdict(list)
+    for idx, region in enumerate(regions):
+        polygon = Polygon(vertices[region])
+        if not polygon.is_valid:
+            polygon = polygon.buffer(0)
+        polygon = polygon.intersection(clip_box).intersection(mask)
+        polygon = normalize_geometry(polygon)
+        if polygon.is_empty:
+            continue
+        district_nm = str(sampled_rows[idx]["districtNm"])
+        district_cells[district_nm].append(polygon)
+
+    district_geometries: Dict[str, object] = {}
+    for district_nm, cells in district_cells.items():
+        geometry = coverage_union_all(cells) if len(cells) > 1 else cells[0]
+        geometry = normalize_geometry(geometry)
+        if boundary_simplify > 0:
+            geometry = geometry.simplify(boundary_simplify, preserve_topology=True)
+        geometry = normalize_geometry(geometry).intersection(mask)
+        geometry = remove_small_holes(normalize_geometry(geometry), min_hole_area=500000.0)
+        if not geometry.is_empty:
+            district_geometries[district_nm] = geometry
+
+    return district_geometries
 
 
 def main() -> int:
@@ -217,52 +406,63 @@ def main() -> int:
     if not rows:
         raise RuntimeError("No Gwangju/Jeonnam rows found in the input SQL.")
 
-    grouped: Dict[str, List[Dict[str, object]]] = defaultdict(list)
+    grouped_by_region: Dict[str, List[Dict[str, object]]] = defaultdict(list)
+    grouped_by_region_district: Dict[Tuple[str, str], List[Dict[str, object]]] = defaultdict(list)
     for row in rows:
-        grouped[str(row["districtNm"])].append(row)
+        region_nm = str(row["regionNm"])
+        district_nm = str(row["districtNm"])
+        grouped_by_region[region_nm].append(row)
+        grouped_by_region_district[(region_nm, district_nm)].append(row)
 
     to_wgs84 = Transformer.from_crs("EPSG:5186", "EPSG:4326", always_xy=True).transform
     features = []
-    for district_nm in sorted(grouped.keys()):
-        district_rows = grouped[district_nm]
-        points = [Point(float(row["lon"]), float(row["lat"])) for row in district_rows]
-        geometry = build_geometry(
-            points=points,
-            grid_size=args.grid_size,
-            buffer_size=args.buffer_size,
-            smooth_buffer=args.smooth_buffer,
-            simplify_tolerance=args.simplify,
+    district_geometries_by_region: Dict[str, Dict[str, object]] = {}
+
+    if "광주" in grouped_by_region:
+        district_geometries_by_region["광주"] = build_region_geometries(
+            rows=grouped_by_region["광주"],
+            sample_grid_size=args.sample_grid_size,
+            hull_ratio=args.hull_ratio,
+            mask_buffer=args.mask_buffer,
+            mask_simplify=args.mask_simplify,
+            boundary_simplify=args.boundary_simplify,
         )
-        if geometry is None or geometry.is_empty:
-            continue
 
-        geometry_wgs84 = transform(to_wgs84, geometry)
-        summary = summarize_group(district_rows)
-        features.append({
-            "type": "Feature",
-            "properties": {
-                "regionNm": district_rows[0]["regionNm"],
-                "districtNm": district_nm,
-                "districtKey": district_nm,
-                "regionCd": district_rows[0]["regionCd"],
-                **summary,
-            },
-            "geometry": mapping(geometry_wgs84),
-        })
+    gwangju_mask = None
+    if district_geometries_by_region.get("광주"):
+        gwangju_mask = unary_union(list(district_geometries_by_region["광주"].values()))
 
-    avg_scores = [feature["properties"]["avgScore"] for feature in features]
-    min_avg = min(avg_scores) if avg_scores else 0.0
-    max_avg = max(avg_scores) if avg_scores else 0.0
-    score_range = max_avg - min_avg
+    if "전남" in grouped_by_region:
+        district_geometries_by_region["전남"] = build_region_geometries(
+            rows=grouped_by_region["전남"],
+            sample_grid_size=args.sample_grid_size,
+            hull_ratio=args.hull_ratio,
+            mask_buffer=args.mask_buffer,
+            mask_simplify=args.mask_simplify,
+            boundary_simplify=args.boundary_simplify,
+            exclusion_mask=gwangju_mask,
+        )
+
+    for region_nm in sorted(district_geometries_by_region.keys()):
+        district_geometries = district_geometries_by_region[region_nm]
+        for district_nm, geometry in sorted(district_geometries.items()):
+            district_rows = grouped_by_region_district[(region_nm, district_nm)]
+            geometry_wgs84 = transform(to_wgs84, geometry)
+            summary = summarize_group(district_rows)
+            features.append({
+                "type": "Feature",
+                "properties": {
+                    "regionNm": region_nm,
+                    "districtNm": district_nm,
+                    "districtKey": district_nm,
+                    "regionCd": district_rows[0]["regionCd"],
+                    **summary,
+                },
+                "geometry": mapping(geometry_wgs84),
+            })
     for feature in features:
         props = feature["properties"]
-        avg_score = props["avgScore"]
-        if score_range <= 0:
-            scaled_score = 50.0
-        else:
-            scaled_score = round(((avg_score - min_avg) / score_range) * 100.0, 2)
-        props["avgScoreScaled"] = scaled_score
-        props["styleRiskCd"] = score_to_risk(scaled_score)
+        props["styleRiskCd"] = props["avgTotalRiskCd"]
 
     feature_collection = {
         "type": "FeatureCollection",
@@ -274,10 +474,11 @@ def main() -> int:
             },
         },
         "metadata": {
-            "description": "Approximate Gwangju/Jeonnam district polygons derived from building point distribution for visualization.",
+            "description": "Approximate Gwangju/Jeonnam district polygons derived from Voronoi coverage over sampled building points.",
             "sourceSql": str(args.input.relative_to(ROOT)),
             "regionNames": sorted(TARGET_REGIONS),
             "featureCount": len(features),
+            "method": "voronoi-coverage",
         },
         "features": features,
     }

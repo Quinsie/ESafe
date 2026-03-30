@@ -522,7 +522,7 @@
                 .replace('0.76', '0.28');
             state.styleCache.approxDistrict[cacheKey] = new ol.style.Style({
                 fill: new ol.style.Fill({ color: fillColor }),
-                stroke: new ol.style.Stroke({ color: 'rgba(43, 54, 66, 0.35)', width: 1.2 })
+                stroke: new ol.style.Stroke({ color: 'rgba(43, 54, 66, 0.38)', width: 1.5 })
             });
         }
         return state.styleCache.approxDistrict[cacheKey];
@@ -833,7 +833,7 @@
 
     function renderDistrictFeatures() {
         state.districtSource.clear();
-        if (getMode() !== 'district') {
+        if (getMode() !== 'district' || isApproxDistrictVisible()) {
             return { visibleCount: 0 };
         }
         var visibleRows = state.districtRows.filter(function(row) {
@@ -862,6 +862,16 @@
         );
     }
 
+    function isApproxDistrictVisible() {
+        if (!state.map) {
+            return false;
+        }
+        var zoom = state.map.getView().getZoom();
+        return getMode() === 'district'
+            && zoom >= ZOOM_APPROX_DISTRICT_MIN
+            && zoom < ZOOM_APPROX_DISTRICT_MAX;
+    }
+
     function filterApproxDistrictFeatures() {
         if (!state.approxDistrictSource) {
             return;
@@ -872,6 +882,21 @@
             var row = feature.get('row') || {};
             feature.setStyle(isRiskVisible(row.styleRiskCd || row.riskCd) ? null : []);
         }
+    }
+
+    function getVisibleApproxDistrictCount() {
+        if (!state.approxDistrictSource) {
+            return 0;
+        }
+        var count = 0;
+        var features = state.approxDistrictSource.getFeatures();
+        for (var i = 0; i < features.length; i += 1) {
+            var row = features[i].get('row') || {};
+            if (isRiskVisible(row.styleRiskCd || row.riskCd)) {
+                count += 1;
+            }
+        }
+        return count;
     }
 
     function syncApproxDistrictRows() {
@@ -925,8 +950,13 @@
     }
 
     function updateStatusForDistrict(summary) {
+        var approxVisible = isApproxDistrictVisible();
+        var count = approxVisible ? getVisibleApproxDistrictCount() : (summary.visibleCount || 0);
+        var subject = approxVisible
+            ? '\uAD6C\uC5ED \uB9C8\uC2A4\uD06C'
+            : '\uAD6C\uC5ED \uACBD\uACE0\uC810';
         setStatus(
-            '\uAD6C\uC5ED \uACBD\uACE0\uC810 ' + (summary.visibleCount || 0) + '\uAC1C'
+            subject + ' ' + count + '\uAC1C'
             + ' | \uD45C\uC2DC \uB4F1\uAE09: ' + describeActiveGrades()
             + ' | \uD655\uB300 \uC90C ' + ZOOM_BUILDING + '+\uC5D0\uC11C \uAC74\uBB3C \uB808\uC774\uC5B4 \uD45C\uC2DC'
         );
