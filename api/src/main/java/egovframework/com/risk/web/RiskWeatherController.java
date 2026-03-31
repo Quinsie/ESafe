@@ -37,6 +37,7 @@ import java.awt.image.Raster;
 import java.awt.BasicStroke;
 import java.awt.Color;
 import java.awt.Font;
+import java.awt.FontMetrics;
 import java.awt.Graphics2D;
 import java.awt.RenderingHints;
 import java.awt.geom.Path2D;
@@ -84,6 +85,12 @@ public class RiskWeatherController {
     private static final int LANDSLIDE_TARGET_WIDTH = 900;
     private static final int LANDSLIDE_TARGET_HEIGHT = 620;
     private static final int LANDSLIDE_NO_DATA = Integer.MAX_VALUE;
+    private static final int LANDSLIDE_TILE_SIZE = 256;
+    private static final int LANDSLIDE_BASEMAP_ZOOM = 9;
+    private static final Color LANDSLIDE_PANEL_BG = new Color(14, 24, 35, 178);
+    private static final Color LANDSLIDE_PANEL_BORDER = new Color(255, 255, 255, 68);
+    private static final String VWORLD_SATELLITE_TILE_URL = "https://xdworld.vworld.kr/2d/Satellite/service/%d/%d/%d.jpeg";
+    private static final String VWORLD_HYBRID_TILE_URL = "https://xdworld.vworld.kr/2d/Hybrid/service/%d/%d/%d.png";
     private static final String APPROX_RISK_GEOJSON_PATH = "api/src/main/webapp/resources/data/jeonnam-risk-area/jeonnam-sig-approx-risk.geojson";
     private static final String APPROX_RISK_LINES_GEOJSON_PATH = "api/src/main/webapp/resources/data/jeonnam-risk-area/jeonnam-sig-approx-risk-internal-lines.geojson";
     private static final List<LandslideRasterSpec> LANDSLIDE_RASTER_SPECS = Collections.unmodifiableList(Arrays.asList(
@@ -104,6 +111,7 @@ public class RiskWeatherController {
     private volatile CachedImage satelliteMapCache;
     private volatile CachedImage wildfireMapCache;
     private volatile CachedImage landslideMapCache;
+    private volatile byte[] landslidePointLayerCache;
 
     @PostConstruct
     public void warmUpWeatherMapCaches() {
@@ -375,6 +383,52 @@ public class RiskWeatherController {
         return live;
     }
 
+    @RequestMapping("/weatherLandslidePointLayer.do")
+    public ResponseEntity<byte[]> weatherLandslidePointLayer(
+            @RequestParam(value = "force", required = false) String force) {
+        boolean forceRefresh = isForceRefresh(force);
+        if (!forceRefresh && landslidePointLayerCache != null) {
+            return jsonResponse(landslidePointLayerCache);
+        }
+
+        try {
+            byte[] payload = renderLandslidePointLayerJson();
+            landslidePointLayerCache = payload;
+            return jsonResponse(payload);
+        } catch (Exception e) {
+            LOGGER.warn("failed to render landslide point layer", e);
+            return errorText("Failed to render landslide point layer: " + e.getMessage(), HttpStatus.INTERNAL_SERVER_ERROR);
+        }
+    }
+
+    @RequestMapping("/weatherLandslideOverlayImage.do")
+    public ResponseEntity<byte[]> weatherLandslideOverlayImage(
+            @RequestParam(value = "force", required = false) String force) {
+        try {
+            byte[] payload = renderLandslideOverlayImage();
+            HttpHeaders headers = new HttpHeaders();
+            headers.setCacheControl("no-store, no-cache, must-revalidate, max-age=0");
+            headers.setPragma("no-cache");
+            headers.setExpires(0L);
+            headers.setContentType(MediaType.IMAGE_PNG);
+            return new ResponseEntity<byte[]>(payload, headers, HttpStatus.OK);
+        } catch (Exception e) {
+            LOGGER.warn("failed to render landslide overlay image", e);
+            return errorText("Failed to render landslide overlay image: " + e.getMessage(), HttpStatus.INTERNAL_SERVER_ERROR);
+        }
+    }
+
+    @RequestMapping("/weatherLandslideOverlayMeta.do")
+    public ResponseEntity<byte[]> weatherLandslideOverlayMeta() {
+        try {
+            byte[] payload = renderLandslideOverlayMeta();
+            return jsonResponse(payload);
+        } catch (Exception e) {
+            LOGGER.warn("failed to render landslide overlay meta", e);
+            return errorText("Failed to render landslide overlay meta: " + e.getMessage(), HttpStatus.INTERNAL_SERVER_ERROR);
+        }
+    }
+
     private ResponseEntity<byte[]> fetchWildfireMapImage() {
         String authKey = resolveAuthKey();
         if (isBlank(authKey)) {
@@ -391,6 +445,15 @@ public class RiskWeatherController {
         }
 
         return errorText("No usable wildfire map image from KMA (err=-1 or empty).", HttpStatus.BAD_GATEWAY);
+    }
+
+    private ResponseEntity<byte[]> jsonResponse(byte[] payload) {
+        HttpHeaders headers = new HttpHeaders();
+        headers.setCacheControl("no-store, no-cache, must-revalidate, max-age=0");
+        headers.setPragma("no-cache");
+        headers.setExpires(0L);
+        headers.setContentType(MediaType.APPLICATION_JSON);
+        return new ResponseEntity<byte[]>(payload, headers, HttpStatus.OK);
     }
 
     private ResponseEntity<byte[]> fetchLandslideMapImage() {
@@ -423,15 +486,129 @@ public class RiskWeatherController {
         Bounds unionBounds = mergeBounds(layers);
         CanvasSize canvas = resolveLandslideCanvasSize(unionBounds);
         BufferedImage merged = new BufferedImage(canvas.width, canvas.height, BufferedImage.TYPE_INT_ARGB);
+        GeoBounds geoBounds = mergeGeoBounds(layers);
+
+        drawLandslideBaseMap(merged, geoBounds, canvas);
 
         for (LandslideLayer layer : layers) {
             drawLandslideLayer(merged, layer, unionBounds, canvas);
         }
-        drawLandslideOverlay(merged, mergeGeoBounds(layers), canvas);
+        drawLandslideOverlay(merged, geoBounds, canvas);
+        drawLandslideLegend(merged, canvas);
+        drawLandslideTimestamp(merged, canvas);
 
         ByteArrayOutputStream output = new ByteArrayOutputStream();
         ImageIO.write(merged, "png", output);
         return output.toByteArray();
+    }
+
+    private byte[] renderLandslideOverlayImage() throws IOException {
+        List<LandslideLayer> layers = new ArrayList<LandslideLayer>();
+        for (LandslideRasterSpec spec : LANDSLIDE_RASTER_SPECS) {
+            LandslideLayer layer = loadLandslideLayer(spec);
+            if (layer != null) {
+                layers.add(layer);
+            }
+        }
+        if (layers.isEmpty()) {
+            throw new IOException("No landslide raster resources found.");
+        }
+
+        Bounds unionBounds = mergeBounds(layers);
+        CanvasSize canvas = resolveLandslideCanvasSize(unionBounds);
+        BufferedImage merged = new BufferedImage(canvas.width, canvas.height, BufferedImage.TYPE_INT_ARGB);
+        GeoBounds geoBounds = mergeGeoBounds(layers);
+
+        for (LandslideLayer layer : layers) {
+            drawLandslideLayer(merged, layer, unionBounds, canvas);
+        }
+        drawLandslideOverlay(merged, geoBounds, canvas);
+
+        ByteArrayOutputStream output = new ByteArrayOutputStream();
+        ImageIO.write(merged, "png", output);
+        return output.toByteArray();
+    }
+
+    private byte[] renderLandslideOverlayMeta() throws IOException {
+        List<LandslideLayer> layers = new ArrayList<LandslideLayer>();
+        for (LandslideRasterSpec spec : LANDSLIDE_RASTER_SPECS) {
+            LandslideLayer layer = loadLandslideLayer(spec);
+            if (layer != null) {
+                layers.add(layer);
+            }
+        }
+        if (layers.isEmpty()) {
+            throw new IOException("No landslide raster resources found.");
+        }
+        GeoBounds geoBounds = mergeGeoBounds(layers);
+        String json = "{\"west\":" + formatCoord(geoBounds.west)
+                + ",\"south\":" + formatCoord(geoBounds.south)
+                + ",\"east\":" + formatCoord(geoBounds.east)
+                + ",\"north\":" + formatCoord(geoBounds.north)
+                + "}";
+        return json.getBytes(StandardCharsets.UTF_8);
+    }
+
+    private byte[] renderLandslidePointLayerJson() throws IOException {
+        List<LandslideLayer> layers = new ArrayList<LandslideLayer>();
+        for (LandslideRasterSpec spec : LANDSLIDE_RASTER_SPECS) {
+            LandslideLayer layer = loadLandslideLayer(spec);
+            if (layer != null) {
+                layers.add(layer);
+            }
+        }
+        if (layers.isEmpty()) {
+            throw new IOException("No landslide raster resources found.");
+        }
+
+        StringBuilder sb = new StringBuilder(2 * 1024 * 1024);
+        sb.append("{\"points\":[");
+        boolean first = true;
+        for (LandslideLayer layer : layers) {
+            first = appendLandslidePointFeatures(sb, layer, first);
+        }
+        sb.append("]}");
+        return sb.toString().getBytes(StandardCharsets.UTF_8);
+    }
+
+    private boolean appendLandslidePointFeatures(StringBuilder sb, LandslideLayer layer, boolean firstFeature) {
+        Raster raster = layer.raster;
+        int width = raster.getWidth();
+        int height = raster.getHeight();
+        int sampleStep = resolveLandslidePointStep(width, height);
+        boolean first = firstFeature;
+
+        for (int y = 0; y < height; y += sampleStep) {
+            for (int x = 0; x < width; x += sampleStep) {
+                int value = raster.getSample(x, y, 0);
+                Integer rgb = layer.colorMap.get(Integer.valueOf(value));
+                if (rgb == null || value == LANDSLIDE_NO_DATA) {
+                    continue;
+                }
+
+                double lon = layer.geoBounds.west + ((x + 0.5d) / Math.max(1.0d, width)) * (layer.geoBounds.east - layer.geoBounds.west);
+                double lat = layer.geoBounds.north - ((y + 0.5d) / Math.max(1.0d, height)) * (layer.geoBounds.north - layer.geoBounds.south);
+
+                if (!first) {
+                    sb.append(',');
+                }
+                first = false;
+                sb.append('[')
+                  .append(formatCoord(lon)).append(',')
+                  .append(formatCoord(lat)).append(',')
+                  .append(value).append(']');
+            }
+        }
+        return first;
+    }
+
+    private int resolveLandslidePointStep(int width, int height) {
+        double pixelCount = width * (double) height;
+        return Math.max(4, (int) Math.ceil(Math.sqrt(pixelCount / 12000.0d)));
+    }
+
+    private String formatCoord(double value) {
+        return String.format(Locale.ROOT, "%.6f", value);
     }
 
     private LandslideLayer loadLandslideLayer(LandslideRasterSpec spec) throws IOException {
@@ -522,9 +699,106 @@ public class RiskWeatherController {
                 if (canvasX < 0 || canvasX >= canvas.width) {
                     continue;
                 }
-                canvasImage.setRGB(canvasX, canvasY, 0xFF000000 | rgb.intValue());
+                canvasImage.setRGB(canvasX, canvasY, (resolveLandslideAlpha(value) << 24) | rgb.intValue());
             }
         }
+    }
+
+    private int resolveLandslideAlpha(int value) {
+        if (value <= 1) {
+            return 182;
+        }
+        if (value == 2) {
+            return 172;
+        }
+        if (value == 3) {
+            return 156;
+        }
+        if (value == 4) {
+            return 144;
+        }
+        return 134;
+    }
+
+    private void drawLandslideBaseMap(BufferedImage canvasImage, GeoBounds geoBounds, CanvasSize canvas) {
+        Graphics2D g = canvasImage.createGraphics();
+        try {
+            g.setColor(new Color(230, 236, 242));
+            g.fillRect(0, 0, canvas.width, canvas.height);
+
+            drawTileLayer(g, geoBounds, canvas, VWORLD_SATELLITE_TILE_URL);
+            drawTileLayer(g, geoBounds, canvas, VWORLD_HYBRID_TILE_URL);
+        } catch (Exception e) {
+            LOGGER.warn("failed to draw landslide basemap", e);
+        } finally {
+            g.dispose();
+        }
+    }
+
+    private void drawTileLayer(Graphics2D g, GeoBounds geoBounds, CanvasSize canvas, String tileUrlPattern) {
+        double minPixelX = lonToGlobalPixelX(geoBounds.west, LANDSLIDE_BASEMAP_ZOOM);
+        double maxPixelX = lonToGlobalPixelX(geoBounds.east, LANDSLIDE_BASEMAP_ZOOM);
+        double minPixelY = latToGlobalPixelY(geoBounds.north, LANDSLIDE_BASEMAP_ZOOM);
+        double maxPixelY = latToGlobalPixelY(geoBounds.south, LANDSLIDE_BASEMAP_ZOOM);
+        double pixelWidth = Math.max(1.0d, maxPixelX - minPixelX);
+        double pixelHeight = Math.max(1.0d, maxPixelY - minPixelY);
+
+        int minTileX = (int) Math.floor(minPixelX / LANDSLIDE_TILE_SIZE);
+        int maxTileX = (int) Math.floor((maxPixelX - 1.0d) / LANDSLIDE_TILE_SIZE);
+        int minTileY = (int) Math.floor(minPixelY / LANDSLIDE_TILE_SIZE);
+        int maxTileY = (int) Math.floor((maxPixelY - 1.0d) / LANDSLIDE_TILE_SIZE);
+        int tileCount = 1 << LANDSLIDE_BASEMAP_ZOOM;
+
+        for (int tileX = minTileX; tileX <= maxTileX; tileX++) {
+            for (int tileY = minTileY; tileY <= maxTileY; tileY++) {
+                int wrappedX = wrapTileIndex(tileX, tileCount);
+                if (tileY < 0 || tileY >= tileCount) {
+                    continue;
+                }
+
+                BufferedImage tileImage = readRemoteTile(String.format(Locale.ROOT, tileUrlPattern, LANDSLIDE_BASEMAP_ZOOM, wrappedX, tileY));
+                if (tileImage == null) {
+                    continue;
+                }
+
+                double tileMinPixelX = tileX * LANDSLIDE_TILE_SIZE;
+                double tileMaxPixelX = tileMinPixelX + LANDSLIDE_TILE_SIZE;
+                double tileMinPixelY = tileY * LANDSLIDE_TILE_SIZE;
+                double tileMaxPixelY = tileMinPixelY + LANDSLIDE_TILE_SIZE;
+
+                int drawX1 = (int) Math.round((tileMinPixelX - minPixelX) / pixelWidth * canvas.width);
+                int drawX2 = (int) Math.round((tileMaxPixelX - minPixelX) / pixelWidth * canvas.width);
+                int drawY1 = (int) Math.round((tileMinPixelY - minPixelY) / pixelHeight * canvas.height);
+                int drawY2 = (int) Math.round((tileMaxPixelY - minPixelY) / pixelHeight * canvas.height);
+
+                g.drawImage(tileImage, drawX1, drawY1, drawX2, drawY2, 0, 0, tileImage.getWidth(), tileImage.getHeight(), null);
+            }
+        }
+    }
+
+    private BufferedImage readRemoteTile(String urlText) {
+        try {
+            return ImageIO.read(new URL(urlText));
+        } catch (IOException e) {
+            return null;
+        }
+    }
+
+    private int wrapTileIndex(int value, int max) {
+        int wrapped = value % max;
+        return wrapped < 0 ? wrapped + max : wrapped;
+    }
+
+    private double lonToGlobalPixelX(double lon, int zoom) {
+        double worldSize = LANDSLIDE_TILE_SIZE * Math.pow(2.0d, zoom);
+        return ((lon + 180.0d) / 360.0d) * worldSize;
+    }
+
+    private double latToGlobalPixelY(double lat, int zoom) {
+        double sinLat = Math.sin(Math.toRadians(lat));
+        double worldSize = LANDSLIDE_TILE_SIZE * Math.pow(2.0d, zoom);
+        double mercatorY = 0.5d - (Math.log((1.0d + sinLat) / (1.0d - sinLat)) / (4.0d * Math.PI));
+        return mercatorY * worldSize;
     }
 
     private Map<Integer, Integer> loadLandslideColorMap(ClassPathResource clrResource) throws IOException {
@@ -658,13 +932,86 @@ public class RiskWeatherController {
                 g.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
 
                 drawInternalBoundaryLines(g, lineRoot.path("features"), geoBounds, canvas);
-                drawRegionLabels(g, polygonRoot.path("features"), geoBounds, canvas);
-                drawDistrictLabels(g, polygonRoot.path("features"), geoBounds, canvas);
             } finally {
                 g.dispose();
             }
         } catch (Exception e) {
             LOGGER.warn("failed to draw landslide overlay", e);
+        }
+    }
+
+    private void drawLandslideLegend(BufferedImage canvasImage, CanvasSize canvas) {
+        Graphics2D g = canvasImage.createGraphics();
+        try {
+            g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+            int panelWidth = 210;
+            int panelHeight = 164;
+            int x = canvas.width - panelWidth - 18;
+            int y = canvas.height - panelHeight - 18;
+
+            g.setColor(LANDSLIDE_PANEL_BG);
+            g.fillRoundRect(x, y, panelWidth, panelHeight, 18, 18);
+            g.setColor(LANDSLIDE_PANEL_BORDER);
+            g.setStroke(new BasicStroke(1.0f));
+            g.drawRoundRect(x, y, panelWidth, panelHeight, 18, 18);
+
+            g.setFont(new Font("Malgun Gothic", Font.BOLD, 16));
+            g.setColor(new Color(255, 255, 255, 232));
+            g.drawString("산사태 위험등급", x + 16, y + 28);
+
+            g.setFont(new Font("Malgun Gothic", Font.PLAIN, 12));
+            String[] labels = new String[] {
+                    "1등급 매우 높음",
+                    "2등급 높음",
+                    "3등급 보통",
+                    "4등급 낮음",
+                    "5등급 매우 낮음"
+            };
+            int[] colors = new int[] {
+                    0xE53935,
+                    0xFDD835,
+                    0x43A047,
+                    0x4FC3F7,
+                    0x1E88E5
+            };
+            for (int i = 0; i < labels.length; i++) {
+                int rowY = y + 50 + (i * 20);
+                g.setColor(new Color(colors[i]));
+                g.fillRoundRect(x + 16, rowY - 10, 18, 12, 5, 5);
+                g.setColor(new Color(255, 255, 255, 222));
+                g.drawString(labels[i], x + 42, rowY);
+            }
+        } finally {
+            g.dispose();
+        }
+    }
+
+    private void drawLandslideTimestamp(BufferedImage canvasImage, CanvasSize canvas) {
+        Graphics2D g = canvasImage.createGraphics();
+        try {
+            g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+            String timestamp = "자료 기준: " + LocalDateTime.now(ZoneId.of(KST_ZONE_ID))
+                    .format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm"));
+            String note = "자료: 산림청 산사태위험지도(광주/전남)";
+
+            g.setFont(new Font("Malgun Gothic", Font.BOLD, 13));
+            FontMetrics fm = g.getFontMetrics();
+            int width = Math.max(fm.stringWidth(timestamp), fm.stringWidth(note)) + 28;
+            int height = 50;
+            int x = 18;
+            int y = canvas.height - height - 18;
+
+            g.setColor(LANDSLIDE_PANEL_BG);
+            g.fillRoundRect(x, y, width, height, 16, 16);
+            g.setColor(LANDSLIDE_PANEL_BORDER);
+            g.drawRoundRect(x, y, width, height, 16, 16);
+
+            g.setColor(new Color(255, 255, 255, 226));
+            g.drawString(timestamp, x + 14, y + 21);
+            g.setFont(new Font("Malgun Gothic", Font.PLAIN, 12));
+            g.drawString(note, x + 14, y + 39);
+        } finally {
+            g.dispose();
         }
     }
 
@@ -679,8 +1026,7 @@ public class RiskWeatherController {
             }
 
             if ("광주".equals(regionNm) && "outer-boundary".equals(lineType)) {
-                g.setColor(new Color(20, 30, 40, 190));
-                g.setStroke(new BasicStroke(2.2f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+                continue;
             } else if ("광주".equals(regionNm)) {
                 g.setColor(new Color(22, 33, 48, 170));
                 g.setStroke(new BasicStroke(1.4f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
@@ -690,32 +1036,13 @@ public class RiskWeatherController {
             }
 
             for (JsonNode line : geometry.path("coordinates")) {
-                Path2D path = new Path2D.Double();
-                boolean moved = false;
-                for (JsonNode point : line) {
-                    if (point.size() < 2) {
-                        continue;
-                    }
-                    double lon = point.get(0).asDouble();
-                    double lat = point.get(1).asDouble();
-                    double x = (lon - geoBounds.west) / Math.max(1e-9d, geoBounds.east - geoBounds.west) * canvas.width;
-                    double y = (geoBounds.north - lat) / Math.max(1e-9d, geoBounds.north - geoBounds.south) * canvas.height;
-                    if (!moved) {
-                        path.moveTo(x, y);
-                        moved = true;
-                    } else {
-                        path.lineTo(x, y);
-                    }
-                }
-                if (moved) {
+                Path2D path = buildBoundaryPath(line, geoBounds, canvas, resolveBoundaryMinDistance(regionNm, lineType));
+                if (path.getCurrentPoint() != null) {
                     g.setColor(new Color(255, 255, 255, 135));
                     g.setStroke(new BasicStroke(resolveBoundaryHaloWidth(regionNm, lineType), BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
                     g.draw(path);
 
-                    if ("광주".equals(regionNm) && "outer-boundary".equals(lineType)) {
-                        g.setColor(new Color(20, 30, 40, 205));
-                        g.setStroke(new BasicStroke(2.3f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
-                    } else if ("광주".equals(regionNm)) {
+                    if ("광주".equals(regionNm)) {
                         g.setColor(new Color(18, 30, 47, 190));
                         g.setStroke(new BasicStroke(1.8f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
                     } else {
@@ -728,10 +1055,48 @@ public class RiskWeatherController {
         }
     }
 
-    private float resolveBoundaryHaloWidth(String regionNm, String lineType) {
-        if ("광주".equals(regionNm) && "outer-boundary".equals(lineType)) {
-            return 4.8f;
+    private Path2D buildBoundaryPath(JsonNode line, GeoBounds geoBounds, CanvasSize canvas, double minDistancePx) {
+        Path2D path = new Path2D.Double();
+        boolean moved = false;
+        double lastX = 0.0d;
+        double lastY = 0.0d;
+        for (JsonNode point : line) {
+            if (point.size() < 2) {
+                continue;
+            }
+            double lon = point.get(0).asDouble();
+            double lat = point.get(1).asDouble();
+            double x = (lon - geoBounds.west) / Math.max(1e-9d, geoBounds.east - geoBounds.west) * canvas.width;
+            double y = (geoBounds.north - lat) / Math.max(1e-9d, geoBounds.north - geoBounds.south) * canvas.height;
+            if (!moved) {
+                path.moveTo(x, y);
+                moved = true;
+                lastX = x;
+                lastY = y;
+                continue;
+            }
+
+            double dx = x - lastX;
+            double dy = y - lastY;
+            if ((dx * dx) + (dy * dy) < (minDistancePx * minDistancePx)) {
+                continue;
+            }
+
+            path.lineTo(x, y);
+            lastX = x;
+            lastY = y;
         }
+        return path;
+    }
+
+    private double resolveBoundaryMinDistance(String regionNm, String lineType) {
+        if ("광주".equals(regionNm)) {
+            return 2.4d;
+        }
+        return 3.0d;
+    }
+
+    private float resolveBoundaryHaloWidth(String regionNm, String lineType) {
         if ("광주".equals(regionNm)) {
             return 3.9f;
         }

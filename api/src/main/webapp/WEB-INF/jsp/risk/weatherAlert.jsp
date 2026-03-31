@@ -82,6 +82,6 @@
     </div>
     <jsp:include page="include/footer.jsp"/>
     <script src="<c:url value='/resources/js/risk-common.js?v=20260303_1'/>"></script>
-    <script src="<c:url value='/resources/js/risk-weather.js?v=20260401_1'/>"></script>
+    <script src="<c:url value='/resources/js/risk-weather.js?v=20260401_7'/>"></script>
 </body>
 </html>

@@ -36,7 +36,6 @@
         regionList: [],
         districtMap: {}
     };
-
     $(function() {
         // Initial load: active map + today's alert/score tables
         initWeatherMapTabs();
@@ -343,6 +342,14 @@
             $state.text('지도를 불러오지 못했습니다.');
             return;
         }
+        if (mapKind === 'landslide') {
+            $frame.removeClass('is-landslide-map');
+            bindMapImageHandlers($img, $frame, $state);
+            revokeImageObjectUrl($img);
+            $img.attr('src', requestUrl);
+            return;
+        }
+        $frame.removeClass('is-landslide-map');
         var failSafeTimer = setTimeout(function() {
             if (!$frame.hasClass('map-ready')) {
                 $frame.removeClass('map-ready');
@@ -436,9 +443,6 @@
     function buildMapUrl(mapKind, wrn, forceRefresh) {
         var nonce = '&_=' + Date.now();
         var force = forceRefresh ? '&force=1' : '';
-        if (mapKind === 'landslide') {
-            force = '&force=1';
-        }
         if (mapKind === 'gk2a') {
             return 'weatherSatelliteMapImage.do?' + nonce.substring(1) + force;
         }
@@ -446,7 +450,7 @@
             return 'weatherWildfireMapImage.do?' + nonce.substring(1) + force;
         }
         if (mapKind === 'landslide') {
-            return 'weatherLandslideMapImage.do?' + nonce.substring(1) + force;
+            return 'weatherLandslideMapImage.do?' + nonce.substring(1) + '&force=1';
         }
         return 'weatherWarningMapImage.do?wrn='
             + encodeURIComponent(wrn || 'W,R,C,D,O,N,V,T,S,Y,H,F')
