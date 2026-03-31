@@ -9,10 +9,12 @@ This script creates visualization-oriented polygons that:
 Implementation strategy:
 1. Read building risk rows from the local H2 full seed SQL.
 2. Filter target rows for Gwangju and Jeollanam-do.
-3. Downsample building points on a district-aware grid.
-4. Build a soft regional mask from all sampled points.
-5. Generate a Voronoi coverage from sampled points.
+3. Build a tight regional mask from sampled real building points using
+   concave hull + buffered point union.
+4. Pick district Voronoi seeds from real building points (not grid buckets).
+5. Generate a Voronoi coverage from those seeds.
 6. Clip Voronoi cells to the regional mask and dissolve them by district.
+7. Apply rounded smoothing and topology-preserving simplify for a soft blob look.
 
 The result is not an official administrative boundary dataset.
 It is a coverage-style visualization layer meant for map readability.
@@ -76,11 +78,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--input", type=Path, default=DEFAULT_INPUT, help="Path to data-h2.full.sql")
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT, help="GeoJSON output path")
     parser.add_argument("--line-output", type=Path, default=DEFAULT_LINE_OUTPUT, help="Internal boundary GeoJSON output path")
-    parser.add_argument("--sample-grid-size", type=float, default=700.0, help="District-aware sampling grid size in EPSG:5186 meters")
-    parser.add_argument("--mask-buffer", type=float, default=1200.0, help="Outer buffer for the regional soft mask in meters")
-    parser.add_argument("--mask-simplify", type=float, default=220.0, help="Simplify tolerance for the regional mask in meters")
-    parser.add_argument("--hull-ratio", type=float, default=0.22, help="Concave hull ratio for the regional mask")
-    parser.add_argument("--boundary-simplify", type=float, default=45.0, help="Light topology-preserving simplify for dissolved district polygons")
+    parser.add_argument("--seed-samples-min", type=int, default=18, help="Minimum Voronoi seed points per district")
+    parser.add_argument("--seed-samples-max", type=int, default=90, help="Maximum Voronoi seed points per district")
+    parser.add_argument("--mask-point-limit", type=int, default=14000, help="Maximum real building points sampled for the regional mask")
+    parser.add_argument("--mask-point-buffer", type=float, default=260.0, help="Buffer radius for point-union mask generation in meters")
+    parser.add_argument("--mask-buffer", type=float, default=650.0, help="Outer rounding buffer for the regional mask in meters")
+    parser.add_argument("--mask-simplify", type=float, default=120.0, help="Simplify tolerance for the regional mask in meters")
+    parser.add_argument("--hull-ratio", type=float, default=0.12, help="Concave hull ratio for the regional mask")
+    parser.add_argument("--smooth-radius", type=float, default=180.0, help="Rounded smoothing radius for district polygons in meters")
+    parser.add_argument("--boundary-simplify", type=float, default=30.0, help="Light topology-preserving simplify for dissolved district polygons")
     return parser.parse_args()
 
 
@@ -186,40 +192,54 @@ def summarize_group(rows: List[Dict[str, object]]) -> Dict[str, object]:
     }
 
 
-def sample_region_rows(rows: List[Dict[str, object]], sample_grid_size: float) -> List[Dict[str, object]]:
-    buckets: Dict[Tuple[str, int, int], Dict[str, object]] = {}
+def deterministic_pick(items: List[Dict[str, object]], limit: int) -> List[Dict[str, object]]:
+    if len(items) <= limit:
+        return list(items)
+    if limit <= 0:
+        return []
+
+    ranked = sorted(
+        items,
+        key=lambda row: (
+            float(row["totalScore"]),
+            float(row["lon"]),
+            float(row["lat"]),
+            str(row["addr"]),
+        ),
+        reverse=True,
+    )
+    indexes = np.linspace(0, len(ranked) - 1, num=limit, dtype=int)
+    seen = set()
+    selected: List[Dict[str, object]] = []
+    for idx in indexes:
+        picked = ranked[int(idx)]
+        key = (float(picked["lon"]), float(picked["lat"]), str(picked["districtNm"]))
+        if key in seen:
+            continue
+        seen.add(key)
+        selected.append(picked)
+    return selected
+
+
+def sample_voronoi_seeds(rows: List[Dict[str, object]], min_points: int, max_points: int) -> List[Dict[str, object]]:
+    grouped: Dict[str, List[Dict[str, object]]] = defaultdict(list)
     for row in rows:
-        lon = float(row["lon"])
-        lat = float(row["lat"])
-        gx = int(round(lon / sample_grid_size))
-        gy = int(round(lat / sample_grid_size))
-        key = (str(row["districtNm"]), gx, gy)
-        bucket = buckets.get(key)
-        if bucket is None:
-            bucket = {
+        grouped[str(row["districtNm"])].append(row)
+
+    sampled: List[Dict[str, object]] = []
+    for district_nm, district_rows in grouped.items():
+        size = len(district_rows)
+        target = int(max(min_points, min(max_points, round(math.sqrt(size) * 1.45))))
+        picked = deterministic_pick(district_rows, target)
+        for row in picked:
+            sampled.append({
                 "regionNm": row["regionNm"],
                 "regionCd": row["regionCd"],
-                "districtNm": row["districtNm"],
-                "sumX": 0.0,
-                "sumY": 0.0,
-                "count": 0,
-            }
-            buckets[key] = bucket
-        bucket["sumX"] += lon
-        bucket["sumY"] += lat
-        bucket["count"] += 1
-
-    sampled = []
-    for bucket in buckets.values():
-        count = max(int(bucket["count"]), 1)
-        sampled.append({
-            "regionNm": bucket["regionNm"],
-            "regionCd": bucket["regionCd"],
-            "districtNm": bucket["districtNm"],
-            "x": bucket["sumX"] / count,
-            "y": bucket["sumY"] / count,
-            "count": count,
-        })
+                "districtNm": district_nm,
+                "x": float(row["lon"]),
+                "y": float(row["lat"]),
+                "count": 1,
+            })
     return sampled
 
 
@@ -261,13 +281,55 @@ def remove_small_holes(geometry, min_hole_area: float):
     return geometry
 
 
-def build_region_mask(sampled_rows: List[Dict[str, object]], hull_ratio: float, mask_buffer: float, mask_simplify: float):
-    points = MultiPoint([Point(float(row["x"]), float(row["y"])) for row in sampled_rows])
-    mask = concave_hull(points, ratio=hull_ratio, allow_holes=False)
+def collapse_to_primary_blob(geometry, smooth_radius: float):
+    geometry = normalize_geometry(geometry)
+    if geometry.is_empty:
+        return geometry
+    if isinstance(geometry, Polygon):
+        return geometry
+    if not isinstance(geometry, MultiPolygon):
+        return geometry
+
+    polygons = [poly for poly in geometry.geoms if not poly.is_empty]
+    if not polygons:
+        return geometry
+
+    polygons.sort(key=lambda poly: poly.area, reverse=True)
+    largest_area = polygons[0].area
+    min_keep_area = max(1_500_000.0, largest_area * 0.18)
+    kept = [poly for poly in polygons if poly.area >= min_keep_area]
+    if not kept:
+        kept = [polygons[0]]
+
+    merged = unary_union(kept)
+    if smooth_radius > 0:
+        merged = merged.buffer(smooth_radius * 0.55, quad_segs=16).buffer(-smooth_radius * 0.55, quad_segs=16)
+    merged = normalize_geometry(merged)
+
+    if isinstance(merged, MultiPolygon):
+        merged = max(merged.geoms, key=lambda poly: poly.area)
+    return merged
+
+
+def build_region_mask(
+    rows: List[Dict[str, object]],
+    hull_ratio: float,
+    mask_point_limit: int,
+    mask_point_buffer: float,
+    mask_buffer: float,
+    mask_simplify: float,
+):
+    mask_rows = deterministic_pick(rows, mask_point_limit)
+    points = MultiPoint([Point(float(row["lon"]), float(row["lat"])) for row in mask_rows])
+    hull = concave_hull(points, ratio=hull_ratio, allow_holes=False)
+    if hull.is_empty:
+        hull = points.convex_hull
+    buffered_points = unary_union([pt.buffer(mask_point_buffer, quad_segs=16) for pt in points.geoms])
+    mask = unary_union([hull, buffered_points])
     if mask.is_empty:
         mask = points.convex_hull
     if mask_buffer > 0:
-        mask = mask.buffer(mask_buffer)
+        mask = mask.buffer(mask_buffer, quad_segs=16).buffer(-mask_buffer * 0.72, quad_segs=16)
     if mask_simplify > 0:
         mask = mask.simplify(mask_simplify, preserve_topology=True)
     return remove_small_holes(mask, min_hole_area=500000.0)
@@ -340,27 +402,34 @@ def voronoi_finite_polygons_2d(vor: Voronoi, radius: Optional[float] = None):
 
 def build_region_geometries(
     rows: List[Dict[str, object]],
-    sample_grid_size: float,
+    seed_samples_min: int,
+    seed_samples_max: int,
+    mask_point_limit: int,
+    mask_point_buffer: float,
     hull_ratio: float,
     mask_buffer: float,
     mask_simplify: float,
+    smooth_radius: float,
     boundary_simplify: float,
     exclusion_mask=None,
 ) -> Dict[str, object]:
-    sampled_rows = sample_region_rows(rows, sample_grid_size)
+    sampled_rows = sample_voronoi_seeds(rows, seed_samples_min, seed_samples_max)
     if len(sampled_rows) < 3:
         district_points: Dict[str, List[Point]] = defaultdict(list)
-        for row in sampled_rows:
-            district_points[str(row["districtNm"])].append(Point(float(row["x"]), float(row["y"])))
+        for row in rows:
+            district_points[str(row["districtNm"])].append(Point(float(row["lon"]), float(row["lat"])))
         fallback = {}
         for district_nm, points in district_points.items():
-            hull = MultiPoint(points).convex_hull.buffer(sample_grid_size * 0.75)
+            hull = concave_hull(MultiPoint(points), ratio=0.08, allow_holes=False)
+            if hull.is_empty:
+                hull = MultiPoint(points).convex_hull
+            hull = hull.buffer(max(smooth_radius, 120.0), quad_segs=16).buffer(-max(smooth_radius * 0.7, 90.0), quad_segs=16)
             if exclusion_mask is not None:
                 hull = hull.difference(exclusion_mask)
             fallback[district_nm] = remove_small_holes(hull, min_hole_area=500000.0)
         return fallback
 
-    mask = build_region_mask(sampled_rows, hull_ratio, mask_buffer, mask_simplify)
+    mask = build_region_mask(rows, hull_ratio, mask_point_limit, mask_point_buffer, mask_buffer, mask_simplify)
     if exclusion_mask is not None:
         mask = normalize_geometry(mask.difference(exclusion_mask))
     if mask.is_empty:
@@ -389,10 +458,13 @@ def build_region_geometries(
     for district_nm, cells in district_cells.items():
         geometry = coverage_union_all(cells) if len(cells) > 1 else cells[0]
         geometry = normalize_geometry(geometry)
+        if smooth_radius > 0:
+            geometry = geometry.buffer(smooth_radius, quad_segs=16).buffer(-smooth_radius, quad_segs=16)
         if boundary_simplify > 0:
             geometry = geometry.simplify(boundary_simplify, preserve_topology=True)
         geometry = normalize_geometry(geometry).intersection(mask)
         geometry = remove_small_holes(normalize_geometry(geometry), min_hole_area=500000.0)
+        geometry = collapse_to_primary_blob(geometry, smooth_radius)
         if not geometry.is_empty:
             district_geometries[district_nm] = geometry
 
@@ -424,10 +496,14 @@ def main() -> int:
     if "광주" in grouped_by_region:
         district_geometries_by_region["광주"] = build_region_geometries(
             rows=grouped_by_region["광주"],
-            sample_grid_size=args.sample_grid_size,
+            seed_samples_min=args.seed_samples_min,
+            seed_samples_max=args.seed_samples_max,
+            mask_point_limit=args.mask_point_limit,
+            mask_point_buffer=args.mask_point_buffer,
             hull_ratio=args.hull_ratio,
             mask_buffer=args.mask_buffer,
             mask_simplify=args.mask_simplify,
+            smooth_radius=args.smooth_radius,
             boundary_simplify=args.boundary_simplify,
         )
 
@@ -438,10 +514,14 @@ def main() -> int:
     if "전남" in grouped_by_region:
         district_geometries_by_region["전남"] = build_region_geometries(
             rows=grouped_by_region["전남"],
-            sample_grid_size=args.sample_grid_size,
+            seed_samples_min=args.seed_samples_min,
+            seed_samples_max=args.seed_samples_max,
+            mask_point_limit=args.mask_point_limit,
+            mask_point_buffer=args.mask_point_buffer,
             hull_ratio=args.hull_ratio,
             mask_buffer=args.mask_buffer,
             mask_simplify=args.mask_simplify,
+            smooth_radius=args.smooth_radius,
             boundary_simplify=args.boundary_simplify,
             exclusion_mask=gwangju_mask,
         )
@@ -482,7 +562,7 @@ def main() -> int:
             "sourceSql": str(args.input.relative_to(ROOT)),
             "regionNames": sorted(TARGET_REGIONS),
             "featureCount": len(features),
-            "method": "voronoi-coverage",
+            "method": "voronoi-tight-mask-rounded",
         },
         "features": features,
     }
@@ -535,7 +615,7 @@ def main() -> int:
             "sourceSql": str(args.input.relative_to(ROOT)),
             "regionNames": sorted(TARGET_REGIONS),
             "featureCount": len(line_features),
-            "method": "voronoi-coverage-internal-lines",
+            "method": "voronoi-tight-mask-rounded-internal-lines",
         },
         "features": line_features,
     }

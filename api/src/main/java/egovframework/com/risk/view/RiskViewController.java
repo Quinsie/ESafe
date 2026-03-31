@@ -82,4 +82,3 @@ public class RiskViewController {
         return "risk/nationwideRiskMap";
     }
 }
-
