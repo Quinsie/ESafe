@@ -21,6 +21,12 @@
             description: '기상청 산불위험도를 단계별로 확인할 수 있는 지도입니다.',
             alt: '산불위험지도',
             wrn: ''
+        },
+        landslide: {
+            title: '산사태위험도',
+            description: '광주광역시와 전라남도 산사태 위험등급을 한 화면에서 확인할 수 있습니다.',
+            alt: '산사태위험지도',
+            wrn: ''
         }
     };
     var weatherScoreFilterData = {
@@ -430,11 +436,17 @@
     function buildMapUrl(mapKind, wrn, forceRefresh) {
         var nonce = '&_=' + Date.now();
         var force = forceRefresh ? '&force=1' : '';
+        if (mapKind === 'landslide') {
+            force = '&force=1';
+        }
         if (mapKind === 'gk2a') {
             return 'weatherSatelliteMapImage.do?' + nonce.substring(1) + force;
         }
         if (mapKind === 'wildfire') {
             return 'weatherWildfireMapImage.do?' + nonce.substring(1) + force;
+        }
+        if (mapKind === 'landslide') {
+            return 'weatherLandslideMapImage.do?' + nonce.substring(1) + force;
         }
         return 'weatherWarningMapImage.do?wrn='
             + encodeURIComponent(wrn || 'W,R,C,D,O,N,V,T,S,Y,H,F')

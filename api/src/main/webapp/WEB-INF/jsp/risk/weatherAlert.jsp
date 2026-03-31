@@ -45,6 +45,7 @@
                             <button type="button" class="is-active" data-map-kind="wrn" data-wrn="W,R,C,D,O,N,V,T,S,Y,H,F"><span class="weather-map-tab-dot is-warning"></span><span>종합 특보</span></button>
                             <button type="button" data-map-kind="gk2a"><span class="weather-map-tab-dot is-satellite"></span><span>실시간 위성</span></button>
                             <button type="button" data-map-kind="wildfire"><span class="weather-map-tab-dot is-wildfire"></span><span>산불위험도</span></button>
+                            <button type="button" data-map-kind="landslide"><span class="weather-map-tab-dot is-landslide"></span><span>산사태위험도</span></button>
                         </div>
                         <p id="weatherMapLayerDescription" class="weather-map-side-description">기상청 종합 특보 현황 지도를 표시합니다.</p>
                     </aside>
@@ -81,6 +82,6 @@
     </div>
     <jsp:include page="include/footer.jsp"/>
     <script src="<c:url value='/resources/js/risk-common.js?v=20260303_1'/>"></script>
-    <script src="<c:url value='/resources/js/risk-weather.js?v=20260304_5'/>"></script>
+    <script src="<c:url value='/resources/js/risk-weather.js?v=20260401_1'/>"></script>
 </body>
 </html>

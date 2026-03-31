@@ -1,8 +1,10 @@
 package egovframework.com.risk.web;
 
 import java.io.ByteArrayOutputStream;
+import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.InputStreamReader;
 import java.net.URLEncoder;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
@@ -12,8 +14,10 @@ import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.Base64;
+import java.util.Iterator;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
@@ -22,10 +26,24 @@ import java.util.Set;
 import java.time.temporal.ChronoUnit;
 import javax.annotation.PostConstruct;
 import javax.annotation.Resource;
+import javax.imageio.IIOImage;
+import javax.imageio.ImageIO;
+import javax.imageio.ImageReadParam;
+import javax.imageio.ImageReader;
+import javax.imageio.stream.ImageInputStream;
 import javax.net.ssl.HttpsURLConnection;
+import java.awt.image.BufferedImage;
+import java.awt.image.Raster;
+import java.awt.BasicStroke;
+import java.awt.Color;
+import java.awt.Font;
+import java.awt.Graphics2D;
+import java.awt.RenderingHints;
+import java.awt.geom.Path2D;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.core.io.ClassPathResource;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
@@ -38,6 +56,14 @@ import org.springframework.web.bind.annotation.RestController;
 import egovframework.com.risk.service.RiskWeatherService;
 import egovframework.com.risk.vo.RiskSearchVO;
 import egovframework.com.risk.vo.RiskWeatherVO;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import java.io.File;
+import java.util.LinkedHashMap;
+import javax.xml.parsers.DocumentBuilderFactory;
+import org.w3c.dom.Document;
+import org.w3c.dom.Element;
+import org.w3c.dom.NodeList;
 
 /**
  * 기상특보 조회 REST API (넥사크로 연동)
@@ -55,6 +81,16 @@ public class RiskWeatherController {
     private static final String WILDFIRE_MAP_URL = "https://apihub-pub.kma.go.kr/api/typ01/cgi-bin/sat/nph-sat_ana_img";
     private static final int MAP_TIME_LAG_MINUTES = 30;
     private static final int WILDFIRE_MIN_IMAGE_BYTES = 5000;
+    private static final int LANDSLIDE_TARGET_WIDTH = 900;
+    private static final int LANDSLIDE_TARGET_HEIGHT = 620;
+    private static final int LANDSLIDE_NO_DATA = Integer.MAX_VALUE;
+    private static final String APPROX_RISK_GEOJSON_PATH = "api/src/main/webapp/resources/data/jeonnam-risk-area/jeonnam-sig-approx-risk.geojson";
+    private static final String APPROX_RISK_LINES_GEOJSON_PATH = "api/src/main/webapp/resources/data/jeonnam-risk-area/jeonnam-sig-approx-risk-internal-lines.geojson";
+    private static final List<LandslideRasterSpec> LANDSLIDE_RASTER_SPECS = Collections.unmodifiableList(Arrays.asList(
+            new LandslideRasterSpec("29", "landslide/29/29.tif", "landslide/29/29.clr", "landslide/29/29.tfw"),
+            new LandslideRasterSpec("46", "landslide/46/46.tif", "landslide/46/46.clr", "landslide/46/46.tfw")
+    ));
+    private final ObjectMapper objectMapper = new ObjectMapper();
     private static final Set<String> ALLOWED_WRN_CODES = new LinkedHashSet<String>(Arrays.asList(
             "W", "R", "C", "D", "O", "N", "V", "T", "S", "Y", "H", "F"
     ));
@@ -67,6 +103,7 @@ public class RiskWeatherController {
     private volatile CachedImage warningMapCache;
     private volatile CachedImage satelliteMapCache;
     private volatile CachedImage wildfireMapCache;
+    private volatile CachedImage landslideMapCache;
 
     @PostConstruct
     public void warmUpWeatherMapCaches() {
@@ -130,6 +167,18 @@ public class RiskWeatherController {
             }
 
             return result;
+        }
+    }
+
+    public boolean refreshLandslideMapCache() {
+        synchronized (mapCacheLock) {
+            ResponseEntity<byte[]> landslide = fetchLandslideMapImage();
+            boolean landslideOk = isUsableImageResponse(landslide);
+            if (landslideOk) {
+                landslideMapCache = CachedImage.from(landslide);
+            }
+            LOGGER.info("weather map cache refresh - landslide: {}", Boolean.valueOf(landslideOk));
+            return landslideOk;
         }
     }
 
@@ -304,6 +353,28 @@ public class RiskWeatherController {
         return live;
     }
 
+    /**
+     * Local landslide risk map proxy.
+     * GET /weatherLandslideMapImage.do
+     */
+    @RequestMapping("/weatherLandslideMapImage.do")
+    public ResponseEntity<byte[]> weatherLandslideMapImage(
+            @RequestParam(value = "force", required = false) String force) {
+        boolean forceRefresh = isForceRefresh(force);
+        if (!forceRefresh) {
+            CachedImage cached = landslideMapCache;
+            if (cached != null) {
+                return cached.toResponseEntity();
+            }
+        }
+
+        ResponseEntity<byte[]> live = fetchLandslideMapImage();
+        if (isUsableImageResponse(live)) {
+            landslideMapCache = CachedImage.from(live);
+        }
+        return live;
+    }
+
     private ResponseEntity<byte[]> fetchWildfireMapImage() {
         String authKey = resolveAuthKey();
         if (isBlank(authKey)) {
@@ -320,6 +391,562 @@ public class RiskWeatherController {
         }
 
         return errorText("No usable wildfire map image from KMA (err=-1 or empty).", HttpStatus.BAD_GATEWAY);
+    }
+
+    private ResponseEntity<byte[]> fetchLandslideMapImage() {
+        try {
+            byte[] payload = renderLandslideMapImage();
+            HttpHeaders headers = new HttpHeaders();
+            headers.setCacheControl("no-store, no-cache, must-revalidate, max-age=0");
+            headers.setPragma("no-cache");
+            headers.setExpires(0L);
+            headers.setContentType(MediaType.IMAGE_PNG);
+            return new ResponseEntity<byte[]>(payload, headers, HttpStatus.OK);
+        } catch (Exception e) {
+            LOGGER.warn("failed to render landslide map image", e);
+            return errorText("Failed to render landslide map image: " + e.getMessage(), HttpStatus.INTERNAL_SERVER_ERROR);
+        }
+    }
+
+    private byte[] renderLandslideMapImage() throws IOException {
+        List<LandslideLayer> layers = new ArrayList<LandslideLayer>();
+        for (LandslideRasterSpec spec : LANDSLIDE_RASTER_SPECS) {
+            LandslideLayer layer = loadLandslideLayer(spec);
+            if (layer != null) {
+                layers.add(layer);
+            }
+        }
+        if (layers.isEmpty()) {
+            throw new IOException("No landslide raster resources found.");
+        }
+
+        Bounds unionBounds = mergeBounds(layers);
+        CanvasSize canvas = resolveLandslideCanvasSize(unionBounds);
+        BufferedImage merged = new BufferedImage(canvas.width, canvas.height, BufferedImage.TYPE_INT_ARGB);
+
+        for (LandslideLayer layer : layers) {
+            drawLandslideLayer(merged, layer, unionBounds, canvas);
+        }
+        drawLandslideOverlay(merged, mergeGeoBounds(layers), canvas);
+
+        ByteArrayOutputStream output = new ByteArrayOutputStream();
+        ImageIO.write(merged, "png", output);
+        return output.toByteArray();
+    }
+
+    private LandslideLayer loadLandslideLayer(LandslideRasterSpec spec) throws IOException {
+        ClassPathResource tifResource = new ClassPathResource(spec.tifResourcePath);
+        ClassPathResource clrResource = new ClassPathResource(spec.clrResourcePath);
+        ClassPathResource tfwResource = new ClassPathResource(spec.tfwResourcePath);
+        ClassPathResource xmlResource = new ClassPathResource(spec.xmlResourcePath);
+        if (!tifResource.exists() || !clrResource.exists() || !tfwResource.exists() || !xmlResource.exists()) {
+            return null;
+        }
+
+        Map<Integer, Integer> colorMap = loadLandslideColorMap(clrResource);
+        WorldFile worldFile = loadWorldFile(tfwResource);
+        GeoBounds geoBounds = loadGeoBounds(xmlResource);
+        try (InputStream tifStream = tifResource.getInputStream();
+             ImageInputStream imageInput = ImageIO.createImageInputStream(tifStream)) {
+            if (imageInput == null) {
+                throw new IOException("Unable to open landslide raster stream");
+            }
+
+            Iterator<ImageReader> readers = ImageIO.getImageReaders(imageInput);
+            if (!readers.hasNext()) {
+                throw new IOException("No TIFF reader available for landslide raster");
+            }
+
+            ImageReader reader = readers.next();
+            try {
+                reader.setInput(imageInput, true, true);
+                int sourceWidth = reader.getWidth(0);
+                int sourceHeight = reader.getHeight(0);
+                int sampling = resolveSubsampling(sourceWidth, sourceHeight);
+
+                ImageReadParam param = reader.getDefaultReadParam();
+                param.setSourceSubsampling(sampling, sampling, 0, 0);
+                BufferedImage sourceImage = reader.read(0, param);
+                if (sourceImage == null) {
+                    throw new IOException("Unable to decode landslide raster image");
+                }
+                double sampledPixelWidth = worldFile.pixelWidth * sampling;
+                double sampledPixelHeight = Math.abs(worldFile.pixelHeight) * sampling;
+                double minX = worldFile.originX - (worldFile.pixelWidth / 2.0d);
+                double maxY = worldFile.originY + (Math.abs(worldFile.pixelHeight) / 2.0d);
+                double maxX = minX + sampledPixelWidth * sourceImage.getWidth();
+                double minY = maxY - sampledPixelHeight * sourceImage.getHeight();
+
+                return new LandslideLayer(
+                        spec.code,
+                        sourceImage.getRaster(),
+                        colorMap,
+                        new Bounds(minX, minY, maxX, maxY),
+                        geoBounds,
+                        sampledPixelWidth,
+                        sampledPixelHeight
+                );
+            } finally {
+                reader.dispose();
+            }
+        }
+    }
+
+    private int resolveSubsampling(int sourceWidth, int sourceHeight) {
+        double widthRatio = sourceWidth / (double) LANDSLIDE_TARGET_WIDTH;
+        double heightRatio = sourceHeight / (double) LANDSLIDE_TARGET_HEIGHT;
+        return Math.max(1, (int) Math.ceil(Math.max(widthRatio, heightRatio)));
+    }
+
+    private void drawLandslideLayer(BufferedImage canvasImage, LandslideLayer layer, Bounds unionBounds, CanvasSize canvas) {
+        Raster raster = layer.raster;
+        int width = raster.getWidth();
+        int height = raster.getHeight();
+        int[] row = new int[width];
+
+        for (int y = 0; y < height; y++) {
+            raster.getSamples(0, y, width, 1, 0, row);
+            double worldY = layer.bounds.maxY - ((y + 0.5d) * layer.pixelHeight);
+            int canvasY = (int) Math.floor((unionBounds.maxY - worldY) * canvas.scale);
+            if (canvasY < 0 || canvasY >= canvas.height) {
+                continue;
+            }
+            for (int x = 0; x < width; x++) {
+                int value = row[x];
+                Integer rgb = layer.colorMap.get(Integer.valueOf(value));
+                if (rgb == null || value == LANDSLIDE_NO_DATA) {
+                    continue;
+                }
+                double worldX = layer.bounds.minX + ((x + 0.5d) * layer.pixelWidth);
+                int canvasX = (int) Math.floor((worldX - unionBounds.minX) * canvas.scale);
+                if (canvasX < 0 || canvasX >= canvas.width) {
+                    continue;
+                }
+                canvasImage.setRGB(canvasX, canvasY, 0xFF000000 | rgb.intValue());
+            }
+        }
+    }
+
+    private Map<Integer, Integer> loadLandslideColorMap(ClassPathResource clrResource) throws IOException {
+        Map<Integer, Integer> colorMap = new HashMap<Integer, Integer>();
+        try (InputStream input = clrResource.getInputStream()) {
+            String text = new String(readAll(input), StandardCharsets.UTF_8);
+            String[] lines = text.split("\\r?\\n");
+            for (String line : lines) {
+                String trimmed = line == null ? "" : line.trim();
+                if (trimmed.isEmpty() || trimmed.startsWith("#")) {
+                    continue;
+                }
+                String[] parts = trimmed.split("\\s+");
+                if (parts.length < 4) {
+                    continue;
+                }
+                int value = Integer.parseInt(parts[0]);
+                int red = clampColor(parts[1]);
+                int green = clampColor(parts[2]);
+                int blue = clampColor(parts[3]);
+                int rgb = (red << 16) | (green << 8) | blue;
+                colorMap.put(Integer.valueOf(value), Integer.valueOf(rgb));
+            }
+        }
+        return Collections.unmodifiableMap(colorMap);
+    }
+
+    private GeoBounds loadGeoBounds(ClassPathResource xmlResource) throws IOException {
+        try (InputStream input = xmlResource.getInputStream()) {
+            DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
+            factory.setNamespaceAware(false);
+            Document document = factory.newDocumentBuilder().parse(input);
+            NodeList boxes = document.getElementsByTagName("GeoBndBox");
+            if (boxes == null || boxes.getLength() == 0) {
+                throw new IOException("GeoBndBox not found in " + xmlResource.getPath());
+            }
+            Element box = (Element) boxes.item(0);
+            double west = parseGeoBoundValue(box, "westBL");
+            double east = parseGeoBoundValue(box, "eastBL");
+            double north = parseGeoBoundValue(box, "northBL");
+            double south = parseGeoBoundValue(box, "southBL");
+            return new GeoBounds(west, south, east, north);
+        } catch (IOException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new IOException("Failed to parse landslide metadata: " + xmlResource.getPath(), e);
+        }
+    }
+
+    private double parseGeoBoundValue(Element box, String tagName) throws IOException {
+        NodeList nodes = box.getElementsByTagName(tagName);
+        if (nodes == null || nodes.getLength() == 0) {
+            throw new IOException("Missing " + tagName + " in landslide metadata");
+        }
+        return Double.parseDouble(nodes.item(0).getTextContent().trim());
+    }
+
+    private WorldFile loadWorldFile(ClassPathResource tfwResource) throws IOException {
+        List<Double> values = new ArrayList<Double>();
+        try (BufferedReader reader = new BufferedReader(new InputStreamReader(tfwResource.getInputStream(), StandardCharsets.UTF_8))) {
+            String line;
+            while ((line = reader.readLine()) != null) {
+                String trimmed = line.trim();
+                if (!trimmed.isEmpty()) {
+                    values.add(Double.valueOf(Double.parseDouble(trimmed)));
+                }
+            }
+        }
+        if (values.size() < 6) {
+            throw new IOException("Invalid world file: " + tfwResource.getPath());
+        }
+        return new WorldFile(
+                values.get(0).doubleValue(),
+                values.get(3).doubleValue(),
+                values.get(4).doubleValue(),
+                values.get(5).doubleValue()
+        );
+    }
+
+    private Bounds mergeBounds(List<LandslideLayer> layers) {
+        double minX = Double.POSITIVE_INFINITY;
+        double minY = Double.POSITIVE_INFINITY;
+        double maxX = Double.NEGATIVE_INFINITY;
+        double maxY = Double.NEGATIVE_INFINITY;
+        for (LandslideLayer layer : layers) {
+            minX = Math.min(minX, layer.bounds.minX);
+            minY = Math.min(minY, layer.bounds.minY);
+            maxX = Math.max(maxX, layer.bounds.maxX);
+            maxY = Math.max(maxY, layer.bounds.maxY);
+        }
+        return new Bounds(minX, minY, maxX, maxY);
+    }
+
+    private GeoBounds mergeGeoBounds(List<LandslideLayer> layers) {
+        double west = Double.POSITIVE_INFINITY;
+        double south = Double.POSITIVE_INFINITY;
+        double east = Double.NEGATIVE_INFINITY;
+        double north = Double.NEGATIVE_INFINITY;
+        for (LandslideLayer layer : layers) {
+            west = Math.min(west, layer.geoBounds.west);
+            south = Math.min(south, layer.geoBounds.south);
+            east = Math.max(east, layer.geoBounds.east);
+            north = Math.max(north, layer.geoBounds.north);
+        }
+        return new GeoBounds(west, south, east, north);
+    }
+
+    private CanvasSize resolveLandslideCanvasSize(Bounds bounds) {
+        double worldWidth = Math.max(1.0d, bounds.maxX - bounds.minX);
+        double worldHeight = Math.max(1.0d, bounds.maxY - bounds.minY);
+        double scale = Math.min(LANDSLIDE_TARGET_WIDTH / worldWidth, LANDSLIDE_TARGET_HEIGHT / worldHeight);
+        int width = Math.max(1, (int) Math.round(worldWidth * scale));
+        int height = Math.max(1, (int) Math.round(worldHeight * scale));
+        return new CanvasSize(width, height, scale);
+    }
+
+    private void drawLandslideOverlay(BufferedImage canvasImage, GeoBounds geoBounds, CanvasSize canvas) {
+        try {
+            File polygonFile = resolveProjectFile(APPROX_RISK_GEOJSON_PATH);
+            File lineFile = resolveProjectFile(APPROX_RISK_LINES_GEOJSON_PATH);
+            if (!polygonFile.exists() || !lineFile.exists()) {
+                return;
+            }
+
+            JsonNode polygonRoot = objectMapper.readTree(polygonFile);
+            JsonNode lineRoot = objectMapper.readTree(lineFile);
+
+            Graphics2D g = canvasImage.createGraphics();
+            try {
+                g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+                g.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
+
+                drawInternalBoundaryLines(g, lineRoot.path("features"), geoBounds, canvas);
+                drawRegionLabels(g, polygonRoot.path("features"), geoBounds, canvas);
+                drawDistrictLabels(g, polygonRoot.path("features"), geoBounds, canvas);
+            } finally {
+                g.dispose();
+            }
+        } catch (Exception e) {
+            LOGGER.warn("failed to draw landslide overlay", e);
+        }
+    }
+
+    private void drawInternalBoundaryLines(Graphics2D g, JsonNode features, GeoBounds geoBounds, CanvasSize canvas) {
+        for (JsonNode feature : features) {
+            JsonNode properties = feature.path("properties");
+            String regionNm = properties.path("regionNm").asText("");
+            String lineType = properties.path("lineType").asText("");
+            JsonNode geometry = feature.path("geometry");
+            if (!"MultiLineString".equals(geometry.path("type").asText(""))) {
+                continue;
+            }
+
+            if ("광주".equals(regionNm) && "outer-boundary".equals(lineType)) {
+                g.setColor(new Color(20, 30, 40, 190));
+                g.setStroke(new BasicStroke(2.2f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+            } else if ("광주".equals(regionNm)) {
+                g.setColor(new Color(22, 33, 48, 170));
+                g.setStroke(new BasicStroke(1.4f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+            } else {
+                g.setColor(new Color(35, 46, 58, 120));
+                g.setStroke(new BasicStroke(1.1f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+            }
+
+            for (JsonNode line : geometry.path("coordinates")) {
+                Path2D path = new Path2D.Double();
+                boolean moved = false;
+                for (JsonNode point : line) {
+                    if (point.size() < 2) {
+                        continue;
+                    }
+                    double lon = point.get(0).asDouble();
+                    double lat = point.get(1).asDouble();
+                    double x = (lon - geoBounds.west) / Math.max(1e-9d, geoBounds.east - geoBounds.west) * canvas.width;
+                    double y = (geoBounds.north - lat) / Math.max(1e-9d, geoBounds.north - geoBounds.south) * canvas.height;
+                    if (!moved) {
+                        path.moveTo(x, y);
+                        moved = true;
+                    } else {
+                        path.lineTo(x, y);
+                    }
+                }
+                if (moved) {
+                    g.setColor(new Color(255, 255, 255, 135));
+                    g.setStroke(new BasicStroke(resolveBoundaryHaloWidth(regionNm, lineType), BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+                    g.draw(path);
+
+                    if ("광주".equals(regionNm) && "outer-boundary".equals(lineType)) {
+                        g.setColor(new Color(20, 30, 40, 205));
+                        g.setStroke(new BasicStroke(2.3f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+                    } else if ("광주".equals(regionNm)) {
+                        g.setColor(new Color(18, 30, 47, 190));
+                        g.setStroke(new BasicStroke(1.8f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+                    } else {
+                        g.setColor(new Color(27, 40, 53, 165));
+                        g.setStroke(new BasicStroke(1.45f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+                    }
+                    g.draw(path);
+                }
+            }
+        }
+    }
+
+    private float resolveBoundaryHaloWidth(String regionNm, String lineType) {
+        if ("광주".equals(regionNm) && "outer-boundary".equals(lineType)) {
+            return 4.8f;
+        }
+        if ("광주".equals(regionNm)) {
+            return 3.9f;
+        }
+        return 3.2f;
+    }
+
+    private void drawRegionLabels(Graphics2D g, JsonNode features, GeoBounds geoBounds, CanvasSize canvas) {
+        Map<String, LabelBounds> labelBounds = new LinkedHashMap<String, LabelBounds>();
+        for (JsonNode feature : features) {
+            String regionNm = feature.path("properties").path("regionNm").asText("");
+            if (!"광주".equals(regionNm) && !"전남".equals(regionNm)) {
+                continue;
+            }
+            collectPolygonBounds(feature.path("geometry"), labelBounds.computeIfAbsent(regionNm, key -> new LabelBounds()));
+        }
+
+        g.setFont(new Font("Malgun Gothic", Font.BOLD, 18));
+        for (Map.Entry<String, LabelBounds> entry : labelBounds.entrySet()) {
+            LabelBounds bounds = entry.getValue();
+            if (!bounds.initialized) {
+                continue;
+            }
+            double lon = (bounds.minLon + bounds.maxLon) / 2.0d;
+            double lat = (bounds.minLat + bounds.maxLat) / 2.0d;
+            int x = (int) Math.round((lon - geoBounds.west) / Math.max(1e-9d, geoBounds.east - geoBounds.west) * canvas.width);
+            int y = (int) Math.round((geoBounds.north - lat) / Math.max(1e-9d, geoBounds.north - geoBounds.south) * canvas.height);
+            String text = "광주".equals(entry.getKey()) ? "광주광역시" : "전라남도";
+            g.setColor(new Color(255, 255, 255, 210));
+            g.drawString(text, x - 2, y - 2);
+            g.setColor(new Color(17, 24, 39, 210));
+            g.drawString(text, x, y);
+        }
+    }
+
+    private void drawDistrictLabels(Graphics2D g, JsonNode features, GeoBounds geoBounds, CanvasSize canvas) {
+        g.setFont(new Font("Malgun Gothic", Font.BOLD, 12));
+        for (JsonNode feature : features) {
+            JsonNode properties = feature.path("properties");
+            String districtNm = properties.path("districtNm").asText("");
+            if (districtNm.isEmpty()) {
+                continue;
+            }
+
+            LabelBounds bounds = new LabelBounds();
+            collectPolygonBounds(feature.path("geometry"), bounds);
+            if (!bounds.initialized) {
+                continue;
+            }
+
+            double lon = (bounds.minLon + bounds.maxLon) / 2.0d;
+            double lat = (bounds.minLat + bounds.maxLat) / 2.0d;
+            int x = (int) Math.round((lon - geoBounds.west) / Math.max(1e-9d, geoBounds.east - geoBounds.west) * canvas.width);
+            int y = (int) Math.round((geoBounds.north - lat) / Math.max(1e-9d, geoBounds.north - geoBounds.south) * canvas.height);
+
+            g.setColor(new Color(255, 255, 255, 225));
+            g.drawString(districtNm, x - 1, y - 1);
+            g.drawString(districtNm, x + 1, y - 1);
+            g.drawString(districtNm, x - 1, y + 1);
+            g.drawString(districtNm, x + 1, y + 1);
+
+            g.setColor(new Color(19, 27, 36, 220));
+            g.drawString(districtNm, x, y);
+        }
+    }
+
+    private void collectPolygonBounds(JsonNode geometry, LabelBounds bounds) {
+        String type = geometry.path("type").asText("");
+        if ("Polygon".equals(type)) {
+            for (JsonNode ring : geometry.path("coordinates")) {
+                collectPoints(ring, bounds);
+            }
+            return;
+        }
+        if ("MultiPolygon".equals(type)) {
+            for (JsonNode polygon : geometry.path("coordinates")) {
+                for (JsonNode ring : polygon) {
+                    collectPoints(ring, bounds);
+                }
+            }
+        }
+    }
+
+    private void collectPoints(JsonNode points, LabelBounds bounds) {
+        for (JsonNode point : points) {
+            if (point.size() < 2) {
+                continue;
+            }
+            double lon = point.get(0).asDouble();
+            double lat = point.get(1).asDouble();
+            bounds.include(lon, lat);
+        }
+    }
+
+    private File resolveProjectFile(String relativePath) {
+        String projectRoot = System.getProperty("risk.project.root");
+        if (isBlank(projectRoot)) {
+            projectRoot = new File(".").getAbsolutePath();
+        }
+        return new File(projectRoot, relativePath);
+    }
+
+    private int clampColor(String raw) {
+        int value = Integer.parseInt(raw);
+        return Math.max(0, Math.min(255, value));
+    }
+
+    private static final class LandslideRasterSpec {
+        private final String code;
+        private final String tifResourcePath;
+        private final String clrResourcePath;
+        private final String tfwResourcePath;
+        private final String xmlResourcePath;
+
+        private LandslideRasterSpec(String code, String tifResourcePath, String clrResourcePath, String tfwResourcePath) {
+            this.code = code;
+            this.tifResourcePath = tifResourcePath;
+            this.clrResourcePath = clrResourcePath;
+            this.tfwResourcePath = tfwResourcePath;
+            this.xmlResourcePath = tifResourcePath + ".xml";
+        }
+    }
+
+    private static final class WorldFile {
+        private final double pixelWidth;
+        private final double pixelHeight;
+        private final double originX;
+        private final double originY;
+
+        private WorldFile(double pixelWidth, double pixelHeight, double originX, double originY) {
+            this.pixelWidth = pixelWidth;
+            this.pixelHeight = pixelHeight;
+            this.originX = originX;
+            this.originY = originY;
+        }
+    }
+
+    private static final class Bounds {
+        private final double minX;
+        private final double minY;
+        private final double maxX;
+        private final double maxY;
+
+        private Bounds(double minX, double minY, double maxX, double maxY) {
+            this.minX = minX;
+            this.minY = minY;
+            this.maxX = maxX;
+            this.maxY = maxY;
+        }
+    }
+
+    private static final class GeoBounds {
+        private final double west;
+        private final double south;
+        private final double east;
+        private final double north;
+
+        private GeoBounds(double west, double south, double east, double north) {
+            this.west = west;
+            this.south = south;
+            this.east = east;
+            this.north = north;
+        }
+    }
+
+    private static final class CanvasSize {
+        private final int width;
+        private final int height;
+        private final double scale;
+
+        private CanvasSize(int width, int height, double scale) {
+            this.width = width;
+            this.height = height;
+            this.scale = scale;
+        }
+    }
+
+    private static final class LandslideLayer {
+        private final String code;
+        private final Raster raster;
+        private final Map<Integer, Integer> colorMap;
+        private final Bounds bounds;
+        private final GeoBounds geoBounds;
+        private final double pixelWidth;
+        private final double pixelHeight;
+
+        private LandslideLayer(String code, Raster raster, Map<Integer, Integer> colorMap, Bounds bounds, GeoBounds geoBounds, double pixelWidth, double pixelHeight) {
+            this.code = code;
+            this.raster = raster;
+            this.colorMap = colorMap;
+            this.bounds = bounds;
+            this.geoBounds = geoBounds;
+            this.pixelWidth = pixelWidth;
+            this.pixelHeight = pixelHeight;
+        }
+    }
+
+    private static final class LabelBounds {
+        private double minLon;
+        private double minLat;
+        private double maxLon;
+        private double maxLat;
+        private boolean initialized;
+
+        private void include(double lon, double lat) {
+            if (!initialized) {
+                minLon = maxLon = lon;
+                minLat = maxLat = lat;
+                initialized = true;
+                return;
+            }
+            minLon = Math.min(minLon, lon);
+            minLat = Math.min(minLat, lat);
+            maxLon = Math.max(maxLon, lon);
+            maxLat = Math.max(maxLat, lat);
+        }
     }
 
     /**
