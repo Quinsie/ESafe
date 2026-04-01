@@ -206,6 +206,9 @@ a { color: inherit; text-decoration: none; }
 .weather-map-tab-dot.is-wildfire {
     background: #cf2f22;
 }
+.weather-map-tab-dot.is-landslide {
+    background: #8b5e34;
+}
 .weather-map-viewer {
     display: grid;
     grid-template-columns: minmax(0, 1fr) 250px;

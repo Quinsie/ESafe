@@ -62,7 +62,8 @@ public class RiskViewController {
     }
 
     @RequestMapping("/riskWeatherAlert.do")
-    public String weatherAlert() {
+    public String weatherAlert(Model model) {
+        model.addAttribute("vworldApiKey", vworldApiKey);
         return "risk/weatherAlert";
     }
 
@@ -82,4 +83,3 @@ public class RiskViewController {
         return "risk/nationwideRiskMap";
     }
 }
-

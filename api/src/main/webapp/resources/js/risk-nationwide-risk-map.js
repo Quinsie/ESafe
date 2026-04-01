@@ -5,6 +5,10 @@
     var DISTRICT_URL = 'selectRiskMapDistrictLayer.do';
     var BUILDING_URL = 'selectRiskMapBuildingLayer.do';
     var BUILDING_POLYGON_URL = 'selectRiskMapBuildingPolygonLayer.do';
+    var JEONNAM_APPROX_GEOJSON_URL = 'jeonnamApproxRiskGeoJson.do';
+    var JEONNAM_APPROX_LINE_GEOJSON_URL = 'jeonnamApproxRiskLineGeoJson.do';
+    var ZOOM_APPROX_DISTRICT_MIN = 11.0;
+    var ZOOM_APPROX_DISTRICT_MAX = 14.0;
     var ZOOM_BUILDING = 14.0;
     var ZOOM_POLYGON = 16.0;
     var BUILDING_POINT_MAX_ROWS = 20000;
@@ -30,8 +34,12 @@
         mapTarget: null,
         rankingListElement: null,
         districtSource: null,
+        approxDistrictSource: null,
+        approxDistrictLineSource: null,
         buildingSource: null,
         buildingLayer: null,
+        approxDistrictLayer: null,
+        approxDistrictLineLayer: null,
         polygonLayer: null,
         highlightSource: null,
         polygonSource: null,
@@ -53,10 +61,12 @@
         globalWheelBound: false,
         styleCache: {
             district: {},
+            approxDistrict: {},
             building: {},
             polygon: {},
             selectedBuilding: {}
-        }
+        },
+        approxDistrictLoaded: false
     };
 
     function toNumber(value) {
@@ -241,11 +251,39 @@
     }
 
     function getDistrictCenterCoordinate(row) {
+        var approxCoordinate = getApproxDistrictCoordinate(row);
+        if (approxCoordinate) {
+            return approxCoordinate;
+        }
         var projected = epsg5186ToWgs84(toNumber(row && row.centerLon), toNumber(row && row.centerLat));
         if (!projected) {
             return null;
         }
         return ol.proj.fromLonLat([projected.lon, projected.lat]);
+    }
+
+    function getApproxDistrictCoordinate(row) {
+        if (!state.approxDistrictSource || !row) {
+            return null;
+        }
+        var regionNm = String(row.regionNm || '');
+        var districtNm = String(row.districtNm || '');
+        var features = state.approxDistrictSource.getFeatures();
+        for (var i = 0; i < features.length; i += 1) {
+            var featureRow = features[i].get('row') || {};
+            if (String(featureRow.regionNm || '') !== regionNm || String(featureRow.districtNm || '') !== districtNm) {
+                continue;
+            }
+            var geometry = features[i].getGeometry();
+            if (!geometry) {
+                return null;
+            }
+            if (typeof geometry.getInteriorPoint === 'function') {
+                return geometry.getInteriorPoint().getCoordinates();
+            }
+            return ol.extent.getCenter(geometry.getExtent());
+        }
+        return null;
     }
 
     function injectRankingCoordinates(rows) {
@@ -474,6 +512,39 @@
             });
         }
         return state.styleCache.district[cacheKey];
+    }
+
+    function getApproxDistrictStyle(riskCd) {
+        var cacheKey = riskCd || 'default';
+        if (!state.styleCache.approxDistrict[cacheKey]) {
+            var meta = getRiskMeta(riskCd);
+            var fillColor = meta.fill
+                .replace('0.72', '0.28')
+                .replace('0.74', '0.28')
+                .replace('0.75', '0.28')
+                .replace('0.76', '0.28');
+            state.styleCache.approxDistrict[cacheKey] = new ol.style.Style({
+                fill: new ol.style.Fill({ color: fillColor }),
+                stroke: null
+            });
+        }
+        return state.styleCache.approxDistrict[cacheKey];
+    }
+
+    function getApproxDistrictLineStyle(lineType, regionNm) {
+        if (lineType === 'outer-boundary') {
+            return new ol.style.Style({
+                stroke: new ol.style.Stroke({ color: 'rgba(43, 54, 66, 0.56)', width: 1.9 })
+            });
+        }
+        if (regionNm === '\uAD11\uC8FC') {
+            return new ol.style.Style({
+                stroke: new ol.style.Stroke({ color: 'rgba(43, 54, 66, 0.52)', width: 1.8 })
+            });
+        }
+        return new ol.style.Style({
+            stroke: new ol.style.Stroke({ color: 'rgba(43, 54, 66, 0.46)', width: 1.7 })
+        });
     }
 
     function buildPinIconDataUrl(fillColor, strokeColor, holeColor) {
@@ -781,7 +852,7 @@
 
     function renderDistrictFeatures() {
         state.districtSource.clear();
-        if (getMode() !== 'district') {
+        if (getMode() !== 'district' || isApproxDistrictVisible()) {
             return { visibleCount: 0 };
         }
         var visibleRows = state.districtRows.filter(function(row) {
@@ -796,6 +867,79 @@
         return {
             visibleCount: state.districtSource.getFeatures().length
         };
+    }
+
+    function syncApproxDistrictVisibility() {
+        if (!state.approxDistrictLayer) {
+            return;
+        }
+        var zoom = state.map ? state.map.getView().getZoom() : DEFAULT_ZOOM;
+        var visible = getMode() === 'district'
+            && zoom >= ZOOM_APPROX_DISTRICT_MIN
+            && zoom < ZOOM_APPROX_DISTRICT_MAX;
+        state.approxDistrictLayer.setVisible(visible);
+        if (state.approxDistrictLineLayer) {
+            state.approxDistrictLineLayer.setVisible(visible);
+        }
+    }
+
+    function isApproxDistrictVisible() {
+        if (!state.map) {
+            return false;
+        }
+        var zoom = state.map.getView().getZoom();
+        return getMode() === 'district'
+            && zoom >= ZOOM_APPROX_DISTRICT_MIN
+            && zoom < ZOOM_APPROX_DISTRICT_MAX;
+    }
+
+    function filterApproxDistrictFeatures() {
+        if (!state.approxDistrictSource) {
+            return;
+        }
+        var features = state.approxDistrictSource.getFeatures();
+        for (var i = 0; i < features.length; i += 1) {
+            var feature = features[i];
+            var row = feature.get('row') || {};
+            feature.setStyle(isRiskVisible(row.styleRiskCd || row.riskCd) ? null : []);
+        }
+    }
+
+    function getVisibleApproxDistrictCount() {
+        if (!state.approxDistrictSource) {
+            return 0;
+        }
+        var count = 0;
+        var features = state.approxDistrictSource.getFeatures();
+        for (var i = 0; i < features.length; i += 1) {
+            var row = features[i].get('row') || {};
+            if (isRiskVisible(row.styleRiskCd || row.riskCd)) {
+                count += 1;
+            }
+        }
+        return count;
+    }
+
+    function syncApproxDistrictRows() {
+        if (!state.approxDistrictSource) {
+            return;
+        }
+        var lookup = {};
+        (state.districtRows || []).forEach(function(row) {
+            var key = String(row.regionNm || '') + '::' + String(row.districtNm || '');
+            lookup[key] = row;
+        });
+        state.approxDistrictSource.getFeatures().forEach(function(feature) {
+            var row = feature.get('row') || {};
+            var key = String(row.regionNm || '') + '::' + String(row.districtNm || '');
+            var matched = lookup[key];
+            if (matched) {
+                feature.set('row', $.extend({}, row, matched, {
+                    layerType: 'district'
+                }));
+            }
+        });
+        filterApproxDistrictFeatures();
     }
 
     function clearBuildingLayers() {
@@ -827,8 +971,13 @@
     }
 
     function updateStatusForDistrict(summary) {
+        var approxVisible = isApproxDistrictVisible();
+        var count = approxVisible ? getVisibleApproxDistrictCount() : (summary.visibleCount || 0);
+        var subject = approxVisible
+            ? '\uAD6C\uC5ED \uB9C8\uC2A4\uD06C'
+            : '\uAD6C\uC5ED \uACBD\uACE0\uC810';
         setStatus(
-            '\uAD6C\uC5ED \uACBD\uACE0\uC810 ' + (summary.visibleCount || 0) + '\uAC1C'
+            subject + ' ' + count + '\uAC1C'
             + ' | \uD45C\uC2DC \uB4F1\uAE09: ' + describeActiveGrades()
             + ' | \uD655\uB300 \uC90C ' + ZOOM_BUILDING + '+\uC5D0\uC11C \uAC74\uBB3C \uB808\uC774\uC5B4 \uD45C\uC2DC'
         );
@@ -953,6 +1102,7 @@
 
         fetchRankingRows();
         var mode = getMode();
+        syncApproxDistrictVisibility();
         if (state.buildingLayer) {
             state.buildingLayer.setVisible(mode === 'point');
         }
@@ -960,6 +1110,7 @@
             state.polygonLayer.setVisible(mode === 'polygon');
         }
         var districtSummary = renderDistrictFeatures();
+        filterApproxDistrictFeatures();
         if (mode === 'district') {
             clearBuildingLayers();
             updateStatusForDistrict(districtSummary);
@@ -992,6 +1143,7 @@
             data: { branchNm: BRANCH_NAME }
         }).done(function(response) {
             state.districtRows = response && $.isArray(response.data) ? response.data : [];
+            syncApproxDistrictRows();
             if (refreshAfterLoad !== false) {
                 refreshLayers(false);
             }
@@ -1008,7 +1160,7 @@
             + '<div style="font-weight:700;font-size:13px;margin-bottom:6px;">' + escapeHtml(row.districtNm || row.regionNm || '-') + '</div>'
             + '<div style="margin-bottom:4px;">\uB4F1\uAE09: <strong style="color:' + meta.color + ';">' + escapeHtml(meta.label) + '</strong></div>'
             + '<div style="margin-bottom:4px;">\uD3C9\uADE0 \uC885\uD569\uC810\uC218: <strong>' + escapeHtml(row.avgScore || '-') + '</strong></div>'
-            + '<div>\uAC74\uBB3C \uC218: <strong>' + escapeHtml(row.bldgCnt || '-') + '</strong></div>';
+            + '<div>\uAC74\uBB3C \uC218: <strong>' + escapeHtml(row.bldgCnt || row.buildingCount || '-') + '</strong></div>';
     }
 
     function buildBuildingPopup(row) {
@@ -1128,6 +1280,51 @@
         });
     }
 
+    function loadApproxDistrictLayer() {
+        if (!state.approxDistrictSource || state.approxDistrictLoaded) {
+            return;
+        }
+        $.getJSON(JEONNAM_APPROX_GEOJSON_URL).done(function(collection) {
+            var format = new ol.format.GeoJSON();
+            var features = format.readFeatures(collection, {
+                dataProjection: 'EPSG:4326',
+                featureProjection: 'EPSG:3857'
+            });
+            features.forEach(function(feature) {
+                var properties = feature.getProperties() || {};
+                delete properties.geometry;
+                properties.regionNm = properties.regionNm || '\uC804\uB0A8';
+                properties.districtNm = properties.districtNm || properties.districtKey || '';
+                properties.avgScore = properties.avgScore;
+                properties.bldgCnt = properties.bldgCnt || properties.buildingCount;
+                properties.riskCd = properties.riskCd || 'A';
+                feature.setProperties({
+                    layerType: 'district',
+                    row: properties
+                });
+                state.approxDistrictSource.addFeature(feature);
+            });
+            state.approxDistrictLoaded = true;
+            syncApproxDistrictRows();
+            filterApproxDistrictFeatures();
+            syncApproxDistrictVisibility();
+        });
+
+        if (state.approxDistrictLineSource) {
+            $.getJSON(JEONNAM_APPROX_LINE_GEOJSON_URL).done(function(collection) {
+                var format = new ol.format.GeoJSON();
+                var features = format.readFeatures(collection, {
+                    dataProjection: 'EPSG:4326',
+                    featureProjection: 'EPSG:3857'
+                });
+                features.forEach(function(feature) {
+                    state.approxDistrictLineSource.addFeature(feature);
+                });
+                syncApproxDistrictVisibility();
+            });
+        }
+    }
+
     function initMap() {
         var target = document.getElementById('nationwideMapCanvas');
         state.statusElement = document.getElementById('nationwideMapStatus');
@@ -1139,9 +1336,26 @@
         target.setAttribute('tabindex', '0');
 
         state.districtSource = new ol.source.Vector();
+        state.approxDistrictSource = new ol.source.Vector();
+        state.approxDistrictLineSource = new ol.source.Vector();
         state.buildingSource = new ol.source.Vector();
         state.highlightSource = new ol.source.Vector();
         state.polygonSource = new ol.source.Vector();
+
+        var approxDistrictLayer = new ol.layer.Vector({
+            source: state.approxDistrictSource,
+            style: function(feature) {
+                var row = feature.get('row') || {};
+                return getApproxDistrictStyle(row.riskCd);
+            }
+        });
+
+        var approxDistrictLineLayer = new ol.layer.Vector({
+            source: state.approxDistrictLineSource,
+            style: function(feature) {
+                return getApproxDistrictLineStyle(feature.get('lineType'), feature.get('regionNm'));
+            }
+        });
 
         var districtLayer = new ol.layer.Vector({
             source: state.districtSource,
@@ -1177,6 +1391,8 @@
             }
         });
         state.buildingLayer = buildingLayer;
+        state.approxDistrictLayer = approxDistrictLayer;
+        state.approxDistrictLineLayer = approxDistrictLineLayer;
         state.polygonLayer = polygonLayer;
 
         var interactions = ol.interaction.defaults({
@@ -1200,7 +1416,7 @@
         });
         state.map = new ol.Map({
             target: target,
-            layers: [baseLayer, districtLayer, polygonLayer, buildingLayer, highlightLayer],
+            layers: [baseLayer, approxDistrictLayer, approxDistrictLineLayer, districtLayer, polygonLayer, buildingLayer, highlightLayer],
             view: view,
             controls: controls,
             interactions: interactions,
@@ -1216,6 +1432,7 @@
         initPopup(target);
         createZoomControls(target);
         bindManualWheelZoom(target);
+        loadApproxDistrictLayer();
 
         state.map.on('moveend', function() {
             scheduleRefresh(false);

@@ -28,6 +28,7 @@ public class WeatherUpdateController {
         Map<String, Object> result = weatherUpdateService.updateWeatherData();
         if ("OK".equals(result.get("resultCode"))) {
             Map<String, Object> mapRefreshResult = riskWeatherController.refreshMapCachesNow(true, true, true);
+            mapRefreshResult.put("landslideMapRefreshed", Boolean.valueOf(riskWeatherController.refreshLandslideMapCache()));
             result.put("mapRefresh", mapRefreshResult);
         }
         return result;
@@ -47,4 +48,3 @@ public class WeatherUpdateController {
         return result;
     }
 }
-
