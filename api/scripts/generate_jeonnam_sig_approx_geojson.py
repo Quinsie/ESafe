@@ -41,8 +41,8 @@ from shapely.ops import transform, unary_union
 
 ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_INPUT = ROOT / "api/.local-seed/data-h2.full.sql"
-DEFAULT_OUTPUT = ROOT / "api/src/main/webapp/resources/data/jeonnam-risk-area/jeonnam-sig-approx-risk.geojson"
-DEFAULT_LINE_OUTPUT = ROOT / "api/src/main/webapp/resources/data/jeonnam-risk-area/jeonnam-sig-approx-risk-internal-lines.geojson"
+DEFAULT_OUTPUT = ROOT / "res/jeonnam-risk-area/jeonnam-sig-approx-risk.geojson"
+DEFAULT_LINE_OUTPUT = ROOT / "res/jeonnam-risk-area/jeonnam-sig-approx-risk-internal-lines.geojson"
 TARGET_REGIONS = {"광주", "전남"}
 
 FIELD_INDEX = {

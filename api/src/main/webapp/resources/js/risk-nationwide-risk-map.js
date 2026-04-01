@@ -5,8 +5,8 @@
     var DISTRICT_URL = 'selectRiskMapDistrictLayer.do';
     var BUILDING_URL = 'selectRiskMapBuildingLayer.do';
     var BUILDING_POLYGON_URL = 'selectRiskMapBuildingPolygonLayer.do';
-    var JEONNAM_APPROX_GEOJSON_URL = 'resources/data/jeonnam-risk-area/jeonnam-sig-approx-risk.geojson';
-    var JEONNAM_APPROX_LINE_GEOJSON_URL = 'resources/data/jeonnam-risk-area/jeonnam-sig-approx-risk-internal-lines.geojson';
+    var JEONNAM_APPROX_GEOJSON_URL = 'jeonnamApproxRiskGeoJson.do';
+    var JEONNAM_APPROX_LINE_GEOJSON_URL = 'jeonnamApproxRiskLineGeoJson.do';
     var ZOOM_APPROX_DISTRICT_MIN = 11.0;
     var ZOOM_APPROX_DISTRICT_MAX = 14.0;
     var ZOOM_BUILDING = 14.0;

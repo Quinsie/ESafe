@@ -91,6 +91,8 @@ api/.local-seed/
 # Root/local scratch helpers
 _tmp*.py
 res/
+api/src/main/resources/landslide/
+api/src/main/webapp/resources/data/jeonnam-risk-area/
 원천데이터_목록.md
 데이터구조_진단.md
 train/

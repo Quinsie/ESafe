@@ -44,7 +44,6 @@ import java.awt.geom.Path2D;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.core.io.ClassPathResource;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
@@ -91,11 +90,11 @@ public class RiskWeatherController {
     private static final Color LANDSLIDE_PANEL_BORDER = new Color(255, 255, 255, 68);
     private static final String VWORLD_SATELLITE_TILE_URL = "https://xdworld.vworld.kr/2d/Satellite/service/%d/%d/%d.jpeg";
     private static final String VWORLD_HYBRID_TILE_URL = "https://xdworld.vworld.kr/2d/Hybrid/service/%d/%d/%d.png";
-    private static final String APPROX_RISK_GEOJSON_PATH = "api/src/main/webapp/resources/data/jeonnam-risk-area/jeonnam-sig-approx-risk.geojson";
-    private static final String APPROX_RISK_LINES_GEOJSON_PATH = "api/src/main/webapp/resources/data/jeonnam-risk-area/jeonnam-sig-approx-risk-internal-lines.geojson";
+    private static final String APPROX_RISK_GEOJSON_PATH = "res/jeonnam-risk-area/jeonnam-sig-approx-risk.geojson";
+    private static final String APPROX_RISK_LINES_GEOJSON_PATH = "res/jeonnam-risk-area/jeonnam-sig-approx-risk-internal-lines.geojson";
     private static final List<LandslideRasterSpec> LANDSLIDE_RASTER_SPECS = Collections.unmodifiableList(Arrays.asList(
-            new LandslideRasterSpec("29", "landslide/29/29.tif", "landslide/29/29.clr", "landslide/29/29.tfw"),
-            new LandslideRasterSpec("46", "landslide/46/46.tif", "landslide/46/46.clr", "landslide/46/46.tfw")
+            new LandslideRasterSpec("29", "res/landslide/29/29.tif", "res/landslide/29/29.clr", "res/landslide/29/29.tfw"),
+            new LandslideRasterSpec("46", "res/landslide/46/46.tif", "res/landslide/46/46.clr", "res/landslide/46/46.tfw")
     ));
     private final ObjectMapper objectMapper = new ObjectMapper();
     private static final Set<String> ALLOWED_WRN_CODES = new LinkedHashSet<String>(Arrays.asList(
@@ -429,6 +428,16 @@ public class RiskWeatherController {
         }
     }
 
+    @RequestMapping("/jeonnamApproxRiskGeoJson.do")
+    public ResponseEntity<byte[]> jeonnamApproxRiskGeoJson() {
+        return fileJsonResponse(APPROX_RISK_GEOJSON_PATH);
+    }
+
+    @RequestMapping("/jeonnamApproxRiskLineGeoJson.do")
+    public ResponseEntity<byte[]> jeonnamApproxRiskLineGeoJson() {
+        return fileJsonResponse(APPROX_RISK_LINES_GEOJSON_PATH);
+    }
+
     private ResponseEntity<byte[]> fetchWildfireMapImage() {
         String authKey = resolveAuthKey();
         if (isBlank(authKey)) {
@@ -454,6 +463,19 @@ public class RiskWeatherController {
         headers.setExpires(0L);
         headers.setContentType(MediaType.APPLICATION_JSON);
         return new ResponseEntity<byte[]>(payload, headers, HttpStatus.OK);
+    }
+
+    private ResponseEntity<byte[]> fileJsonResponse(String relativePath) {
+        try {
+            File file = resolveProjectFile(relativePath);
+            if (!file.exists()) {
+                return errorText("File not found: " + relativePath, HttpStatus.NOT_FOUND);
+            }
+            return jsonResponse(java.nio.file.Files.readAllBytes(file.toPath()));
+        } catch (Exception e) {
+            LOGGER.warn("failed to read json file {}", relativePath, e);
+            return errorText("Failed to read file: " + relativePath, HttpStatus.INTERNAL_SERVER_ERROR);
+        }
     }
 
     private ResponseEntity<byte[]> fetchLandslideMapImage() {
@@ -612,10 +634,10 @@ public class RiskWeatherController {
     }
 
     private LandslideLayer loadLandslideLayer(LandslideRasterSpec spec) throws IOException {
-        ClassPathResource tifResource = new ClassPathResource(spec.tifResourcePath);
-        ClassPathResource clrResource = new ClassPathResource(spec.clrResourcePath);
-        ClassPathResource tfwResource = new ClassPathResource(spec.tfwResourcePath);
-        ClassPathResource xmlResource = new ClassPathResource(spec.xmlResourcePath);
+        File tifResource = resolveProjectFile(spec.tifResourcePath);
+        File clrResource = resolveProjectFile(spec.clrResourcePath);
+        File tfwResource = resolveProjectFile(spec.tfwResourcePath);
+        File xmlResource = resolveProjectFile(spec.xmlResourcePath);
         if (!tifResource.exists() || !clrResource.exists() || !tfwResource.exists() || !xmlResource.exists()) {
             return null;
         }
@@ -623,7 +645,7 @@ public class RiskWeatherController {
         Map<Integer, Integer> colorMap = loadLandslideColorMap(clrResource);
         WorldFile worldFile = loadWorldFile(tfwResource);
         GeoBounds geoBounds = loadGeoBounds(xmlResource);
-        try (InputStream tifStream = tifResource.getInputStream();
+        try (InputStream tifStream = java.nio.file.Files.newInputStream(tifResource.toPath());
              ImageInputStream imageInput = ImageIO.createImageInputStream(tifStream)) {
             if (imageInput == null) {
                 throw new IOException("Unable to open landslide raster stream");
@@ -801,9 +823,9 @@ public class RiskWeatherController {
         return mercatorY * worldSize;
     }
 
-    private Map<Integer, Integer> loadLandslideColorMap(ClassPathResource clrResource) throws IOException {
+    private Map<Integer, Integer> loadLandslideColorMap(File clrResource) throws IOException {
         Map<Integer, Integer> colorMap = new HashMap<Integer, Integer>();
-        try (InputStream input = clrResource.getInputStream()) {
+        try (InputStream input = java.nio.file.Files.newInputStream(clrResource.toPath())) {
             String text = new String(readAll(input), StandardCharsets.UTF_8);
             String[] lines = text.split("\\r?\\n");
             for (String line : lines) {
@@ -826,8 +848,8 @@ public class RiskWeatherController {
         return Collections.unmodifiableMap(colorMap);
     }
 
-    private GeoBounds loadGeoBounds(ClassPathResource xmlResource) throws IOException {
-        try (InputStream input = xmlResource.getInputStream()) {
+    private GeoBounds loadGeoBounds(File xmlResource) throws IOException {
+        try (InputStream input = java.nio.file.Files.newInputStream(xmlResource.toPath())) {
             DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
             factory.setNamespaceAware(false);
             Document document = factory.newDocumentBuilder().parse(input);
@@ -856,9 +878,9 @@ public class RiskWeatherController {
         return Double.parseDouble(nodes.item(0).getTextContent().trim());
     }
 
-    private WorldFile loadWorldFile(ClassPathResource tfwResource) throws IOException {
+    private WorldFile loadWorldFile(File tfwResource) throws IOException {
         List<Double> values = new ArrayList<Double>();
-        try (BufferedReader reader = new BufferedReader(new InputStreamReader(tfwResource.getInputStream(), StandardCharsets.UTF_8))) {
+        try (BufferedReader reader = new BufferedReader(new InputStreamReader(java.nio.file.Files.newInputStream(tfwResource.toPath()), StandardCharsets.UTF_8))) {
             String line;
             while ((line = reader.readLine()) != null) {
                 String trimmed = line.trim();
