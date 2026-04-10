@@ -429,13 +429,13 @@ public class RiskWeatherController {
     }
 
     @RequestMapping("/jeonnamApproxRiskGeoJson.do")
-    public ResponseEntity<byte[]> jeonnamApproxRiskGeoJson() {
-        return fileJsonResponse(APPROX_RISK_GEOJSON_PATH);
+    public ResponseEntity<String> jeonnamApproxRiskGeoJson() {
+        return fileJsonTextResponse(APPROX_RISK_GEOJSON_PATH);
     }
 
     @RequestMapping("/jeonnamApproxRiskLineGeoJson.do")
-    public ResponseEntity<byte[]> jeonnamApproxRiskLineGeoJson() {
-        return fileJsonResponse(APPROX_RISK_LINES_GEOJSON_PATH);
+    public ResponseEntity<String> jeonnamApproxRiskLineGeoJson() {
+        return fileJsonTextResponse(APPROX_RISK_LINES_GEOJSON_PATH);
     }
 
     private ResponseEntity<byte[]> fetchWildfireMapImage() {
@@ -467,7 +467,7 @@ public class RiskWeatherController {
 
     private ResponseEntity<byte[]> fileJsonResponse(String relativePath) {
         try {
-            File file = resolveProjectFile(relativePath);
+            File file = resolveDataFile(relativePath);
             if (!file.exists()) {
                 return errorText("File not found: " + relativePath, HttpStatus.NOT_FOUND);
             }
@@ -475,6 +475,26 @@ public class RiskWeatherController {
         } catch (Exception e) {
             LOGGER.warn("failed to read json file {}", relativePath, e);
             return errorText("Failed to read file: " + relativePath, HttpStatus.INTERNAL_SERVER_ERROR);
+        }
+    }
+
+    private ResponseEntity<String> fileJsonTextResponse(String relativePath) {
+        try {
+            File file = resolveDataFile(relativePath);
+            if (!file.exists()) {
+                return errorTextString("File not found: " + relativePath, HttpStatus.NOT_FOUND);
+            }
+
+            String payload = new String(java.nio.file.Files.readAllBytes(file.toPath()), StandardCharsets.UTF_8);
+            HttpHeaders headers = new HttpHeaders();
+            headers.setCacheControl("no-store, no-cache, must-revalidate, max-age=0");
+            headers.setPragma("no-cache");
+            headers.setExpires(0L);
+            headers.setContentType(new MediaType("application", "json", StandardCharsets.UTF_8));
+            return new ResponseEntity<String>(payload, headers, HttpStatus.OK);
+        } catch (Exception e) {
+            LOGGER.warn("failed to read json text file {}", relativePath, e);
+            return errorTextString("Failed to read file: " + relativePath, HttpStatus.INTERNAL_SERVER_ERROR);
         }
     }
 
@@ -634,10 +654,10 @@ public class RiskWeatherController {
     }
 
     private LandslideLayer loadLandslideLayer(LandslideRasterSpec spec) throws IOException {
-        File tifResource = resolveProjectFile(spec.tifResourcePath);
-        File clrResource = resolveProjectFile(spec.clrResourcePath);
-        File tfwResource = resolveProjectFile(spec.tfwResourcePath);
-        File xmlResource = resolveProjectFile(spec.xmlResourcePath);
+            File tifResource = resolveDataFile(spec.tifResourcePath);
+            File clrResource = resolveDataFile(spec.clrResourcePath);
+            File tfwResource = resolveDataFile(spec.tfwResourcePath);
+            File xmlResource = resolveDataFile(spec.xmlResourcePath);
         if (!tifResource.exists() || !clrResource.exists() || !tfwResource.exists() || !xmlResource.exists()) {
             return null;
         }
@@ -939,8 +959,8 @@ public class RiskWeatherController {
 
     private void drawLandslideOverlay(BufferedImage canvasImage, GeoBounds geoBounds, CanvasSize canvas) {
         try {
-            File polygonFile = resolveProjectFile(APPROX_RISK_GEOJSON_PATH);
-            File lineFile = resolveProjectFile(APPROX_RISK_LINES_GEOJSON_PATH);
+            File polygonFile = resolveDataFile(APPROX_RISK_GEOJSON_PATH);
+            File lineFile = resolveDataFile(APPROX_RISK_LINES_GEOJSON_PATH);
             if (!polygonFile.exists() || !lineFile.exists()) {
                 return;
             }
@@ -1215,9 +1235,25 @@ public class RiskWeatherController {
     private File resolveProjectFile(String relativePath) {
         String projectRoot = System.getProperty("risk.project.root");
         if (isBlank(projectRoot)) {
+            projectRoot = System.getenv("RISK_PROJECT_ROOT");
+        }
+        if (isBlank(projectRoot)) {
             projectRoot = new File(".").getAbsolutePath();
         }
         return new File(projectRoot, relativePath);
+    }
+
+    private File resolveDataFile(String relativePath) {
+        return resolveProjectFile(relativePath);
+    }
+
+    private ResponseEntity<String> errorTextString(String message, HttpStatus status) {
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(new MediaType("text", "plain", StandardCharsets.UTF_8));
+        headers.setCacheControl("no-store, no-cache, must-revalidate, max-age=0");
+        headers.setPragma("no-cache");
+        headers.setExpires(0L);
+        return new ResponseEntity<String>(message, headers, status);
     }
 
     private int clampColor(String raw) {

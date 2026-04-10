@@ -102,6 +102,6 @@
         window.RISK_VWORLD_DOMAIN = "<c:out value='${vworldDomain}'/>";
     </script>
     <script src="https://map.vworld.kr/js/vworldMapInit.js.do?version=2.0&apiKey=<c:out value='${vworldApiKey}'/>&domain=<c:out value='${vworldDomain}'/>"></script>
-    <script src="<c:url value='/resources/js/risk-nationwide-risk-map.js?v=20260327f'/>"></script>
+    <script src="<c:url value='/resources/js/risk-nationwide-risk-map.js?v=20260409a'/>"></script>
 </body>
 </html>
