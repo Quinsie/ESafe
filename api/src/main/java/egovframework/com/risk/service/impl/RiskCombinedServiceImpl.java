@@ -121,6 +121,11 @@ public class RiskCombinedServiceImpl extends EgovAbstractServiceImpl implements 
     }
 
     @Override
+    public List<Map<String, Object>> selectBuildingExportList(RiskSearchVO searchVO) {
+        return sqlSession.selectList(NAMESPACE + "selectBuildingExportList", searchVO);
+    }
+
+    @Override
     public List<Map<String, Object>> selectDangerBuildingExportList(RiskSearchVO searchVO) {
         return sqlSession.selectList(NAMESPACE + "selectDangerBuildingExportList", searchVO);
     }

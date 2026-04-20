@@ -26,7 +26,8 @@
                     <select id="filterBranch"><option value="">전체</option></select>
 
                     <button type="button" id="btnSearch" class="btn btn-primary">조회</button>
-                    <button type="button" id="btnDownloadBranchExcel" class="btn">(D+E) 엑셀 다운로드</button>
+                    <button type="button" id="btnDownloadBranchExcelAll" class="btn">전체 출력</button>
+                    <button type="button" id="btnDownloadBranchExcelDanger" class="btn">위험한 곳만 출력</button>
                 </div>
             </div>
 

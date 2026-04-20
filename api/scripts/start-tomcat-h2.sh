@@ -14,6 +14,7 @@ TOMCAT_HOME="${CATALINA_HOME:-${CATALINA_HOME_DEFAULT}}"
 TOMCAT_BASE="${CATALINA_BASE:-${API_DIR}/.tomcat-base-h2}"
 JAVA_HOME_VALUE="${JAVA_HOME:-${JAVA_HOME_DEFAULT}}"
 HTTP_PORT=18080
+SHUTDOWN_PORT=""
 SKIP_BUILD=false
 REQUIRE_ALERT_ZONE_FILE=false
 
@@ -46,6 +47,7 @@ Options:
   --http-port <port>
   --alert-zone-file <path>
   --require-alert-zone-file
+  --shutdown-port <port>
   --skip-build
   -h, --help
 EOF
@@ -81,6 +83,10 @@ while [[ $# -gt 0 ]]; do
             REQUIRE_ALERT_ZONE_FILE=true
             shift
             ;;
+        --shutdown-port)
+            SHUTDOWN_PORT="$2"
+            shift 2
+            ;;
         --skip-build)
             SKIP_BUILD=true
             shift
@@ -96,6 +102,15 @@ while [[ $# -gt 0 ]]; do
             ;;
     esac
 done
+
+if [[ -z "${SHUTDOWN_PORT}" ]]; then
+    if [[ "${HTTP_PORT}" =~ ^[0-9]+$ ]]; then
+        SHUTDOWN_PORT="$((HTTP_PORT - 1000))"
+    else
+        echo "Invalid HTTP port: ${HTTP_PORT}" >&2
+        exit 1
+    fi
+fi
 
 SERVER_XML="${TOMCAT_BASE}/conf/server.xml"
 WAR_SRC="${API_DIR}/target/risk-api-1.0.0.war"
@@ -221,6 +236,7 @@ echo "Active file: ${ACTIVE_DB_FILE}"
 echo "[2/6] Configure Tomcat HTTP port -> ${HTTP_PORT}"
 perl -0pi -e 's/Connector port="\d+" protocol="HTTP\/1\.1"/Connector port="'"${HTTP_PORT}"'" protocol="HTTP\/1.1"/' "${SERVER_XML}"
 perl -0pi -e 's/(Connector port="'"${HTTP_PORT}"'" protocol="HTTP\/1\.1")(?![^>]*URIEncoding=)/$1 URIEncoding="UTF-8" useBodyEncodingForURI="true"/' "${SERVER_XML}"
+perl -0pi -e 's/<Server port="\d+" shutdown="SHUTDOWN">/<Server port="'"${SHUTDOWN_PORT}"'" shutdown="SHUTDOWN">/' "${SERVER_XML}"
 
 if [[ "${SKIP_BUILD}" != "true" ]]; then
     echo "[3/6] Build WAR"

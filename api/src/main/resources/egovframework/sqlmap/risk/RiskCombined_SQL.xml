@@ -366,9 +366,7 @@
         </choose>
     </select>
 
-    <!-- D/E grade export list -->
-    <select id="selectDangerBuildingExportList" parameterType="egovframework.com.risk.vo.RiskSearchVO"
-            resultType="map">
+    <sql id="buildingExportColumns">
         SELECT
             <include refid="hqNameCase"/> AS "hqNm",
             <include refid="normalizedBranchCase"/> AS "branchNm",
@@ -380,6 +378,36 @@
             v.COMBINED_RISK_CD AS "combinedGrade",
             v.WEATHER_SCORE AS "weatherScore"
         FROM VW_RISK_COMBINED v
+    </sql>
+
+    <sql id="buildingExportFilters">
+        <where>
+            <if test="hqNm != null and hqNm != ''">
+                AND (<include refid="hqNameCase"/>) = #{hqNm}
+            </if>
+            <if test="branchNm != null and branchNm != ''">
+                AND (<include refid="normalizedBranchCase"/>) = #{branchNm}
+            </if>
+            <if test="regionNm != null and regionNm != ''">
+                AND v.REGION_NM = #{regionNm}
+            </if>
+            <if test="districtNm != null and districtNm != ''">
+                AND v.DISTRICT_NM = #{districtNm}
+            </if>
+        </where>
+    </sql>
+
+    <select id="selectBuildingExportList" parameterType="egovframework.com.risk.vo.RiskSearchVO"
+            resultType="map">
+        <include refid="buildingExportColumns"/>
+        <include refid="buildingExportFilters"/>
+        ORDER BY v.COMBINED_SCORE DESC
+    </select>
+
+    <!-- D/E grade export list -->
+    <select id="selectDangerBuildingExportList" parameterType="egovframework.com.risk.vo.RiskSearchVO"
+            resultType="map">
+        <include refid="buildingExportColumns"/>
         <where>
             AND v.COMBINED_RISK_CD IN ('D', 'E')
             <if test="hqNm != null and hqNm != ''">
@@ -481,7 +509,6 @@
     </select>
 
 </mapper>
-
 
 
 
