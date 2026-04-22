@@ -55,6 +55,15 @@
         )
     </sql>
 
+    <sql id="nationwideMapBranchCondition">
+        (
+            (<include refid="normalizedBranchCase"/>) = #{branchNm}
+            <if test="branchNm == '광주전남본부직할'">
+                OR (v.REGION_NM = '전북' AND v.DISTRICT_NM = '정읍시')
+            </if>
+        )
+    </sql>
+
     <!-- Building list count -->
     <select id="selectCombinedListCnt" parameterType="egovframework.com.risk.vo.RiskSearchVO" resultType="int">
         SELECT COUNT(*) FROM VW_RISK_COMBINED v
@@ -451,7 +460,7 @@
                 ELSE 'SAFE'
             END AS riskLabel
         FROM VW_RISK_COMBINED v
-        WHERE (<include refid="normalizedBranchCase"/>) = #{branchNm}
+        WHERE <include refid="nationwideMapBranchCondition"/>
         GROUP BY v.REGION_NM, v.DISTRICT_NM, v.REGION_CD
         ORDER BY avgScore DESC
     </select>
@@ -482,7 +491,7 @@
                 v.COMBINED_RISK_CD AS combinedRiskCd,
                 COUNT(*) OVER() AS totalMatchedCount
             FROM VW_RISK_COMBINED v
-            WHERE (<include refid="normalizedBranchCase"/>) = #{branchNm}
+            WHERE <include refid="nationwideMapBranchCondition"/>
             <if test="riskCdList != null and riskCdList.size() > 0">
                 AND v.COMBINED_RISK_CD IN
                 <foreach collection="riskCdList" item="riskCd" open="(" separator="," close=")">
@@ -509,7 +518,6 @@
     </select>
 
 </mapper>
-
 
 
 
