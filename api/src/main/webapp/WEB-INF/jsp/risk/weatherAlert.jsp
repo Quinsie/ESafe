@@ -1,6 +1,14 @@
 ﻿<%@ page contentType="text/html; charset=UTF-8" pageEncoding="UTF-8"%>
 <%@ taglib prefix="c" uri="http://java.sun.com/jsp/jstl/core"%>
 <%@ taglib prefix="sec" uri="http://www.springframework.org/security/tags" %>
+<%
+    String vworldDomain = request.getServerName();
+    int serverPort = request.getServerPort();
+    if (serverPort != 80 && serverPort != 443) {
+        vworldDomain += ":" + serverPort;
+    }
+    request.setAttribute("vworldDomain", vworldDomain);
+%>
 <!DOCTYPE html>
 <html lang="ko">
 <head>
@@ -82,6 +90,11 @@
     </div>
     <jsp:include page="include/footer.jsp"/>
     <script src="<c:url value='/resources/js/risk-common.js?v=20260303_1'/>"></script>
-    <script src="<c:url value='/resources/js/risk-weather.js?v=20260401_7'/>"></script>
+    <script>
+        window.RISK_VWORLD_API_KEY = "<c:out value='${vworldApiKey}'/>";
+        window.RISK_VWORLD_DOMAIN = "<c:out value='${vworldDomain}'/>";
+    </script>
+    <script src="https://map.vworld.kr/js/vworldMapInit.js.do?version=2.0&apiKey=<c:out value='${vworldApiKey}'/>&domain=<c:out value='${vworldDomain}'/>"></script>
+    <script src="<c:url value='/resources/js/risk-weather.js?v=20260423_1'/>"></script>
 </body>
 </html>

@@ -272,6 +272,79 @@ a { color: inherit; text-decoration: none; }
     height: 100%;
     object-fit: contain;
 }
+.weather-landslide-map-canvas {
+    display: none;
+    position: absolute;
+    inset: 0;
+    background: #e8eef4;
+}
+.weather-map-frame.is-landslide-map .weather-map-image {
+    display: none;
+}
+.weather-map-frame.is-landslide-map .weather-landslide-map-canvas {
+    display: block;
+}
+.weather-landslide-map-legend {
+    position: absolute;
+    left: 14px;
+    bottom: 14px;
+    z-index: 2;
+    display: none;
+    min-width: 132px;
+    padding: 10px 12px;
+    border: 1px solid rgba(31, 44, 58, 0.16);
+    border-radius: 10px;
+    background: rgba(255,255,255,0.92);
+    box-shadow: 0 8px 20px rgba(31, 44, 58, 0.14);
+    color: #203040;
+    font-size: 12px;
+}
+.weather-map-frame.is-landslide-map .weather-landslide-map-legend {
+    display: block;
+}
+.weather-landslide-map-legend strong {
+    display: block;
+    margin-bottom: 6px;
+    font-size: 12px;
+}
+.weather-landslide-map-legend span {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    line-height: 1.7;
+}
+.weather-landslide-map-legend i {
+    width: 11px;
+    height: 11px;
+    border-radius: 3px;
+    flex: 0 0 11px;
+}
+.weather-landslide-map-canvas .ol-zoom {
+    top: 14px;
+    left: 14px;
+}
+.weather-landslide-map-canvas .ol-control {
+    background: rgba(255,255,255,0.92);
+    border: 1px solid rgba(31, 44, 58, 0.18);
+    border-radius: 10px;
+    box-shadow: 0 8px 20px rgba(31, 44, 58, 0.16);
+    padding: 4px;
+}
+.weather-landslide-map-canvas .ol-control button {
+    width: 32px;
+    height: 32px;
+    margin: 2px;
+    border-radius: 8px;
+    background: #17324f;
+    color: #fff;
+    font-size: 20px;
+    font-weight: 800;
+    opacity: 1;
+}
+.weather-landslide-map-canvas .ol-control button:hover,
+.weather-landslide-map-canvas .ol-control button:focus {
+    background: #0f253d;
+}
 
 @media (max-width: 700px) {
     .weather-map-header {

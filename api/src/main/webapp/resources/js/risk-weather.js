@@ -3,6 +3,12 @@
  */
 (function() {
     var activeWeatherMapKind = 'wrn';
+    var landslideMapState = {
+        map: null,
+        baseLayer: null,
+        overlayLayer: null,
+        target: null
+    };
     var weatherMapMetaByKind = {
         wrn: {
             title: '종합 특보',
@@ -343,13 +349,10 @@
             return;
         }
         if (mapKind === 'landslide') {
-            $frame.removeClass('is-landslide-map');
-            bindMapImageHandlers($img, $frame, $state);
-            revokeImageObjectUrl($img);
-            $img.attr('src', requestUrl);
+            loadLandslideOverlayMap($frame, $state, forceRefresh);
             return;
         }
-        $frame.removeClass('is-landslide-map');
+        hideLandslideOverlayMap($frame);
         var failSafeTimer = setTimeout(function() {
             if (!$frame.hasClass('map-ready')) {
                 $frame.removeClass('map-ready');
@@ -456,6 +459,151 @@
             + encodeURIComponent(wrn || 'W,R,C,D,O,N,V,T,S,Y,H,F')
             + force
             + nonce;
+    }
+
+    function buildLandslideOverlayUrl(forceRefresh) {
+        return 'weatherLandslideOverlayImage.do?_=' + Date.now() + (forceRefresh ? '&force=1' : '');
+    }
+
+    function buildLandslideOverlayMetaUrl() {
+        return 'weatherLandslideOverlayMeta.do?_=' + Date.now();
+    }
+
+    function hideLandslideOverlayMap($frame) {
+        $frame.removeClass('is-landslide-map');
+    }
+
+    function ensureLandslideMapElements($frame) {
+        var $canvas = $frame.find('.weather-landslide-map-canvas');
+        if (!$canvas.length) {
+            $canvas = $('<div class="weather-landslide-map-canvas" aria-label="산사태위험도 확대 지도"></div>');
+            $frame.append($canvas);
+        }
+
+        if (!$frame.find('.weather-landslide-map-legend').length) {
+            $frame.append(
+                '<div class="weather-landslide-map-legend">' +
+                    '<strong>산사태 위험등급</strong>' +
+                    '<span><i style="background:#ff0000"></i>1등급</span>' +
+                    '<span><i style="background:#ffc900"></i>2등급</span>' +
+                    '<span><i style="background:#b6ff8e"></i>3등급</span>' +
+                    '<span><i style="background:#30c2ff"></i>4등급</span>' +
+                    '<span><i style="background:#0000ff"></i>5등급</span>' +
+                '</div>'
+            );
+        }
+
+        return $canvas.get(0);
+    }
+
+    function loadLandslideOverlayMap($frame, $state, forceRefresh) {
+        if (!window.ol || !ol.Map || !ol.layer || !ol.source || !ol.proj) {
+            $frame.removeClass('is-landslide-map map-ready');
+            $state.text('지도 라이브러리를 불러오지 못했습니다.');
+            return;
+        }
+
+        $frame.addClass('is-landslide-map');
+        $frame.removeClass('map-ready');
+        $state.text('산사태 지도를 불러오는 중...');
+        var target = ensureLandslideMapElements($frame);
+
+        $.ajax({
+            url: buildLandslideOverlayMetaUrl(),
+            method: 'GET',
+            dataType: 'json',
+            cache: false,
+            timeout: 10000,
+            success: function(meta) {
+                try {
+                    renderLandslideOverlayMap(target, normalizeLandslideOverlayMeta(meta), buildLandslideOverlayUrl(forceRefresh));
+                    $frame.addClass('map-ready');
+                } catch (e) {
+                    $frame.removeClass('map-ready');
+                    $state.text('산사태 지도를 불러오지 못했습니다.');
+                }
+            },
+            error: function() {
+                $frame.removeClass('map-ready');
+                $state.text('산사태 지도를 불러오지 못했습니다.');
+            }
+        });
+    }
+
+    function normalizeLandslideOverlayMeta(rawMeta) {
+        if (rawMeta && typeof rawMeta === 'object') {
+            return rawMeta;
+        }
+        if (typeof rawMeta === 'string') {
+            var text = rawMeta.trim();
+            if (/^[A-Za-z0-9+/=]+$/.test(text)) {
+                text = atob(text);
+            }
+            return JSON.parse(text);
+        }
+        throw new Error('Invalid landslide overlay meta response');
+    }
+
+    function renderLandslideOverlayMap(target, meta, overlayUrl) {
+        var west = Number(meta && meta.west);
+        var south = Number(meta && meta.south);
+        var east = Number(meta && meta.east);
+        var north = Number(meta && meta.north);
+        if (!isFinite(west) || !isFinite(south) || !isFinite(east) || !isFinite(north)) {
+            throw new Error('Invalid landslide overlay bounds');
+        }
+
+        var extent = ol.proj.transformExtent([west, south, east, north], 'EPSG:4326', 'EPSG:3857');
+        var overlayLayer = new ol.layer.Image({
+            opacity: 0.78,
+            source: new ol.source.ImageStatic({
+                url: overlayUrl,
+                imageExtent: extent,
+                projection: 'EPSG:3857',
+                crossOrigin: 'anonymous'
+            })
+        });
+
+        if (!landslideMapState.map || landslideMapState.target !== target) {
+            var baseLayer = new ol.layer.Tile({
+                source: new ol.source.XYZ({
+                    url: 'https://xdworld.vworld.kr/2d/Base/service/{z}/{x}/{y}.png',
+                    crossOrigin: 'anonymous'
+                })
+            });
+            landslideMapState.baseLayer = baseLayer;
+            landslideMapState.map = new ol.Map({
+                target: target,
+                layers: [baseLayer, overlayLayer],
+                view: new ol.View({
+                    center: ol.proj.fromLonLat([(west + east) / 2, (south + north) / 2]),
+                    zoom: 8,
+                    minZoom: 6,
+                    maxZoom: 15
+                }),
+                controls: ol.control.defaults({ attribution: true, rotate: false }),
+                interactions: ol.interaction.defaults({
+                    altShiftDragRotate: false,
+                    pinchRotate: false
+                })
+            });
+            landslideMapState.target = target;
+        } else {
+            if (landslideMapState.overlayLayer) {
+                landslideMapState.map.removeLayer(landslideMapState.overlayLayer);
+            }
+            landslideMapState.map.addLayer(overlayLayer);
+        }
+
+        landslideMapState.overlayLayer = overlayLayer;
+        landslideMapState.map.getView().fit(extent, {
+            padding: [28, 28, 28, 28],
+            duration: 250,
+            nearest: true
+        });
+        setTimeout(function() {
+            landslideMapState.map.updateSize();
+        }, 0);
     }
 
     function setImageFromBase64($img, base64, mime) {
