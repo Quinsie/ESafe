@@ -94,7 +94,8 @@ public class RiskWeatherController {
     private static final String APPROX_RISK_LINES_GEOJSON_PATH = "res/jeonnam-risk-area/jeonnam-sig-approx-risk-internal-lines.geojson";
     private static final List<LandslideRasterSpec> LANDSLIDE_RASTER_SPECS = Collections.unmodifiableList(Arrays.asList(
             new LandslideRasterSpec("29", "res/landslide/29/29.tif", "res/landslide/29/29.clr", "res/landslide/29/29.tfw"),
-            new LandslideRasterSpec("46", "res/landslide/46/46.tif", "res/landslide/46/46.clr", "res/landslide/46/46.tfw")
+            new LandslideRasterSpec("46", "res/landslide/46/46.tif", "res/landslide/46/46.clr", "res/landslide/46/46.tfw"),
+            new LandslideRasterSpec("52180", "res/landslide/52180/52180.tif", "res/landslide/52180/52180.clr", "res/landslide/52180/52180.tfw")
     ));
     private final ObjectMapper objectMapper = new ObjectMapper();
     private static final Set<String> ALLOWED_WRN_CODES = new LinkedHashSet<String>(Arrays.asList(
@@ -1034,7 +1035,7 @@ public class RiskWeatherController {
             g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
             String timestamp = "자료 기준: " + LocalDateTime.now(ZoneId.of(KST_ZONE_ID))
                     .format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm"));
-            String note = "자료: 산림청 산사태위험지도(광주/전남)";
+            String note = "자료: 산림청 산사태위험지도(광주/전남/정읍)";
 
             g.setFont(new Font("Malgun Gothic", Font.BOLD, 13));
             FontMetrics fm = g.getFontMetrics();
