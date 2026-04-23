@@ -29,45 +29,24 @@ public final class RiskMapPolygonResolver {
             return;
         }
 
-        Map<String, List<Long>> bldgSeqsByBranch = new LinkedHashMap<String, List<Long>>();
+        ShapefileIndex index = resolveIndex(branchNm);
+        if (index == null) {
+            return;
+        }
+
+        List<Long> bldgSeqs = new ArrayList<Long>();
         for (Map<String, Object> row : rows) {
-            String resolvedBranchNm = asString(firstNonNull(row.get("branchNm"), row.get("BRANCHNM")));
-            if (resolvedBranchNm.isEmpty()) {
-                resolvedBranchNm = asString(branchNm);
-            }
             long bldgSeq = asLong(firstNonNull(row.get("bldgSeq"), row.get("BLDGSEQ")));
-            if (resolvedBranchNm.isEmpty() || bldgSeq <= 0L) {
-                continue;
+            if (bldgSeq > 0L) {
+                bldgSeqs.add(Long.valueOf(bldgSeq));
             }
-            bldgSeqsByBranch.computeIfAbsent(resolvedBranchNm, key -> new ArrayList<Long>())
-                    .add(Long.valueOf(bldgSeq));
         }
-        if (bldgSeqsByBranch.isEmpty()) {
+        if (bldgSeqs.isEmpty()) {
             return;
         }
 
-        Map<String, Map<Long, Map<String, Object>>> geometryByBranchAndSeq =
-                new LinkedHashMap<String, Map<Long, Map<String, Object>>>();
-        for (Map.Entry<String, List<Long>> entry : bldgSeqsByBranch.entrySet()) {
-            ShapefileIndex index = resolveIndex(entry.getKey());
-            if (index == null) {
-                continue;
-            }
-            geometryByBranchAndSeq.put(entry.getKey(), index.readPolygons(entry.getValue(), maxPointsPerRing));
-        }
-        if (geometryByBranchAndSeq.isEmpty()) {
-            return;
-        }
-
+        Map<Long, Map<String, Object>> geometryBySeq = index.readPolygons(bldgSeqs, maxPointsPerRing);
         for (Map<String, Object> row : rows) {
-            String resolvedBranchNm = asString(firstNonNull(row.get("branchNm"), row.get("BRANCHNM")));
-            if (resolvedBranchNm.isEmpty()) {
-                resolvedBranchNm = asString(branchNm);
-            }
-            Map<Long, Map<String, Object>> geometryBySeq = geometryByBranchAndSeq.get(resolvedBranchNm);
-            if (geometryBySeq == null) {
-                continue;
-            }
             long bldgSeq = asLong(firstNonNull(row.get("bldgSeq"), row.get("BLDGSEQ")));
             Map<String, Object> geometry = geometryBySeq.get(Long.valueOf(bldgSeq));
             if (geometry != null) {
@@ -139,13 +118,6 @@ public final class RiskMapPolygonResolver {
         } catch (Exception e) {
             return 0L;
         }
-    }
-
-    private static String asString(Object value) {
-        if (value == null) {
-            return "";
-        }
-        return String.valueOf(value).trim();
     }
 
     private static final class ShapefileIndex {
