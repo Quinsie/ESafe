@@ -31,7 +31,7 @@
                     <div class="nationwide-map-toolbar">
                         <div class="nationwide-map-meta">
                             <span id="nationwideMapSource">지도 엔진: VWorld 2D</span>
-                            <span id="nationwideMapBranch">대상: 광주전남본부직할</span>
+                            <span id="nationwideMapBranch">대상: 광주전남본부직할, 정읍시</span>
                         </div>
                         <div class="nationwide-map-actions">
                             <div class="nationwide-grade-filter" id="nationwideGradeFilter">

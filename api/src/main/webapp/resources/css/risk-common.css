@@ -421,9 +421,13 @@ a { color: inherit; text-decoration: none; }
     display: flex;
     align-items: center;
     gap: 14px;
+    flex-shrink: 0;
     color: #4a5a6a;
     font-size: 12px;
     font-weight: 600;
+}
+#nationwideMapBranch {
+    white-space: nowrap;
 }
 .nationwide-map-actions {
     display: flex;
