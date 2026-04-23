@@ -39,6 +39,7 @@ import java.awt.Color;
 import java.awt.Font;
 import java.awt.FontMetrics;
 import java.awt.Graphics2D;
+import java.awt.Rectangle;
 import java.awt.RenderingHints;
 import java.awt.geom.Path2D;
 
@@ -83,6 +84,9 @@ public class RiskWeatherController {
     private static final int WILDFIRE_MIN_IMAGE_BYTES = 5000;
     private static final int LANDSLIDE_TARGET_WIDTH = 900;
     private static final int LANDSLIDE_TARGET_HEIGHT = 620;
+    private static final int LANDSLIDE_VIEW_MIN_SIZE = 256;
+    private static final int LANDSLIDE_VIEW_MAX_WIDTH = 1800;
+    private static final int LANDSLIDE_VIEW_MAX_HEIGHT = 1200;
     private static final int LANDSLIDE_NO_DATA = Integer.MAX_VALUE;
     private static final int LANDSLIDE_TILE_SIZE = 256;
     private static final int LANDSLIDE_BASEMAP_ZOOM = 9;
@@ -403,9 +407,18 @@ public class RiskWeatherController {
 
     @RequestMapping("/weatherLandslideOverlayImage.do")
     public ResponseEntity<byte[]> weatherLandslideOverlayImage(
-            @RequestParam(value = "force", required = false) String force) {
+            @RequestParam(value = "force", required = false) String force,
+            @RequestParam(value = "west", required = false) Double west,
+            @RequestParam(value = "south", required = false) Double south,
+            @RequestParam(value = "east", required = false) Double east,
+            @RequestParam(value = "north", required = false) Double north,
+            @RequestParam(value = "width", required = false) Integer width,
+            @RequestParam(value = "height", required = false) Integer height) {
         try {
-            byte[] payload = renderLandslideOverlayImage();
+            GeoBounds requestedBounds = resolveRequestedGeoBounds(west, south, east, north);
+            byte[] payload = requestedBounds == null
+                    ? renderLandslideOverlayImage()
+                    : renderLandslideOverlayImage(requestedBounds, width, height);
             HttpHeaders headers = new HttpHeaders();
             headers.setCacheControl("no-store, no-cache, must-revalidate, max-age=0");
             headers.setPragma("no-cache");
@@ -570,6 +583,43 @@ public class RiskWeatherController {
         ByteArrayOutputStream output = new ByteArrayOutputStream();
         ImageIO.write(merged, "png", output);
         return output.toByteArray();
+    }
+
+    private byte[] renderLandslideOverlayImage(GeoBounds requestedBounds, Integer requestedWidth, Integer requestedHeight) throws IOException {
+        int width = clampInt(requestedWidth == null ? LANDSLIDE_TARGET_WIDTH : requestedWidth.intValue(), LANDSLIDE_VIEW_MIN_SIZE, LANDSLIDE_VIEW_MAX_WIDTH);
+        int height = clampInt(requestedHeight == null ? LANDSLIDE_TARGET_HEIGHT : requestedHeight.intValue(), LANDSLIDE_VIEW_MIN_SIZE, LANDSLIDE_VIEW_MAX_HEIGHT);
+        CanvasSize canvas = new CanvasSize(width, height, 1.0d);
+        BufferedImage merged = new BufferedImage(canvas.width, canvas.height, BufferedImage.TYPE_INT_ARGB);
+
+        for (LandslideRasterSpec spec : LANDSLIDE_RASTER_SPECS) {
+            drawLandslideLayerForGeoBounds(merged, spec, requestedBounds, canvas);
+        }
+        drawLandslideOverlay(merged, requestedBounds, canvas);
+
+        ByteArrayOutputStream output = new ByteArrayOutputStream();
+        ImageIO.write(merged, "png", output);
+        return output.toByteArray();
+    }
+
+    private GeoBounds resolveRequestedGeoBounds(Double west, Double south, Double east, Double north) {
+        if (west == null || south == null || east == null || north == null) {
+            return null;
+        }
+        double w = west.doubleValue();
+        double s = south.doubleValue();
+        double e = east.doubleValue();
+        double n = north.doubleValue();
+        if (!Double.isFinite(w) || !Double.isFinite(s) || !Double.isFinite(e) || !Double.isFinite(n)) {
+            return null;
+        }
+        if (e <= w || n <= s) {
+            return null;
+        }
+        return new GeoBounds(w, s, e, n);
+    }
+
+    private int clampInt(int value, int min, int max) {
+        return Math.max(min, Math.min(max, value));
     }
 
     private byte[] renderLandslideOverlayMeta() throws IOException {
@@ -744,6 +794,136 @@ public class RiskWeatherController {
                 }
                 canvasImage.setRGB(canvasX, canvasY, (resolveLandslideAlpha(value) << 24) | rgb.intValue());
             }
+        }
+    }
+
+    private void drawLandslideLayerForGeoBounds(BufferedImage canvasImage, LandslideRasterSpec spec, GeoBounds requestedBounds, CanvasSize canvas) throws IOException {
+        File tifResource = resolveDataFile(spec.tifResourcePath);
+        File clrResource = resolveDataFile(spec.clrResourcePath);
+        File xmlResource = resolveDataFile(spec.xmlResourcePath);
+        if (!tifResource.exists() || !clrResource.exists() || !xmlResource.exists()) {
+            return;
+        }
+
+        GeoBounds layerBounds = loadGeoBounds(xmlResource);
+        GeoBounds intersection = intersectGeoBounds(requestedBounds, layerBounds);
+        if (intersection == null) {
+            return;
+        }
+
+        Map<Integer, Integer> colorMap = loadLandslideColorMap(clrResource);
+        try (InputStream tifStream = java.nio.file.Files.newInputStream(tifResource.toPath());
+             ImageInputStream imageInput = ImageIO.createImageInputStream(tifStream)) {
+            if (imageInput == null) {
+                throw new IOException("Unable to open landslide raster stream");
+            }
+
+            Iterator<ImageReader> readers = ImageIO.getImageReaders(imageInput);
+            if (!readers.hasNext()) {
+                throw new IOException("No TIFF reader available for landslide raster");
+            }
+
+            ImageReader reader = readers.next();
+            try {
+                reader.setInput(imageInput, true, true);
+                int sourceWidth = reader.getWidth(0);
+                int sourceHeight = reader.getHeight(0);
+                Rectangle sourceRegion = resolveLandslideSourceRegion(intersection, layerBounds, sourceWidth, sourceHeight);
+                if (sourceRegion.width <= 0 || sourceRegion.height <= 0) {
+                    return;
+                }
+
+                int targetWidth = Math.max(1, (int) Math.ceil(canvas.width * ((intersection.east - intersection.west) / (requestedBounds.east - requestedBounds.west))));
+                int targetHeight = Math.max(1, (int) Math.ceil(canvas.height * ((intersection.north - intersection.south) / (requestedBounds.north - requestedBounds.south))));
+                int sampling = Math.max(1, (int) Math.ceil(Math.max(sourceRegion.width / (double) targetWidth, sourceRegion.height / (double) targetHeight)));
+
+                ImageReadParam param = reader.getDefaultReadParam();
+                param.setSourceRegion(sourceRegion);
+                param.setSourceSubsampling(sampling, sampling, 0, 0);
+                BufferedImage sourceImage = reader.read(0, param);
+                if (sourceImage == null) {
+                    return;
+                }
+
+                drawSampledLandslideImage(canvasImage, sourceImage.getRaster(), colorMap, sourceRegion, sampling, layerBounds, requestedBounds, canvas, sourceWidth, sourceHeight);
+            } finally {
+                reader.dispose();
+            }
+        }
+    }
+
+    private GeoBounds intersectGeoBounds(GeoBounds a, GeoBounds b) {
+        double west = Math.max(a.west, b.west);
+        double south = Math.max(a.south, b.south);
+        double east = Math.min(a.east, b.east);
+        double north = Math.min(a.north, b.north);
+        if (east <= west || north <= south) {
+            return null;
+        }
+        return new GeoBounds(west, south, east, north);
+    }
+
+    private Rectangle resolveLandslideSourceRegion(GeoBounds intersection, GeoBounds layerBounds, int sourceWidth, int sourceHeight) {
+        double geoWidth = Math.max(1e-9d, layerBounds.east - layerBounds.west);
+        double geoHeight = Math.max(1e-9d, layerBounds.north - layerBounds.south);
+        int minX = clampInt((int) Math.floor((intersection.west - layerBounds.west) / geoWidth * sourceWidth), 0, sourceWidth - 1);
+        int maxX = clampInt((int) Math.ceil((intersection.east - layerBounds.west) / geoWidth * sourceWidth), minX + 1, sourceWidth);
+        int minY = clampInt((int) Math.floor((layerBounds.north - intersection.north) / geoHeight * sourceHeight), 0, sourceHeight - 1);
+        int maxY = clampInt((int) Math.ceil((layerBounds.north - intersection.south) / geoHeight * sourceHeight), minY + 1, sourceHeight);
+        return new Rectangle(minX, minY, maxX - minX, maxY - minY);
+    }
+
+    private void drawSampledLandslideImage(BufferedImage canvasImage, Raster raster, Map<Integer, Integer> colorMap,
+            Rectangle sourceRegion, int sampling, GeoBounds layerBounds, GeoBounds requestedBounds,
+            CanvasSize canvas, int sourceWidth, int sourceHeight) {
+        int width = raster.getWidth();
+        int height = raster.getHeight();
+        int[] row = new int[width];
+        double layerGeoWidth = Math.max(1e-9d, layerBounds.east - layerBounds.west);
+        double layerGeoHeight = Math.max(1e-9d, layerBounds.north - layerBounds.south);
+        double requestGeoWidth = Math.max(1e-9d, requestedBounds.east - requestedBounds.west);
+        double requestGeoHeight = Math.max(1e-9d, requestedBounds.north - requestedBounds.south);
+
+        Graphics2D g = canvasImage.createGraphics();
+        try {
+            for (int y = 0; y < height; y++) {
+                raster.getSamples(0, y, width, 1, 0, row);
+                double sourceY1 = sourceRegion.y + (y * sampling);
+                double sourceY2 = Math.min(sourceHeight, sourceY1 + sampling);
+                double northLat = layerBounds.north - (sourceY1 / Math.max(1.0d, sourceHeight)) * layerGeoHeight;
+                double southLat = layerBounds.north - (sourceY2 / Math.max(1.0d, sourceHeight)) * layerGeoHeight;
+                int canvasY1 = (int) Math.floor((requestedBounds.north - northLat) / requestGeoHeight * canvas.height);
+                int canvasY2 = (int) Math.ceil((requestedBounds.north - southLat) / requestGeoHeight * canvas.height);
+                canvasY1 = clampInt(canvasY1, 0, canvas.height);
+                canvasY2 = clampInt(canvasY2, canvasY1 + 1, canvas.height);
+                if (canvasY1 >= canvas.height || canvasY2 <= 0) {
+                    continue;
+                }
+
+                for (int x = 0; x < width; x++) {
+                    int value = row[x];
+                    Integer rgb = colorMap.get(Integer.valueOf(value));
+                    if (rgb == null || value == LANDSLIDE_NO_DATA) {
+                        continue;
+                    }
+
+                    double sourceX1 = sourceRegion.x + (x * sampling);
+                    double sourceX2 = Math.min(sourceWidth, sourceX1 + sampling);
+                    double westLon = layerBounds.west + (sourceX1 / Math.max(1.0d, sourceWidth)) * layerGeoWidth;
+                    double eastLon = layerBounds.west + (sourceX2 / Math.max(1.0d, sourceWidth)) * layerGeoWidth;
+                    int canvasX1 = (int) Math.floor((westLon - requestedBounds.west) / requestGeoWidth * canvas.width);
+                    int canvasX2 = (int) Math.ceil((eastLon - requestedBounds.west) / requestGeoWidth * canvas.width);
+                    canvasX1 = clampInt(canvasX1, 0, canvas.width);
+                    canvasX2 = clampInt(canvasX2, canvasX1 + 1, canvas.width);
+                    if (canvasX1 >= canvas.width || canvasX2 <= 0) {
+                        continue;
+                    }
+                    g.setColor(new Color((resolveLandslideAlpha(value) << 24) | rgb.intValue(), true));
+                    g.fillRect(canvasX1, canvasY1, canvasX2 - canvasX1, canvasY2 - canvasY1);
+                }
+            }
+        } finally {
+            g.dispose();
         }
     }
 

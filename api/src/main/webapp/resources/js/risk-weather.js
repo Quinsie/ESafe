@@ -7,7 +7,10 @@
         map: null,
         baseLayer: null,
         overlayLayer: null,
-        target: null
+        target: null,
+        refreshTimer: null,
+        requestSeq: 0,
+        moveendBound: false
     };
     var weatherMapMetaByKind = {
         wrn: {
@@ -461,8 +464,22 @@
             + nonce;
     }
 
-    function buildLandslideOverlayUrl(forceRefresh) {
-        return 'weatherLandslideOverlayImage.do?_=' + Date.now() + (forceRefresh ? '&force=1' : '');
+    function buildLandslideOverlayUrl(forceRefresh, bounds, size) {
+        var params = ['_=' + Date.now()];
+        if (forceRefresh) {
+            params.push('force=1');
+        }
+        if (bounds) {
+            params.push('west=' + encodeURIComponent(formatMapCoord(bounds.west)));
+            params.push('south=' + encodeURIComponent(formatMapCoord(bounds.south)));
+            params.push('east=' + encodeURIComponent(formatMapCoord(bounds.east)));
+            params.push('north=' + encodeURIComponent(formatMapCoord(bounds.north)));
+        }
+        if (size) {
+            params.push('width=' + encodeURIComponent(size.width));
+            params.push('height=' + encodeURIComponent(size.height));
+        }
+        return 'weatherLandslideOverlayImage.do?' + params.join('&');
     }
 
     function buildLandslideOverlayMetaUrl() {
@@ -516,7 +533,7 @@
             timeout: 10000,
             success: function(meta) {
                 try {
-                    renderLandslideOverlayMap(target, normalizeLandslideOverlayMeta(meta), buildLandslideOverlayUrl(forceRefresh));
+                    renderLandslideOverlayMap(target, normalizeLandslideOverlayMeta(meta), forceRefresh);
                     $frame.addClass('map-ready');
                 } catch (e) {
                     $frame.removeClass('map-ready');
@@ -544,7 +561,7 @@
         throw new Error('Invalid landslide overlay meta response');
     }
 
-    function renderLandslideOverlayMap(target, meta, overlayUrl) {
+    function renderLandslideOverlayMap(target, meta, forceRefresh) {
         var west = Number(meta && meta.west);
         var south = Number(meta && meta.south);
         var east = Number(meta && meta.east);
@@ -554,16 +571,6 @@
         }
 
         var extent = ol.proj.transformExtent([west, south, east, north], 'EPSG:4326', 'EPSG:3857');
-        var overlayLayer = new ol.layer.Image({
-            opacity: 0.78,
-            source: new ol.source.ImageStatic({
-                url: overlayUrl,
-                imageExtent: extent,
-                projection: 'EPSG:3857',
-                crossOrigin: 'anonymous'
-            })
-        });
-
         if (!landslideMapState.map || landslideMapState.target !== target) {
             var baseLayer = new ol.layer.Tile({
                 source: new ol.source.XYZ({
@@ -574,7 +581,7 @@
             landslideMapState.baseLayer = baseLayer;
             landslideMapState.map = new ol.Map({
                 target: target,
-                layers: [baseLayer, overlayLayer],
+                layers: [baseLayer],
                 view: new ol.View({
                     center: ol.proj.fromLonLat([(west + east) / 2, (south + north) / 2]),
                     zoom: 8,
@@ -588,22 +595,113 @@
                 })
             });
             landslideMapState.target = target;
-        } else {
-            if (landslideMapState.overlayLayer) {
-                landslideMapState.map.removeLayer(landslideMapState.overlayLayer);
-            }
-            landslideMapState.map.addLayer(overlayLayer);
         }
 
-        landslideMapState.overlayLayer = overlayLayer;
+        replaceLandslideOverlay(extent, extentToLonLatBounds(extent), forceRefresh);
         landslideMapState.map.getView().fit(extent, {
             padding: [28, 28, 28, 28],
             duration: 250,
             nearest: true
         });
+        bindLandslideMapMoveend();
         setTimeout(function() {
             landslideMapState.map.updateSize();
         }, 0);
+    }
+
+    function bindLandslideMapMoveend() {
+        if (!landslideMapState.map || landslideMapState.moveendBound) {
+            return;
+        }
+        landslideMapState.moveendBound = true;
+        landslideMapState.map.on('moveend', function() {
+            scheduleLandslideOverlayRefresh(false);
+        });
+    }
+
+    function scheduleLandslideOverlayRefresh(forceRefresh) {
+        if (landslideMapState.refreshTimer) {
+            clearTimeout(landslideMapState.refreshTimer);
+        }
+        landslideMapState.refreshTimer = setTimeout(function() {
+            refreshLandslideOverlayForCurrentView(forceRefresh);
+        }, 260);
+    }
+
+    function refreshLandslideOverlayForCurrentView(forceRefresh) {
+        if (!landslideMapState.map) {
+            return;
+        }
+        var size = landslideMapState.map.getSize();
+        if (!size || !size[0] || !size[1]) {
+            return;
+        }
+        var extent = landslideMapState.map.getView().calculateExtent(size);
+        replaceLandslideOverlay(extent, extentToLonLatBounds(extent), forceRefresh);
+    }
+
+    function replaceLandslideOverlay(extent, bounds, forceRefresh) {
+        if (!landslideMapState.map || !bounds) {
+            return;
+        }
+        var requestSeq = ++landslideMapState.requestSeq;
+        var imageSize = resolveLandslideOverlayImageSize();
+        var source = new ol.source.ImageStatic({
+            url: buildLandslideOverlayUrl(forceRefresh, bounds, imageSize),
+            imageExtent: extent,
+            projection: 'EPSG:3857',
+            crossOrigin: 'anonymous'
+        });
+        var nextLayer = new ol.layer.Image({
+            opacity: 0.78,
+            source: source
+        });
+        landslideMapState.map.addLayer(nextLayer);
+
+        source.on('imageloadend', function() {
+            if (requestSeq !== landslideMapState.requestSeq) {
+                landslideMapState.map.removeLayer(nextLayer);
+                return;
+            }
+            if (landslideMapState.overlayLayer && landslideMapState.overlayLayer !== nextLayer) {
+                landslideMapState.map.removeLayer(landslideMapState.overlayLayer);
+            }
+            landslideMapState.overlayLayer = nextLayer;
+        });
+        source.on('imageloaderror', function() {
+            landslideMapState.map.removeLayer(nextLayer);
+            if (requestSeq === landslideMapState.requestSeq && !landslideMapState.overlayLayer) {
+                $('#weatherMapPrimary').closest('.weather-map-frame').removeClass('map-ready');
+                $('#weatherMapPrimary').closest('.weather-map-frame').find('.weather-map-state').text('산사태 지도를 불러오지 못했습니다.');
+            }
+        });
+    }
+
+    function resolveLandslideOverlayImageSize() {
+        var target = landslideMapState.target;
+        var rect = target ? target.getBoundingClientRect() : { width: 900, height: 620 };
+        var ratio = Math.min(window.devicePixelRatio || 1, 2);
+        return {
+            width: Math.max(256, Math.min(1800, Math.round((rect.width || 900) * ratio))),
+            height: Math.max(256, Math.min(1200, Math.round((rect.height || 620) * ratio)))
+        };
+    }
+
+    function extentToLonLatBounds(extent) {
+        if (!extent || extent.length < 4) {
+            return null;
+        }
+        var bounds = ol.proj.transformExtent(extent, 'EPSG:3857', 'EPSG:4326');
+        return {
+            west: bounds[0],
+            south: bounds[1],
+            east: bounds[2],
+            north: bounds[3]
+        };
+    }
+
+    function formatMapCoord(value) {
+        return Number(value).toFixed(6);
     }
 
     function setImageFromBase64($img, base64, mime) {
