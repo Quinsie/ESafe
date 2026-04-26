@@ -90,6 +90,16 @@ public class RiskWeatherController {
     private static final int LANDSLIDE_NO_DATA = Integer.MAX_VALUE;
     private static final int LANDSLIDE_TILE_SIZE = 256;
     private static final int LANDSLIDE_BASEMAP_ZOOM = 9;
+    private static final double KOREA_2000_A = 6378137.0d;
+    private static final double KOREA_2000_F = 1.0d / 298.257222101d;
+    private static final double KOREA_2000_E2 = 2.0d * KOREA_2000_F - KOREA_2000_F * KOREA_2000_F;
+    private static final double KOREA_2000_EP2 = KOREA_2000_E2 / (1.0d - KOREA_2000_E2);
+    private static final double KOREA_2000_LAT0 = Math.toRadians(38.0d);
+    private static final double KOREA_2000_LON0 = Math.toRadians(127.0d);
+    private static final double KOREA_2000_FALSE_EASTING = 200000.0d;
+    private static final double KOREA_2000_FALSE_NORTHING = 500000.0d;
+    private static final double KOREA_2000_SCALE = 1.0d;
+    private static final double KOREA_2000_M0 = meridionalArc(KOREA_2000_LAT0);
     private static final Color LANDSLIDE_PANEL_BG = new Color(14, 24, 35, 178);
     private static final Color LANDSLIDE_PANEL_BORDER = new Color(255, 255, 255, 68);
     private static final String VWORLD_SATELLITE_TILE_URL = "https://xdworld.vworld.kr/2d/Satellite/service/%d/%d/%d.jpeg";
@@ -746,13 +756,14 @@ public class RiskWeatherController {
                 double maxY = worldFile.originY + (Math.abs(worldFile.pixelHeight) / 2.0d);
                 double maxX = minX + sampledPixelWidth * sourceImage.getWidth();
                 double minY = maxY - sampledPixelHeight * sourceImage.getHeight();
+                Bounds projectedBounds = new Bounds(minX, minY, maxX, maxY);
 
                 return new LandslideLayer(
                         spec.code,
                         sourceImage.getRaster(),
                         colorMap,
-                        new Bounds(minX, minY, maxX, maxY),
-                        geoBounds,
+                        projectedBounds,
+                        mergeGeoBounds(geoBounds, projectBoundsToGeoBounds(projectedBounds)),
                         sampledPixelWidth,
                         sampledPixelHeight
                 );
@@ -800,18 +811,13 @@ public class RiskWeatherController {
     private void drawLandslideLayerForGeoBounds(BufferedImage canvasImage, LandslideRasterSpec spec, GeoBounds requestedBounds, CanvasSize canvas) throws IOException {
         File tifResource = resolveDataFile(spec.tifResourcePath);
         File clrResource = resolveDataFile(spec.clrResourcePath);
-        File xmlResource = resolveDataFile(spec.xmlResourcePath);
-        if (!tifResource.exists() || !clrResource.exists() || !xmlResource.exists()) {
-            return;
-        }
-
-        GeoBounds layerBounds = loadGeoBounds(xmlResource);
-        GeoBounds intersection = intersectGeoBounds(requestedBounds, layerBounds);
-        if (intersection == null) {
+        File tfwResource = resolveDataFile(spec.tfwResourcePath);
+        if (!tifResource.exists() || !clrResource.exists() || !tfwResource.exists()) {
             return;
         }
 
         Map<Integer, Integer> colorMap = loadLandslideColorMap(clrResource);
+        WorldFile worldFile = loadWorldFile(tfwResource);
         try (InputStream tifStream = java.nio.file.Files.newInputStream(tifResource.toPath());
              ImageInputStream imageInput = ImageIO.createImageInputStream(tifStream)) {
             if (imageInput == null) {
@@ -828,13 +834,23 @@ public class RiskWeatherController {
                 reader.setInput(imageInput, true, true);
                 int sourceWidth = reader.getWidth(0);
                 int sourceHeight = reader.getHeight(0);
-                Rectangle sourceRegion = resolveLandslideSourceRegion(intersection, layerBounds, sourceWidth, sourceHeight);
+                Bounds projectedLayerBounds = resolveProjectedBounds(worldFile, sourceWidth, sourceHeight);
+                Bounds projectedRequestBounds = projectGeoBoundsToProjectedBounds(requestedBounds);
+                Bounds projectedIntersection = intersectProjectedBounds(projectedRequestBounds, projectedLayerBounds);
+                if (projectedIntersection == null) {
+                    return;
+                }
+                Rectangle sourceRegion = resolveLandslideSourceRegion(projectedIntersection, projectedLayerBounds, sourceWidth, sourceHeight);
                 if (sourceRegion.width <= 0 || sourceRegion.height <= 0) {
                     return;
                 }
 
-                int targetWidth = Math.max(1, (int) Math.ceil(canvas.width * ((intersection.east - intersection.west) / (requestedBounds.east - requestedBounds.west))));
-                int targetHeight = Math.max(1, (int) Math.ceil(canvas.height * ((intersection.north - intersection.south) / (requestedBounds.north - requestedBounds.south))));
+                double projectedIntersectionWidth = Math.max(1e-9d, projectedIntersection.maxX - projectedIntersection.minX);
+                double projectedIntersectionHeight = Math.max(1e-9d, projectedIntersection.maxY - projectedIntersection.minY);
+                double projectedRequestWidth = Math.max(1e-9d, projectedRequestBounds.maxX - projectedRequestBounds.minX);
+                double projectedRequestHeight = Math.max(1e-9d, projectedRequestBounds.maxY - projectedRequestBounds.minY);
+                int targetWidth = Math.max(1, (int) Math.ceil(canvas.width * (projectedIntersectionWidth / projectedRequestWidth)));
+                int targetHeight = Math.max(1, (int) Math.ceil(canvas.height * (projectedIntersectionHeight / projectedRequestHeight)));
                 int sampling = Math.max(1, (int) Math.ceil(Math.max(sourceRegion.width / (double) targetWidth, sourceRegion.height / (double) targetHeight)));
 
                 ImageReadParam param = reader.getDefaultReadParam();
@@ -845,42 +861,42 @@ public class RiskWeatherController {
                     return;
                 }
 
-                drawSampledLandslideImage(canvasImage, sourceImage.getRaster(), colorMap, sourceRegion, sampling, layerBounds, requestedBounds, canvas, sourceWidth, sourceHeight);
+                drawSampledLandslideImage(canvasImage, sourceImage.getRaster(), colorMap, sourceRegion, sampling, projectedLayerBounds, requestedBounds, canvas, sourceWidth, sourceHeight);
             } finally {
                 reader.dispose();
             }
         }
     }
 
-    private GeoBounds intersectGeoBounds(GeoBounds a, GeoBounds b) {
-        double west = Math.max(a.west, b.west);
-        double south = Math.max(a.south, b.south);
-        double east = Math.min(a.east, b.east);
-        double north = Math.min(a.north, b.north);
-        if (east <= west || north <= south) {
+    private Bounds intersectProjectedBounds(Bounds a, Bounds b) {
+        double minX = Math.max(a.minX, b.minX);
+        double minY = Math.max(a.minY, b.minY);
+        double maxX = Math.min(a.maxX, b.maxX);
+        double maxY = Math.min(a.maxY, b.maxY);
+        if (maxX <= minX || maxY <= minY) {
             return null;
         }
-        return new GeoBounds(west, south, east, north);
+        return new Bounds(minX, minY, maxX, maxY);
     }
 
-    private Rectangle resolveLandslideSourceRegion(GeoBounds intersection, GeoBounds layerBounds, int sourceWidth, int sourceHeight) {
-        double geoWidth = Math.max(1e-9d, layerBounds.east - layerBounds.west);
-        double geoHeight = Math.max(1e-9d, layerBounds.north - layerBounds.south);
-        int minX = clampInt((int) Math.floor((intersection.west - layerBounds.west) / geoWidth * sourceWidth), 0, sourceWidth - 1);
-        int maxX = clampInt((int) Math.ceil((intersection.east - layerBounds.west) / geoWidth * sourceWidth), minX + 1, sourceWidth);
-        int minY = clampInt((int) Math.floor((layerBounds.north - intersection.north) / geoHeight * sourceHeight), 0, sourceHeight - 1);
-        int maxY = clampInt((int) Math.ceil((layerBounds.north - intersection.south) / geoHeight * sourceHeight), minY + 1, sourceHeight);
+    private Rectangle resolveLandslideSourceRegion(Bounds intersection, Bounds layerBounds, int sourceWidth, int sourceHeight) {
+        double width = Math.max(1e-9d, layerBounds.maxX - layerBounds.minX);
+        double height = Math.max(1e-9d, layerBounds.maxY - layerBounds.minY);
+        int minX = clampInt((int) Math.floor((intersection.minX - layerBounds.minX) / width * sourceWidth), 0, sourceWidth - 1);
+        int maxX = clampInt((int) Math.ceil((intersection.maxX - layerBounds.minX) / width * sourceWidth), minX + 1, sourceWidth);
+        int minY = clampInt((int) Math.floor((layerBounds.maxY - intersection.maxY) / height * sourceHeight), 0, sourceHeight - 1);
+        int maxY = clampInt((int) Math.ceil((layerBounds.maxY - intersection.minY) / height * sourceHeight), minY + 1, sourceHeight);
         return new Rectangle(minX, minY, maxX - minX, maxY - minY);
     }
 
     private void drawSampledLandslideImage(BufferedImage canvasImage, Raster raster, Map<Integer, Integer> colorMap,
-            Rectangle sourceRegion, int sampling, GeoBounds layerBounds, GeoBounds requestedBounds,
+            Rectangle sourceRegion, int sampling, Bounds projectedLayerBounds, GeoBounds requestedBounds,
             CanvasSize canvas, int sourceWidth, int sourceHeight) {
         int width = raster.getWidth();
         int height = raster.getHeight();
         int[] row = new int[width];
-        double layerGeoWidth = Math.max(1e-9d, layerBounds.east - layerBounds.west);
-        double layerGeoHeight = Math.max(1e-9d, layerBounds.north - layerBounds.south);
+        double projectedWidth = Math.max(1e-9d, projectedLayerBounds.maxX - projectedLayerBounds.minX);
+        double projectedHeight = Math.max(1e-9d, projectedLayerBounds.maxY - projectedLayerBounds.minY);
         double requestGeoWidth = Math.max(1e-9d, requestedBounds.east - requestedBounds.west);
         double requestGeoHeight = Math.max(1e-9d, requestedBounds.north - requestedBounds.south);
 
@@ -890,15 +906,8 @@ public class RiskWeatherController {
                 raster.getSamples(0, y, width, 1, 0, row);
                 double sourceY1 = sourceRegion.y + (y * sampling);
                 double sourceY2 = Math.min(sourceHeight, sourceY1 + sampling);
-                double northLat = layerBounds.north - (sourceY1 / Math.max(1.0d, sourceHeight)) * layerGeoHeight;
-                double southLat = layerBounds.north - (sourceY2 / Math.max(1.0d, sourceHeight)) * layerGeoHeight;
-                int canvasY1 = (int) Math.floor((requestedBounds.north - northLat) / requestGeoHeight * canvas.height);
-                int canvasY2 = (int) Math.ceil((requestedBounds.north - southLat) / requestGeoHeight * canvas.height);
-                canvasY1 = clampInt(canvasY1, 0, canvas.height);
-                canvasY2 = clampInt(canvasY2, canvasY1 + 1, canvas.height);
-                if (canvasY1 >= canvas.height || canvasY2 <= 0) {
-                    continue;
-                }
+                double projectedNorthY = projectedLayerBounds.maxY - (sourceY1 / Math.max(1.0d, sourceHeight)) * projectedHeight;
+                double projectedSouthY = projectedLayerBounds.maxY - (sourceY2 / Math.max(1.0d, sourceHeight)) * projectedHeight;
 
                 for (int x = 0; x < width; x++) {
                     int value = row[x];
@@ -909,8 +918,23 @@ public class RiskWeatherController {
 
                     double sourceX1 = sourceRegion.x + (x * sampling);
                     double sourceX2 = Math.min(sourceWidth, sourceX1 + sampling);
-                    double westLon = layerBounds.west + (sourceX1 / Math.max(1.0d, sourceWidth)) * layerGeoWidth;
-                    double eastLon = layerBounds.west + (sourceX2 / Math.max(1.0d, sourceWidth)) * layerGeoWidth;
+                    double projectedWestX = projectedLayerBounds.minX + (sourceX1 / Math.max(1.0d, sourceWidth)) * projectedWidth;
+                    double projectedEastX = projectedLayerBounds.minX + (sourceX2 / Math.max(1.0d, sourceWidth)) * projectedWidth;
+                    GeoPoint northWest = projectToGeo(projectedWestX, projectedNorthY);
+                    GeoPoint northEast = projectToGeo(projectedEastX, projectedNorthY);
+                    GeoPoint southWest = projectToGeo(projectedWestX, projectedSouthY);
+                    GeoPoint southEast = projectToGeo(projectedEastX, projectedSouthY);
+                    double westLon = min4(northWest.lon, northEast.lon, southWest.lon, southEast.lon);
+                    double eastLon = max4(northWest.lon, northEast.lon, southWest.lon, southEast.lon);
+                    double northLat = max4(northWest.lat, northEast.lat, southWest.lat, southEast.lat);
+                    double southLat = min4(northWest.lat, northEast.lat, southWest.lat, southEast.lat);
+                    int canvasY1 = (int) Math.floor((requestedBounds.north - northLat) / requestGeoHeight * canvas.height);
+                    int canvasY2 = (int) Math.ceil((requestedBounds.north - southLat) / requestGeoHeight * canvas.height);
+                    canvasY1 = clampInt(canvasY1, 0, canvas.height);
+                    canvasY2 = clampInt(canvasY2, canvasY1 + 1, canvas.height);
+                    if (canvasY1 >= canvas.height || canvasY2 <= 0) {
+                        continue;
+                    }
                     int canvasX1 = (int) Math.floor((westLon - requestedBounds.west) / requestGeoWidth * canvas.width);
                     int canvasX2 = (int) Math.ceil((eastLon - requestedBounds.west) / requestGeoWidth * canvas.width);
                     canvasX1 = clampInt(canvasX1, 0, canvas.width);
@@ -925,6 +949,129 @@ public class RiskWeatherController {
         } finally {
             g.dispose();
         }
+    }
+
+    private GeoBounds mergeGeoBounds(GeoBounds a, GeoBounds b) {
+        if (a == null) {
+            return b;
+        }
+        if (b == null) {
+            return a;
+        }
+        return new GeoBounds(
+                Math.min(a.west, b.west),
+                Math.min(a.south, b.south),
+                Math.max(a.east, b.east),
+                Math.max(a.north, b.north)
+        );
+    }
+
+    private Bounds resolveProjectedBounds(WorldFile worldFile, int sourceWidth, int sourceHeight) {
+        double minX = worldFile.originX - (worldFile.pixelWidth / 2.0d);
+        double maxY = worldFile.originY + (Math.abs(worldFile.pixelHeight) / 2.0d);
+        double maxX = minX + worldFile.pixelWidth * sourceWidth;
+        double minY = maxY - Math.abs(worldFile.pixelHeight) * sourceHeight;
+        return new Bounds(minX, minY, maxX, maxY);
+    }
+
+    private GeoBounds projectBoundsToGeoBounds(Bounds projectedBounds) {
+        GeoPoint northWest = projectToGeo(projectedBounds.minX, projectedBounds.maxY);
+        GeoPoint northEast = projectToGeo(projectedBounds.maxX, projectedBounds.maxY);
+        GeoPoint southWest = projectToGeo(projectedBounds.minX, projectedBounds.minY);
+        GeoPoint southEast = projectToGeo(projectedBounds.maxX, projectedBounds.minY);
+        return new GeoBounds(
+                min4(northWest.lon, northEast.lon, southWest.lon, southEast.lon),
+                min4(northWest.lat, northEast.lat, southWest.lat, southEast.lat),
+                max4(northWest.lon, northEast.lon, southWest.lon, southEast.lon),
+                max4(northWest.lat, northEast.lat, southWest.lat, southEast.lat)
+        );
+    }
+
+    private Bounds projectGeoBoundsToProjectedBounds(GeoBounds geoBounds) {
+        ProjectedPoint northWest = geoToProjected(geoBounds.west, geoBounds.north);
+        ProjectedPoint northEast = geoToProjected(geoBounds.east, geoBounds.north);
+        ProjectedPoint southWest = geoToProjected(geoBounds.west, geoBounds.south);
+        ProjectedPoint southEast = geoToProjected(geoBounds.east, geoBounds.south);
+        return new Bounds(
+                min4(northWest.x, northEast.x, southWest.x, southEast.x),
+                min4(northWest.y, northEast.y, southWest.y, southEast.y),
+                max4(northWest.x, northEast.x, southWest.x, southEast.x),
+                max4(northWest.y, northEast.y, southWest.y, southEast.y)
+        );
+    }
+
+    private static double meridionalArc(double lat) {
+        return KOREA_2000_A * (
+                (1.0d - KOREA_2000_E2 / 4.0d - 3.0d * Math.pow(KOREA_2000_E2, 2) / 64.0d - 5.0d * Math.pow(KOREA_2000_E2, 3) / 256.0d) * lat
+                - (3.0d * KOREA_2000_E2 / 8.0d + 3.0d * Math.pow(KOREA_2000_E2, 2) / 32.0d + 45.0d * Math.pow(KOREA_2000_E2, 3) / 1024.0d) * Math.sin(2.0d * lat)
+                + (15.0d * Math.pow(KOREA_2000_E2, 2) / 256.0d + 45.0d * Math.pow(KOREA_2000_E2, 3) / 1024.0d) * Math.sin(4.0d * lat)
+                - (35.0d * Math.pow(KOREA_2000_E2, 3) / 3072.0d) * Math.sin(6.0d * lat)
+        );
+    }
+
+    private GeoPoint projectToGeo(double x, double y) {
+        double m = KOREA_2000_M0 + (y - KOREA_2000_FALSE_NORTHING) / KOREA_2000_SCALE;
+        double mu = m / (KOREA_2000_A * (1.0d - KOREA_2000_E2 / 4.0d - 3.0d * Math.pow(KOREA_2000_E2, 2) / 64.0d - 5.0d * Math.pow(KOREA_2000_E2, 3) / 256.0d));
+        double e1 = (1.0d - Math.sqrt(1.0d - KOREA_2000_E2)) / (1.0d + Math.sqrt(1.0d - KOREA_2000_E2));
+        double j1 = 3.0d * e1 / 2.0d - 27.0d * Math.pow(e1, 3) / 32.0d;
+        double j2 = 21.0d * Math.pow(e1, 2) / 16.0d - 55.0d * Math.pow(e1, 4) / 32.0d;
+        double j3 = 151.0d * Math.pow(e1, 3) / 96.0d;
+        double j4 = 1097.0d * Math.pow(e1, 4) / 512.0d;
+        double fp = mu + j1 * Math.sin(2.0d * mu) + j2 * Math.sin(4.0d * mu) + j3 * Math.sin(6.0d * mu) + j4 * Math.sin(8.0d * mu);
+        double sinFp = Math.sin(fp);
+        double cosFp = Math.cos(fp);
+        double tanFp = Math.tan(fp);
+        double c1 = KOREA_2000_EP2 * cosFp * cosFp;
+        double t1 = tanFp * tanFp;
+        double n1 = KOREA_2000_A / Math.sqrt(1.0d - KOREA_2000_E2 * sinFp * sinFp);
+        double r1 = KOREA_2000_A * (1.0d - KOREA_2000_E2) / Math.pow(1.0d - KOREA_2000_E2 * sinFp * sinFp, 1.5d);
+        double d = (x - KOREA_2000_FALSE_EASTING) / (n1 * KOREA_2000_SCALE);
+        double lat = fp - (n1 * tanFp / r1) * (
+                d * d / 2.0d
+                - (5.0d + 3.0d * t1 + 10.0d * c1 - 4.0d * c1 * c1 - 9.0d * KOREA_2000_EP2) * Math.pow(d, 4) / 24.0d
+                + (61.0d + 90.0d * t1 + 298.0d * c1 + 45.0d * t1 * t1 - 252.0d * KOREA_2000_EP2 - 3.0d * c1 * c1) * Math.pow(d, 6) / 720.0d
+        );
+        double lon = KOREA_2000_LON0 + (
+                d
+                - (1.0d + 2.0d * t1 + c1) * Math.pow(d, 3) / 6.0d
+                + (5.0d - 2.0d * c1 + 28.0d * t1 - 3.0d * c1 * c1 + 8.0d * KOREA_2000_EP2 + 24.0d * t1 * t1) * Math.pow(d, 5) / 120.0d
+        ) / cosFp;
+        return new GeoPoint(Math.toDegrees(lon), Math.toDegrees(lat));
+    }
+
+    private ProjectedPoint geoToProjected(double lon, double lat) {
+        double latRad = Math.toRadians(lat);
+        double lonRad = Math.toRadians(lon);
+        double sinLat = Math.sin(latRad);
+        double cosLat = Math.cos(latRad);
+        double tanLat = Math.tan(latRad);
+        double n = KOREA_2000_A / Math.sqrt(1.0d - KOREA_2000_E2 * sinLat * sinLat);
+        double t = tanLat * tanLat;
+        double c = KOREA_2000_EP2 * cosLat * cosLat;
+        double aTerm = (lonRad - KOREA_2000_LON0) * cosLat;
+        double m = meridionalArc(latRad);
+        double x = KOREA_2000_FALSE_EASTING + KOREA_2000_SCALE * n * (
+                aTerm
+                + (1.0d - t + c) * Math.pow(aTerm, 3) / 6.0d
+                + (5.0d - 18.0d * t + t * t + 72.0d * c - 58.0d * KOREA_2000_EP2) * Math.pow(aTerm, 5) / 120.0d
+        );
+        double y = KOREA_2000_FALSE_NORTHING + KOREA_2000_SCALE * (
+                m - KOREA_2000_M0
+                + n * tanLat * (
+                        Math.pow(aTerm, 2) / 2.0d
+                        + (5.0d - t + 9.0d * c + 4.0d * c * c) * Math.pow(aTerm, 4) / 24.0d
+                        + (61.0d - 58.0d * t + t * t + 600.0d * c - 330.0d * KOREA_2000_EP2) * Math.pow(aTerm, 6) / 720.0d
+                )
+        );
+        return new ProjectedPoint(x, y);
+    }
+
+    private double min4(double a, double b, double c, double d) {
+        return Math.min(Math.min(a, b), Math.min(c, d));
+    }
+
+    private double max4(double a, double b, double c, double d) {
+        return Math.max(Math.max(a, b), Math.max(c, d));
     }
 
     private int resolveLandslideAlpha(int value) {
@@ -1497,6 +1644,26 @@ public class RiskWeatherController {
             this.south = south;
             this.east = east;
             this.north = north;
+        }
+    }
+
+    private static final class GeoPoint {
+        private final double lon;
+        private final double lat;
+
+        private GeoPoint(double lon, double lat) {
+            this.lon = lon;
+            this.lat = lat;
+        }
+    }
+
+    private static final class ProjectedPoint {
+        private final double x;
+        private final double y;
+
+        private ProjectedPoint(double x, double y) {
+            this.x = x;
+            this.y = y;
         }
     }
 

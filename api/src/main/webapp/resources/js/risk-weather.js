@@ -2,6 +2,7 @@
  * risk-weather.js - 기상특보 현황
  */
 (function() {
+    var LANDSLIDE_META_TIMEOUT_MS = 30000;
     var activeWeatherMapKind = 'wrn';
     var landslideMapState = {
         map: null,
@@ -530,7 +531,7 @@
             method: 'GET',
             dataType: 'json',
             cache: false,
-            timeout: 10000,
+            timeout: LANDSLIDE_META_TIMEOUT_MS,
             success: function(meta) {
                 try {
                     renderLandslideOverlayMap(target, normalizeLandslideOverlayMeta(meta), forceRefresh);
