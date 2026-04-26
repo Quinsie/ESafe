@@ -1284,7 +1284,12 @@
         if (!state.approxDistrictSource || state.approxDistrictLoaded) {
             return;
         }
-        $.getJSON(JEONNAM_APPROX_GEOJSON_URL).done(function(collection) {
+        $.ajax({
+            url: JEONNAM_APPROX_GEOJSON_URL,
+            dataType: 'text',
+            cache: false
+        }).done(function(payload) {
+            var collection = normalizeApproxGeoJsonPayload(payload);
             var format = new ol.format.GeoJSON();
             var features = format.readFeatures(collection, {
                 dataProjection: 'EPSG:4326',
@@ -1308,10 +1313,17 @@
             syncApproxDistrictRows();
             filterApproxDistrictFeatures();
             syncApproxDistrictVisibility();
+        }).fail(function(xhr, status, error) {
+            console.error('[NationwideMask] polygon fetch failed', status, error, xhr && xhr.responseText);
         });
 
         if (state.approxDistrictLineSource) {
-            $.getJSON(JEONNAM_APPROX_LINE_GEOJSON_URL).done(function(collection) {
+            $.ajax({
+                url: JEONNAM_APPROX_LINE_GEOJSON_URL,
+                dataType: 'text',
+                cache: false
+            }).done(function(payload) {
+                var collection = normalizeApproxGeoJsonPayload(payload);
                 var format = new ol.format.GeoJSON();
                 var features = format.readFeatures(collection, {
                     dataProjection: 'EPSG:4326',
@@ -1321,8 +1333,41 @@
                     state.approxDistrictLineSource.addFeature(feature);
                 });
                 syncApproxDistrictVisibility();
+            }).fail(function(xhr, status, error) {
+                console.error('[NationwideMask] line fetch failed', status, error, xhr && xhr.responseText);
             });
         }
+    }
+
+    function normalizeApproxGeoJsonPayload(payload) {
+        var raw = payload;
+        if (raw && typeof raw !== 'string') {
+            return raw;
+        }
+
+        if (!raw) {
+            throw new Error('Empty GeoJSON payload');
+        }
+
+        raw = $.trim(String(raw));
+        if (!raw) {
+            throw new Error('Blank GeoJSON payload');
+        }
+
+        if (raw.charAt(0) === '{' || raw.charAt(0) === '[') {
+            return JSON.parse(raw);
+        }
+
+        try {
+            var decoded = atob(raw);
+            if (decoded && (decoded.charAt(0) === '{' || decoded.charAt(0) === '[')) {
+                return JSON.parse(decoded);
+            }
+        } catch (decodeError) {
+            console.warn('[NationwideMask] base64 decode skipped', decodeError);
+        }
+
+        throw new Error('Unsupported GeoJSON payload format');
     }
 
     function initMap() {

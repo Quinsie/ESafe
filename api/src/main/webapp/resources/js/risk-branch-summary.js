@@ -57,8 +57,12 @@ $(function() {
         filterAndRender();
     });
 
-    $('#btnDownloadBranchExcel').on('click', function() {
-        downloadDangerExcel();
+    $('#btnDownloadBranchExcelAll').on('click', function() {
+        downloadBranchExcel(false);
+    });
+
+    $('#btnDownloadBranchExcelDanger').on('click', function() {
+        downloadBranchExcel(true);
     });
 });
 
@@ -166,7 +170,7 @@ function filterAndRender() {
     RiskApp.createGrid('sbGridBranch', columns, filtered);
 }
 
-function downloadDangerExcel() {
+function downloadBranchExcel(dangerOnly) {
     var params = [];
     var branchNm = $('#filterBranch').val();
     var hqNm = $('#filterHq').val();
@@ -178,5 +182,5 @@ function downloadDangerExcel() {
     }
 
     var qs = params.length ? ('?' + params.join('&')) : '';
-    location.href = 'downloadDangerBuildingExcel.do' + qs;
+    location.href = (dangerOnly ? 'downloadDangerBuildingExcel.do' : 'downloadBuildingExcel.do') + qs;
 }

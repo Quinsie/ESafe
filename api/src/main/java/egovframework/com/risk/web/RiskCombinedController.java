@@ -262,9 +262,22 @@ public class RiskCombinedController {
     @RequestMapping("/downloadDangerBuildingExcel.do")
     public void downloadDangerBuildingExcel(RiskSearchVO searchVO, HttpServletResponse response) throws Exception {
         List<Map<String, Object>> rows = riskCombinedService.selectDangerBuildingExportList(searchVO);
+        writeBuildingExcel(rows, "danger_buildings_", "D+E 위험 건물 목록", response);
+    }
 
+    @RequestMapping("/downloadBuildingExcel.do")
+    public void downloadBuildingExcel(RiskSearchVO searchVO, HttpServletResponse response) throws Exception {
+        List<Map<String, Object>> rows = riskCombinedService.selectBuildingExportList(searchVO);
+        writeBuildingExcel(rows, "all_buildings_", "전체 건물 목록", response);
+    }
+
+    private void writeBuildingExcel(
+            List<Map<String, Object>> rows,
+            String filePrefix,
+            String sheetName,
+            HttpServletResponse response) throws Exception {
         Workbook workbook = new XSSFWorkbook();
-        Sheet sheet = workbook.createSheet("D+E 嫄대Ъ紐⑸줉");
+        Sheet sheet = workbook.createSheet(sheetName);
 
         CellStyle headerStyle = workbook.createCellStyle();
         headerStyle.setAlignment(HorizontalAlignment.CENTER);
@@ -298,7 +311,7 @@ public class RiskCombinedController {
             sheet.autoSizeColumn(i);
         }
 
-        String fileName = "danger_buildings_" + System.currentTimeMillis() + ".xlsx";
+        String fileName = filePrefix + System.currentTimeMillis() + ".xlsx";
         String encoded = URLEncoder.encode(fileName, "UTF-8").replaceAll("\\+", "%20");
 
         response.setContentType("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
@@ -604,4 +617,3 @@ public class RiskCombinedController {
         return cleaned.isEmpty() ? original : cleaned;
     }
 }
-

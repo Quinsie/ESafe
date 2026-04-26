@@ -31,6 +31,8 @@ public interface RiskCombinedService {
 
     List<RiskCombinedVO> selectGradeChangedList();
 
+    List<Map<String, Object>> selectBuildingExportList(RiskSearchVO searchVO);
+
     List<Map<String, Object>> selectDangerBuildingExportList(RiskSearchVO searchVO);
 
     List<Map<String, Object>> selectRiskMapDistrictLayer(String branchNm);

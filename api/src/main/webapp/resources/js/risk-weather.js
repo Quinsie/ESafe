@@ -2,7 +2,17 @@
  * risk-weather.js - 기상특보 현황
  */
 (function() {
+    var LANDSLIDE_META_TIMEOUT_MS = 30000;
     var activeWeatherMapKind = 'wrn';
+    var landslideMapState = {
+        map: null,
+        baseLayer: null,
+        overlayLayer: null,
+        target: null,
+        refreshTimer: null,
+        requestSeq: 0,
+        moveendBound: false
+    };
     var weatherMapMetaByKind = {
         wrn: {
             title: '종합 특보',
@@ -24,7 +34,7 @@
         },
         landslide: {
             title: '산사태위험도',
-            description: '광주광역시와 전라남도 산사태 위험등급을 한 화면에서 확인할 수 있습니다.',
+            description: '광주광역시, 전라남도, 정읍시 산사태 위험등급을 한 화면에서 확인할 수 있습니다.',
             alt: '산사태위험지도',
             wrn: ''
         }
@@ -343,13 +353,10 @@
             return;
         }
         if (mapKind === 'landslide') {
-            $frame.removeClass('is-landslide-map');
-            bindMapImageHandlers($img, $frame, $state);
-            revokeImageObjectUrl($img);
-            $img.attr('src', requestUrl);
+            loadLandslideOverlayMap($frame, $state, forceRefresh);
             return;
         }
-        $frame.removeClass('is-landslide-map');
+        hideLandslideOverlayMap($frame);
         var failSafeTimer = setTimeout(function() {
             if (!$frame.hasClass('map-ready')) {
                 $frame.removeClass('map-ready');
@@ -456,6 +463,246 @@
             + encodeURIComponent(wrn || 'W,R,C,D,O,N,V,T,S,Y,H,F')
             + force
             + nonce;
+    }
+
+    function buildLandslideOverlayUrl(forceRefresh, bounds, size) {
+        var params = ['_=' + Date.now()];
+        if (forceRefresh) {
+            params.push('force=1');
+        }
+        if (bounds) {
+            params.push('west=' + encodeURIComponent(formatMapCoord(bounds.west)));
+            params.push('south=' + encodeURIComponent(formatMapCoord(bounds.south)));
+            params.push('east=' + encodeURIComponent(formatMapCoord(bounds.east)));
+            params.push('north=' + encodeURIComponent(formatMapCoord(bounds.north)));
+        }
+        if (size) {
+            params.push('width=' + encodeURIComponent(size.width));
+            params.push('height=' + encodeURIComponent(size.height));
+        }
+        return 'weatherLandslideOverlayImage.do?' + params.join('&');
+    }
+
+    function buildLandslideOverlayMetaUrl() {
+        return 'weatherLandslideOverlayMeta.do?_=' + Date.now();
+    }
+
+    function hideLandslideOverlayMap($frame) {
+        $frame.removeClass('is-landslide-map');
+    }
+
+    function ensureLandslideMapElements($frame) {
+        var $canvas = $frame.find('.weather-landslide-map-canvas');
+        if (!$canvas.length) {
+            $canvas = $('<div class="weather-landslide-map-canvas" aria-label="산사태위험도 확대 지도"></div>');
+            $frame.append($canvas);
+        }
+
+        if (!$frame.find('.weather-landslide-map-legend').length) {
+            $frame.append(
+                '<div class="weather-landslide-map-legend">' +
+                    '<strong>산사태 위험등급</strong>' +
+                    '<span><i style="background:#ff0000"></i>1등급</span>' +
+                    '<span><i style="background:#ffc900"></i>2등급</span>' +
+                    '<span><i style="background:#b6ff8e"></i>3등급</span>' +
+                    '<span><i style="background:#30c2ff"></i>4등급</span>' +
+                    '<span><i style="background:#0000ff"></i>5등급</span>' +
+                '</div>'
+            );
+        }
+
+        return $canvas.get(0);
+    }
+
+    function loadLandslideOverlayMap($frame, $state, forceRefresh) {
+        if (!window.ol || !ol.Map || !ol.layer || !ol.source || !ol.proj) {
+            $frame.removeClass('is-landslide-map map-ready');
+            $state.text('지도 라이브러리를 불러오지 못했습니다.');
+            return;
+        }
+
+        $frame.addClass('is-landslide-map');
+        $frame.removeClass('map-ready');
+        $state.text('산사태 지도를 불러오는 중...');
+        var target = ensureLandslideMapElements($frame);
+
+        $.ajax({
+            url: buildLandslideOverlayMetaUrl(),
+            method: 'GET',
+            dataType: 'json',
+            cache: false,
+            timeout: LANDSLIDE_META_TIMEOUT_MS,
+            success: function(meta) {
+                try {
+                    renderLandslideOverlayMap(target, normalizeLandslideOverlayMeta(meta), forceRefresh);
+                    $frame.addClass('map-ready');
+                } catch (e) {
+                    $frame.removeClass('map-ready');
+                    $state.text('산사태 지도를 불러오지 못했습니다.');
+                }
+            },
+            error: function() {
+                $frame.removeClass('map-ready');
+                $state.text('산사태 지도를 불러오지 못했습니다.');
+            }
+        });
+    }
+
+    function normalizeLandslideOverlayMeta(rawMeta) {
+        if (rawMeta && typeof rawMeta === 'object') {
+            return rawMeta;
+        }
+        if (typeof rawMeta === 'string') {
+            var text = rawMeta.trim();
+            if (/^[A-Za-z0-9+/=]+$/.test(text)) {
+                text = atob(text);
+            }
+            return JSON.parse(text);
+        }
+        throw new Error('Invalid landslide overlay meta response');
+    }
+
+    function renderLandslideOverlayMap(target, meta, forceRefresh) {
+        var west = Number(meta && meta.west);
+        var south = Number(meta && meta.south);
+        var east = Number(meta && meta.east);
+        var north = Number(meta && meta.north);
+        if (!isFinite(west) || !isFinite(south) || !isFinite(east) || !isFinite(north)) {
+            throw new Error('Invalid landslide overlay bounds');
+        }
+
+        var extent = ol.proj.transformExtent([west, south, east, north], 'EPSG:4326', 'EPSG:3857');
+        if (!landslideMapState.map || landslideMapState.target !== target) {
+            var baseLayer = new ol.layer.Tile({
+                source: new ol.source.XYZ({
+                    url: 'https://xdworld.vworld.kr/2d/Base/service/{z}/{x}/{y}.png',
+                    crossOrigin: 'anonymous'
+                })
+            });
+            landslideMapState.baseLayer = baseLayer;
+            landslideMapState.map = new ol.Map({
+                target: target,
+                layers: [baseLayer],
+                view: new ol.View({
+                    center: ol.proj.fromLonLat([(west + east) / 2, (south + north) / 2]),
+                    zoom: 8,
+                    minZoom: 6,
+                    maxZoom: 15
+                }),
+                controls: ol.control.defaults({ attribution: true, rotate: false }),
+                interactions: ol.interaction.defaults({
+                    altShiftDragRotate: false,
+                    pinchRotate: false
+                })
+            });
+            landslideMapState.target = target;
+        }
+
+        replaceLandslideOverlay(extent, extentToLonLatBounds(extent), forceRefresh);
+        landslideMapState.map.getView().fit(extent, {
+            padding: [28, 28, 28, 28],
+            duration: 250,
+            nearest: true
+        });
+        bindLandslideMapMoveend();
+        setTimeout(function() {
+            landslideMapState.map.updateSize();
+        }, 0);
+    }
+
+    function bindLandslideMapMoveend() {
+        if (!landslideMapState.map || landslideMapState.moveendBound) {
+            return;
+        }
+        landslideMapState.moveendBound = true;
+        landslideMapState.map.on('moveend', function() {
+            scheduleLandslideOverlayRefresh(false);
+        });
+    }
+
+    function scheduleLandslideOverlayRefresh(forceRefresh) {
+        if (landslideMapState.refreshTimer) {
+            clearTimeout(landslideMapState.refreshTimer);
+        }
+        landslideMapState.refreshTimer = setTimeout(function() {
+            refreshLandslideOverlayForCurrentView(forceRefresh);
+        }, 260);
+    }
+
+    function refreshLandslideOverlayForCurrentView(forceRefresh) {
+        if (!landslideMapState.map) {
+            return;
+        }
+        var size = landslideMapState.map.getSize();
+        if (!size || !size[0] || !size[1]) {
+            return;
+        }
+        var extent = landslideMapState.map.getView().calculateExtent(size);
+        replaceLandslideOverlay(extent, extentToLonLatBounds(extent), forceRefresh);
+    }
+
+    function replaceLandslideOverlay(extent, bounds, forceRefresh) {
+        if (!landslideMapState.map || !bounds) {
+            return;
+        }
+        var requestSeq = ++landslideMapState.requestSeq;
+        var imageSize = resolveLandslideOverlayImageSize();
+        var source = new ol.source.ImageStatic({
+            url: buildLandslideOverlayUrl(forceRefresh, bounds, imageSize),
+            imageExtent: extent,
+            projection: 'EPSG:3857',
+            crossOrigin: 'anonymous'
+        });
+        var nextLayer = new ol.layer.Image({
+            opacity: 0.78,
+            source: source
+        });
+        landslideMapState.map.addLayer(nextLayer);
+
+        source.on('imageloadend', function() {
+            if (requestSeq !== landslideMapState.requestSeq) {
+                landslideMapState.map.removeLayer(nextLayer);
+                return;
+            }
+            if (landslideMapState.overlayLayer && landslideMapState.overlayLayer !== nextLayer) {
+                landslideMapState.map.removeLayer(landslideMapState.overlayLayer);
+            }
+            landslideMapState.overlayLayer = nextLayer;
+        });
+        source.on('imageloaderror', function() {
+            landslideMapState.map.removeLayer(nextLayer);
+            if (requestSeq === landslideMapState.requestSeq && !landslideMapState.overlayLayer) {
+                $('#weatherMapPrimary').closest('.weather-map-frame').removeClass('map-ready');
+                $('#weatherMapPrimary').closest('.weather-map-frame').find('.weather-map-state').text('산사태 지도를 불러오지 못했습니다.');
+            }
+        });
+    }
+
+    function resolveLandslideOverlayImageSize() {
+        var target = landslideMapState.target;
+        var rect = target ? target.getBoundingClientRect() : { width: 900, height: 620 };
+        var ratio = Math.min(window.devicePixelRatio || 1, 2);
+        return {
+            width: Math.max(256, Math.min(1800, Math.round((rect.width || 900) * ratio))),
+            height: Math.max(256, Math.min(1200, Math.round((rect.height || 620) * ratio)))
+        };
+    }
+
+    function extentToLonLatBounds(extent) {
+        if (!extent || extent.length < 4) {
+            return null;
+        }
+        var bounds = ol.proj.transformExtent(extent, 'EPSG:3857', 'EPSG:4326');
+        return {
+            west: bounds[0],
+            south: bounds[1],
+            east: bounds[2],
+            north: bounds[3]
+        };
+    }
+
+    function formatMapCoord(value) {
+        return Number(value).toFixed(6);
     }
 
     function setImageFromBase64($img, base64, mime) {

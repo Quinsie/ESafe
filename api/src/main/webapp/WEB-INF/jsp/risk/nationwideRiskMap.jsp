@@ -31,7 +31,7 @@
                     <div class="nationwide-map-toolbar">
                         <div class="nationwide-map-meta">
                             <span id="nationwideMapSource">지도 엔진: VWorld 2D</span>
-                            <span id="nationwideMapBranch">대상: 광주전남본부직할</span>
+                            <span id="nationwideMapBranch">대상: 광주전남본부직할, 정읍시</span>
                         </div>
                         <div class="nationwide-map-actions">
                             <div class="nationwide-grade-filter" id="nationwideGradeFilter">
@@ -102,6 +102,6 @@
         window.RISK_VWORLD_DOMAIN = "<c:out value='${vworldDomain}'/>";
     </script>
     <script src="https://map.vworld.kr/js/vworldMapInit.js.do?version=2.0&apiKey=<c:out value='${vworldApiKey}'/>&domain=<c:out value='${vworldDomain}'/>"></script>
-    <script src="<c:url value='/resources/js/risk-nationwide-risk-map.js?v=20260327f'/>"></script>
+    <script src="<c:url value='/resources/js/risk-nationwide-risk-map.js?v=20260422b'/>"></script>
 </body>
 </html>
