@@ -117,6 +117,26 @@
                 </table>
             </div>
 
+            <div class="detail-section">
+                <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:10px;">
+                    <h3 style="margin:0;">AI 위험원인 설명</h3>
+                    <button type="button" id="aiExplainBtn" class="btn btn-secondary">AI 위험원인 설명</button>
+                </div>
+                <div id="aiExplainContent" class="nationwide-brief-content">
+                    'AI 위험원인 설명' 버튼을 누르면 이 건물의 위험 원인을 근거와 함께 분석해 설명합니다.
+                </div>
+            </div>
+
+            <div class="detail-section">
+                <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:10px;">
+                    <h3 style="margin:0;">유사 사고 사례 추천</h3>
+                    <button type="button" id="aiSimilarBtn" class="btn btn-secondary">유사 사례 검색</button>
+                </div>
+                <div id="aiSimilarContent" class="nationwide-brief-content">
+                    '유사 사례 검색' 버튼을 누르면 이 건물과 비슷한 과거 전기재해 사고 사례를 찾아 보여줍니다.
+                </div>
+            </div>
+
             <div class="btn-area">
                 <button type="button" class="btn btn-secondary" onclick="history.back()">목록으로</button>
             </div>
@@ -132,5 +152,10 @@
     <script src="https://map.vworld.kr/js/webglMapInit.js.do?version=3.0&apiKey=<c:out value='${vworldApiKey}'/>&domain=<c:out value='${vworldDomain}'/>"></script>
     <script src="<c:url value='/resources/js/risk-building-detail-map-adapter.js?v=20260309c'/>"></script>
     <script src="<c:url value='/resources/js/risk-building-detail.js?v=20260309c'/>"></script>
+    <script>
+        // ESafe LLM 사이드카 주소. 운영 전환 시 Java 프록시 URL로 바꾼다.
+        window.ESAFE_LLM_BASE = "http://localhost:8800";
+    </script>
+    <script src="<c:url value='/resources/js/risk-ai-explain.js?v=20260527b'/>"></script>
 </body>
 </html>
