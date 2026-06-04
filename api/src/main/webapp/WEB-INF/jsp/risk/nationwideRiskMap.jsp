@@ -90,7 +90,10 @@
             <div class="nationwide-brief-shell">
                 <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
                     <h3 style="font-size:14px;color:#2c3e50;margin:0;">AI 브리핑 및 상황요약 보고서</h3>
-                    <button type="button" id="nationwideBriefingBtn" class="btn btn-secondary">AI 브리핑 생성</button>
+                    <div style="display:flex;gap:8px;">
+                        <button type="button" id="nationwideBriefingBtn" class="btn btn-secondary">AI 브리핑 생성</button>
+                        <button type="button" id="nationwideReportBtn" class="btn btn-secondary">한글 보고서(HWP)</button>
+                    </div>
                 </div>
                 <div class="nationwide-brief-content" id="nationwideBriefingContent">
                     'AI 브리핑 생성' 버튼을 누르면 현재 지역의 전기재해위험 상황 요약이 표출됩니다.
@@ -110,6 +113,6 @@
         // ESafe LLM 사이드카 주소. 운영 전환 시 Java 프록시 URL로 바꾼다.
         window.ESAFE_LLM_BASE = "http://localhost:8800";
     </script>
-    <script src="<c:url value='/resources/js/risk-ai-briefing.js?v=20260527a'/>"></script>
+    <script src="<c:url value='/resources/js/risk-ai-briefing.js?v=20260601a'/>"></script>
 </body>
 </html>

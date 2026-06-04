@@ -52,6 +52,19 @@ class LlmResponse(BaseModel):
     used_mock: bool = False
 
 
+class ReportRequest(BaseModel):
+    """한글(HWP) 상황요약 보고서 생성 요청."""
+    region_name: str = Field(..., description="대상 지역명")
+    briefing_text: Optional[str] = Field(
+        None, description="이미 생성된 브리핑 본문. 없으면 서버가 LLM으로 생성(Ollama 필요)."
+    )
+    top_factors: List[RiskFactor] = Field(default_factory=list, description="주요 위험요인")
+    grade_distribution: Optional[dict] = Field(None, description='등급별 건물 수 예: {"위험":120,...}')
+    building_count: Optional[int] = None
+    avg_score: Optional[float] = None
+    notes: Optional[str] = None
+
+
 class SimilarCaseRequest(BaseModel):
     """기능 2: 유사 사고 사례 추천 요청."""
     query_text: Optional[str] = Field(None, description="직접 질의 텍스트(있으면 우선 사용)")
