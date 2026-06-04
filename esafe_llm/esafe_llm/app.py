@@ -12,14 +12,18 @@ ESafe LLM 사이드카 (FastAPI).
     POST /explain/building  - 기능1: 개별 건물 위험원인 설명
     POST /briefing/region   - 기능3: 지역 상황요약 브리핑
 """
+from datetime import datetime
+from urllib.parse import quote
+
+import hwp_report
 import ollama_client
 import prompts
 import rag
 import shap_provider as shap
 from contracts import (BuildingExplainRequest, CaseHit, LlmResponse,
-                       RegionBriefingRequest, SimilarCaseRequest,
+                       RegionBriefingRequest, ReportRequest, SimilarCaseRequest,
                        SimilarCaseResponse)
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI(title="ESafe LLM 사이드카")
@@ -64,6 +68,60 @@ def briefing_region(req: RegionBriefingRequest):
     except Exception as e:
         raise HTTPException(503, f"LLM 호출 실패: {e}")
     return LlmResponse(text=text, model=ollama_client.LLM_MODEL, used_mock=used_mock)
+
+
+@app.post("/briefing/report")
+def briefing_report(req: ReportRequest):
+    """기능 3 보고서: 브리핑 내용을 한글(HWP) 문서로 출력해 다운로드한다."""
+    if not hwp_report.is_available():
+        raise HTTPException(
+            500, "HWP 생성 모듈을 사용할 수 없습니다. Windows + 한글(HWP) + pywin32 환경이 필요합니다."
+        )
+
+    # 위험요인: 미제공 시 mock SHAP으로 채움(브리핑과 동일 소스)
+    factors = req.top_factors
+    if not factors:
+        factors = shap.region_factors(req.region_name)
+
+    # 브리핑 본문: 미제공 시 LLM으로 생성(Ollama 필요)
+    briefing_text = req.briefing_text
+    if not briefing_text or not briefing_text.strip():
+        breq = RegionBriefingRequest(
+            region_name=req.region_name,
+            top_factors=factors,
+            building_count=req.building_count,
+            avg_score=req.avg_score,
+            grade_distribution=req.grade_distribution,
+            notes=req.notes,
+        )
+        prompt = prompts.build_region_prompt(breq)
+        try:
+            briefing_text = ollama_client.chat(prompts.SYSTEM_PROMPT, prompt)
+        except Exception as e:
+            raise HTTPException(503, f"LLM 호출 실패: {e}")
+
+    payload = {
+        "region_name": req.region_name,
+        "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M"),
+        "briefing_text": briefing_text,
+        "factors": [f.model_dump() for f in factors],
+        "grade_distribution": req.grade_distribution,
+        "building_count": req.building_count,
+        "avg_score": req.avg_score,
+        "model": ollama_client.LLM_MODEL,
+    }
+    try:
+        data = hwp_report.build_report(payload)
+    except Exception as e:
+        raise HTTPException(500, f"HWP 보고서 생성 실패: {e}")
+
+    nice_name = "전기재해위험_상황요약보고서_%s.hwp" % datetime.now().strftime("%Y%m%d")
+    disposition = "attachment; filename=\"esafe_risk_report.hwp\"; filename*=UTF-8''%s" % quote(nice_name)
+    return Response(
+        content=data,
+        media_type="application/x-hwp",
+        headers={"Content-Disposition": disposition},
+    )
 
 
 @app.post("/similar-cases", response_model=SimilarCaseResponse)
