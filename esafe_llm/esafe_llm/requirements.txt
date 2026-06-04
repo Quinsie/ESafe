@@ -1,0 +1,11 @@
+# ESafe LLM 사이드카 서비스 의존성
+# 설치: conda activate esafe && pip install -r esafe_llm/requirements.txt
+fastapi>=0.110
+uvicorn[standard]>=0.29
+httpx>=0.27
+pydantic>=2.6
+
+# --- 팀원의 CatBoost 모델이 나온 뒤에 주석 해제 ---
+# catboost>=1.2
+# shap>=0.45
+# pandas>=2.0
