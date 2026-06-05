@@ -236,51 +236,75 @@ def _write_report(hwp, p: dict):
     avg_score = p.get("avg_score")
     model = p.get("model") or ""
 
-    # 제목
+    year = generated_at[:4] if generated_at else "2026"
+    date_only = generated_at.split(" ")[0] if generated_at else ""
+
+    # ===== 한국전기안전공사 공문 양식 =====
+    # 기관명
     _align(hwp, "center")
-    _font(hwp, _FONT, 18, bold=True)
-    _text(hwp, "전기재해위험도 상황요약 보고서")
+    _font(hwp, _FONT, 22, bold=True)
+    _text(hwp, "한국전기안전공사")
+    _para(hwp)
     _para(hwp)
 
-    # 메타
-    _align(hwp, "center")
-    _font(hwp, _FONT, 10, bold=False)
-    _text(hwp, "대상 지역: %s" % region)
+    # 수신 / 제목
+    _align(hwp, "left")
+    _font(hwp, _FONT, 11, bold=False)
+    _text(hwp, "수신  수신자 참조")
     _para(hwp)
-    if generated_at:
-        _text(hwp, "생성일시: %s" % generated_at)
-        _para(hwp)
-    extra = []
+    _text(hwp, "제목  AI 기반 전기재해위험 상황요약 결과 통보")
+    _para(hwp)
+    _para(hwp)
+
+    # 본문 (번호 항목)
+    _text(hwp, "1. 우리 공사의 전기재해 예방 업무에 협조하여 주신 데 깊이 감사드립니다.")
+    _para(hwp)
+    _para(hwp)
+    _text(hwp, "2. %s을(를) 대상으로 AI 기반 위험원인 분석을 통해 산출한 전기재해위험 "
+               "상황요약 결과를 다음과 같이 통보하오니, 관련 업무에 참고하시기 바랍니다."
+               % region)
+    _para(hwp)
+    _para(hwp)
+
+    # 3. 분석 개요
+    _text(hwp, "3. 분석 개요")
+    _para(hwp)
+    _text(hwp, "  가. 분석 기간: 최근 2주%s" % ((" (%s 기준)" % date_only) if date_only else ""))
+    _para(hwp)
+    _text(hwp, "  나. 분석 대상: %s" % region)
+    _para(hwp)
+    overview = []
     if building_count is not None:
         try:
-            extra.append("대상 건물 %s건" % format(int(building_count), ","))
+            overview.append("대상 건물 %s개소" % format(int(building_count), ","))
         except (TypeError, ValueError):
             pass
     if avg_score is not None:
-        extra.append("평균 위험점수 %s" % avg_score)
-    if extra:
-        _text(hwp, " / ".join(extra))
+        overview.append("평균 위험점수 %s점" % avg_score)
+    if overview:
+        _text(hwp, "  다. 분석 규모: %s" % " / ".join(overview))
         _para(hwp)
+    _text(hwp, "  라. 주요 내용: AI 기반 전기재해위험 상황요약(위험원인 분석)")
+    _para(hwp)
     _para(hwp)
 
-    # 1. 브리핑 본문
-    _align(hwp, "left")
-    _font(hwp, _FONT, 13, bold=True)
-    _text(hwp, "■ AI 상황요약 브리핑")
+    # 4. 분석 결과 (브리핑 본문)
+    _text(hwp, "4. 분석 결과")
     _para(hwp)
     _font(hwp, _FONT, 11, bold=False)
-    _multiline(hwp, briefing or "(브리핑 내용이 없습니다.)")
+    _multiline(hwp, briefing or "(분석 결과 내용이 없습니다.)")
     _para(hwp)
     _para(hwp)
 
-    # 2. 주요 위험요인 표
+    # 주요 위험요인 표
     if factors:
-        _align(hwp, "left")
-        _font(hwp, _FONT, 13, bold=True)
-        _text(hwp, "■ 주요 위험요인")
+        _align(hwp, "center")
+        _font(hwp, _FONT, 11, bold=True)
+        _text(hwp, "< 주요 위험요인 분석 >")
         _para(hwp)
+        _align(hwp, "left")
         _font(hwp, _FONT, 10, bold=False)
-        table = [["순위", "위험요인", "기여도"]]
+        table = [["순위", "위험 요인", "기여도(위험도 가산점)"]]
         for i, f in enumerate(factors, 1):
             label = (f.get("label") or f.get("feature") or "") if isinstance(f, dict) else str(f)
             contrib = f.get("contribution") if isinstance(f, dict) else None
@@ -289,12 +313,13 @@ def _write_report(hwp, p: dict):
         _para(hwp)
         _para(hwp)
 
-    # 3. 등급별 통계 표
+    # 등급별 통계 표
     if stats:
-        _align(hwp, "left")
-        _font(hwp, _FONT, 13, bold=True)
-        _text(hwp, "■ 등급별 건물 통계")
+        _align(hwp, "center")
+        _font(hwp, _FONT, 11, bold=True)
+        _text(hwp, "< 등급별 건물 통계 >")
         _para(hwp)
+        _align(hwp, "left")
         _font(hwp, _FONT, 10, bold=False)
         table = [["등급", "건물 수"]]
         for k, v in stats.items():
@@ -303,10 +328,46 @@ def _write_report(hwp, p: dict):
         _para(hwp)
         _para(hwp)
 
-    # 푸터
+    # 5. 활용 방안
+    _align(hwp, "left")
+    _font(hwp, _FONT, 11, bold=False)
+    _text(hwp, "5. 본 분석 결과는 다음과 같이 활용하실 수 있습니다.")
+    _para(hwp)
+    _text(hwp, "  가. 위험 등급별 우선 점검 대상 선별")
+    _para(hwp)
+    _text(hwp, "  나. 분석 결과 기반 현장 점검 및 설비 보수 계획 수립")
+    _para(hwp)
+    _text(hwp, "  다. 전기재해 예방 정책 수립 기초자료 활용")
+    _para(hwp)
+    _para(hwp)
+
+    # 붙임
+    _text(hwp, "붙임  1. 전기재해위험 상황요약 보고서 1부.")
+    _para(hwp)
+    _text(hwp, "        2. 주요 위험요인 분석 자료 1부.  끝.")
+    _para(hwp)
+    _para(hwp)
+    _para(hwp)
+
+    # 발신명의
+    _align(hwp, "center")
+    _font(hwp, _FONT, 16, bold=True)
+    _text(hwp, "한국전기안전공사 광주전남본부장")
+    _para(hwp)
+    _para(hwp)
+
+    # 문서번호 / 연락처 (공문 footer)
     _align(hwp, "left")
     _font(hwp, _FONT, 9, bold=False)
-    foot = "※ 본 보고서는 ESafe 전기재해위험지도 시스템이 자동 생성했습니다."
+    _text(hwp, "한국전기안전공사-%s-1248%s" % (year, ((" (%s)" % date_only) if date_only else "")))
+    _para(hwp)
+    _text(hwp, "우 61945  광주광역시 서구 상무번영로 000  /  www.kesco.or.kr")
+    _para(hwp)
+    _text(hwp, "전화 (062)000-0000   팩스 (062)000-0000   /   safety@kesco.or.kr")
+    _para(hwp)
+    _para(hwp)
+    _font(hwp, _FONT, 8, bold=False)
+    foot = "※ 본 문서는 ESafe 전기재해위험지도 시스템의 AI 분석 결과로 자동 생성되었습니다."
     if model:
         foot += " (LLM: %s)" % model
     _text(hwp, foot)
