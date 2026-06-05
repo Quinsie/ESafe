@@ -156,6 +156,6 @@
         // ESafe LLM 사이드카 주소. 운영 전환 시 Java 프록시 URL로 바꾼다.
         window.ESAFE_LLM_BASE = "http://localhost:8800";
     </script>
-    <script src="<c:url value='/resources/js/risk-ai-explain.js?v=20260527b'/>"></script>
+    <script src="<c:url value='/resources/js/risk-ai-explain.js?v=20260605demo'/>"></script>
 </body>
 </html>
