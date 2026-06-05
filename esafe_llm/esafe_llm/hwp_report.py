@@ -27,11 +27,6 @@ _DLL_PATH = os.path.normpath(
                  "FilePathCheckerModuleExample.dll")
 )
 
-# 한국전기안전공사 공문 양식(서식 유지용). 이 양식을 열어 제목/본문만 채운다.
-_TEMPLATE_PATH = os.path.normpath(
-    os.path.join(os.path.dirname(__file__), "templates", "kesco_gongmun.hwp")
-)
-
 
 def is_available() -> bool:
     """win32com + HWPFrame.HwpObject 사용 가능 여부(빠른 판별용)."""
@@ -86,41 +81,18 @@ def _ensure_hwp():
     return hwp
 
 
-def _find(hwp, text) -> bool:
-    """문서에서 text를 찾아 커서를 그 위치로 옮긴다."""
-    pset = hwp.HParameterSet.HFindReplace
-    hwp.HAction.GetDefault("RepeatFind", pset.HSet)
-    pset.FindString = text
-    pset.FindRegExp = 0
-    pset.IgnoreMessage = 1
-    pset.Direction = 0
-    return bool(hwp.HAction.Execute("RepeatFind", pset.HSet))
-
-
-def _save_as(hwp, path):
-    """대화상자 없이 다른 이름으로 저장(FileSaveAs_S)."""
-    pset = hwp.HParameterSet.HFileOpenSave
-    hwp.HAction.GetDefault("FileSaveAs_S", pset.HSet)
-    pset.filename = path
-    pset.Format = "HWP"
-    hwp.HAction.Execute("FileSaveAs_S", pset.HSet)
-
-
 def _build_in_com(payload: dict) -> bytes:
     hwp = _ensure_hwp()
     out_path = None
     try:
-        if not os.path.exists(_TEMPLATE_PATH):
-            raise RuntimeError("공문 양식 파일을 찾을 수 없습니다: %s" % _TEMPLATE_PATH)
-        # 양식을 열고 제목/본문만 채워 서식(두문·발신명의·직인·시행번호 등)을 보존한다.
-        hwp.Open(_TEMPLATE_PATH, "HWP", "")
+        hwp.Run("FileNew")
         _write_report(hwp, payload)
 
         fd, out_path = tempfile.mkstemp(suffix=".hwp", prefix="esafe_report_")
         os.close(fd)
         if os.path.exists(out_path):
             os.remove(out_path)
-        _save_as(hwp, out_path)
+        hwp.SaveAs(out_path, "HWP", "")
 
         for _ in range(50):  # 저장 완료 대기(최대 5초)
             if os.path.exists(out_path) and os.path.getsize(out_path) > 0:
@@ -131,9 +103,7 @@ def _build_in_com(payload: dict) -> bytes:
         return data
     finally:
         try:
-            hwp.SetMessageBoxMode(0x00100000)  # 닫을 때 '저장 안 함' (양식 원본 오염 방지)
-            hwp.Run("FileClose")
-            hwp.SetMessageBoxMode(0x00010000)
+            hwp.Run("FileClose")  # SaveAs 이후라 저장 프롬프트 없음
         except Exception:
             pass
         if out_path and os.path.exists(out_path):
@@ -212,24 +182,13 @@ def _insert_table(hwp, rows: int, cols: int):
     act.Execute(pset)
 
 
-def _table(hwp, data, has_header=True, reposition=None):
-    """2차원 리스트를 표로 삽입한다.
-
-    reposition: 표 생성 전/후 커서를 둘 위치를 정하는 콜백. 없으면 문서 끝(MoveDocEnd).
-    양식 본문에 표를 넣을 때는 '발신명의 바로 위'로 재위치하는 콜백을 넘긴다.
-    """
+def _table(hwp, data, has_header=True):
+    """2차원 리스트를 표로 삽입한다. 삽입 후 커서는 표 아래로 빠진다."""
     if not data:
         return
     rows = len(data)
     cols = max(len(r) for r in data)
-
-    def _place():
-        if reposition:
-            reposition()
-        else:
-            hwp.Run("MoveDocEnd")
-
-    _place()  # 이전 표 셀 안이 아닌 본문 위치에서 표 생성
+    hwp.Run("MoveDocEnd")  # 이전 표 셀 안이 아닌 문서 끝(본문)에서 표 생성
     _insert_table(hwp, rows, cols)  # 커서가 첫 셀에 위치
 
     for row_idx, row in enumerate(data):
@@ -250,10 +209,10 @@ def _table(hwp, data, has_header=True, reposition=None):
                 hwp.Run("TableLeftCell")
             hwp.Run("TableLowerCell")
 
-    # 표 밖(표 아래 본문 문단)으로 커서 이동
+    # 표 밖(문서 끝, 표 아래 본문 문단)으로 커서 이동
     hwp.Run("TableSelCell")
     hwp.Run("Cancel")
-    _place()
+    hwp.Run("MoveDocEnd")
 
 
 def _fmt_contribution(value):
@@ -264,15 +223,10 @@ def _fmt_contribution(value):
         return "" if value is None else str(value)
 
 
-_FONT = "함초롬바탕"
+_FONT = "맑은 고딕"
 
 
 def _write_report(hwp, p: dict):
-    """양식(kesco_gongmun.hwp)을 열어 제목과 본문만 채운다.
-
-    두문·발신명의·직인·기안/검토/전결·시행번호·주소/연락처 등 서식은 양식이 제공하므로
-    여기서는 '제목'과 '본문(발신명의 위 영역)'만 채운다.
-    """
     region = p.get("region_name") or "관할 지역"
     generated_at = p.get("generated_at") or ""
     briefing = p.get("briefing_text") or ""
@@ -280,83 +234,79 @@ def _write_report(hwp, p: dict):
     stats = p.get("grade_distribution") or {}
     building_count = p.get("building_count")
     avg_score = p.get("avg_score")
-    date_only = generated_at.split(" ")[0] if generated_at else ""
+    model = p.get("model") or ""
 
-    # --- 제목 채우기(두문의 '제목' 칸) ---
-    hwp.Run("MoveDocBegin")
-    if _find(hwp, "제목"):
-        hwp.Run("MoveLineEnd")
-        _text(hwp, "   AI 기반 전기재해위험 상황요약 결과 통보")
+    # 제목
+    _align(hwp, "center")
+    _font(hwp, _FONT, 18, bold=True)
+    _text(hwp, "전기재해위험도 상황요약 보고서")
+    _para(hwp)
 
-    # --- 본문은 발신명의('광주전남본부장') 바로 위에 좌측정렬로 채운다 ---
-    def _fresh_para():
-        # 발신명의 위에 좌측정렬 빈 문단을 만들고 커서를 그 안에 둔다.
-        # (발신명의 문단은 가운데정렬이라, 그 위에 별도 좌측정렬 문단을 새로 만든다)
-        hwp.Run("MoveDocBegin")
-        _find(hwp, "광주전남본부장")
-        hwp.Run("MoveLineBegin")
+    # 메타
+    _align(hwp, "center")
+    _font(hwp, _FONT, 10, bold=False)
+    _text(hwp, "대상 지역: %s" % region)
+    _para(hwp)
+    if generated_at:
+        _text(hwp, "생성일시: %s" % generated_at)
         _para(hwp)
-        hwp.Run("MoveUp")
-        hwp.Run("MoveLineBegin")
-        _align(hwp, "left")
-        _font(hwp, _FONT, 11, bold=False)
-
-    def L(t=""):
-        if t:
-            _text(hwp, t)
-        _para(hwp)
-
-    _fresh_para()
-    L("1. 우리 공사의 전기재해 예방 업무에 협조하여 주신 데 깊이 감사드립니다.")
-    L()
-    L("2. %s을(를) 대상으로 AI 기반 위험원인 분석을 통해 산출한 전기재해위험 "
-      "상황요약 결과를 다음과 같이 통보하오니, 관련 업무에 참고하시기 바랍니다." % region)
-    L()
-    L("3. 분석 개요")
-    L("  가. 분석 기간: 최근 2주%s" % ((" (%s 기준)" % date_only) if date_only else ""))
-    L("  나. 분석 대상: %s" % region)
-    overview = []
+    extra = []
     if building_count is not None:
         try:
-            overview.append("대상 건물 %s개소" % format(int(building_count), ","))
+            extra.append("대상 건물 %s건" % format(int(building_count), ","))
         except (TypeError, ValueError):
             pass
     if avg_score is not None:
-        overview.append("평균 위험점수 %s점" % avg_score)
-    if overview:
-        L("  다. 분석 규모: %s" % " / ".join(overview))
-    L("  라. 주요 내용: AI 기반 전기재해위험 상황요약(위험원인 분석)")
-    L()
-    L("4. 분석 결과")
-    for bl in str(briefing or "(분석 결과 내용이 없습니다.)").replace("\r\n", "\n").split("\n"):
-        L(bl.strip())
-    L()
+        extra.append("평균 위험점수 %s" % avg_score)
+    if extra:
+        _text(hwp, " / ".join(extra))
+        _para(hwp)
+    _para(hwp)
 
-    # 주요 위험요인 표
+    # 1. 브리핑 본문
+    _align(hwp, "left")
+    _font(hwp, _FONT, 13, bold=True)
+    _text(hwp, "■ AI 상황요약 브리핑")
+    _para(hwp)
+    _font(hwp, _FONT, 11, bold=False)
+    _multiline(hwp, briefing or "(브리핑 내용이 없습니다.)")
+    _para(hwp)
+    _para(hwp)
+
+    # 2. 주요 위험요인 표
     if factors:
-        L("[ 주요 위험요인 분석 ]")
-        tdata = [["순위", "위험 요인", "기여도(위험도 가산점)"]]
+        _align(hwp, "left")
+        _font(hwp, _FONT, 13, bold=True)
+        _text(hwp, "■ 주요 위험요인")
+        _para(hwp)
+        _font(hwp, _FONT, 10, bold=False)
+        table = [["순위", "위험요인", "기여도"]]
         for i, f in enumerate(factors, 1):
             label = (f.get("label") or f.get("feature") or "") if isinstance(f, dict) else str(f)
             contrib = f.get("contribution") if isinstance(f, dict) else None
-            tdata.append([str(i), label, _fmt_contribution(contrib)])
-        _table(hwp, tdata, has_header=True, reposition=(lambda: None))
-        _fresh_para()
+            table.append([str(i), label, _fmt_contribution(contrib)])
+        _table(hwp, table, has_header=True)
+        _para(hwp)
+        _para(hwp)
 
-    # 등급별 통계 표
+    # 3. 등급별 통계 표
     if stats:
-        L("[ 등급별 건물 통계 ]")
-        tdata = [["등급", "건물 수"]]
+        _align(hwp, "left")
+        _font(hwp, _FONT, 13, bold=True)
+        _text(hwp, "■ 등급별 건물 통계")
+        _para(hwp)
+        _font(hwp, _FONT, 10, bold=False)
+        table = [["등급", "건물 수"]]
         for k, v in stats.items():
-            tdata.append([str(k), str(v)])
-        _table(hwp, tdata, has_header=True, reposition=(lambda: None))
-        _fresh_para()
+            table.append([str(k), str(v)])
+        _table(hwp, table, has_header=True)
+        _para(hwp)
+        _para(hwp)
 
-    # 활용 방안 / 붙임
-    L("5. 본 분석 결과는 다음과 같이 활용하실 수 있습니다.")
-    L("  가. 위험 등급별 우선 점검 대상 선별")
-    L("  나. 분석 결과 기반 현장 점검 및 설비 보수 계획 수립")
-    L("  다. 전기재해 예방 정책 수립 기초자료 활용")
-    L()
-    L("붙임  1. 전기재해위험 상황요약 보고서 1부.")
-    L("        2. 주요 위험요인 분석 자료 1부.  끝.")
+    # 푸터
+    _align(hwp, "left")
+    _font(hwp, _FONT, 9, bold=False)
+    foot = "※ 본 보고서는 ESafe 전기재해위험지도 시스템이 자동 생성했습니다."
+    if model:
+        foot += " (LLM: %s)" % model
+    _text(hwp, foot)
