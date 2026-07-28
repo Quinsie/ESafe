@@ -13,6 +13,7 @@ FROM nginx:1.28-alpine
 COPY infra/gateway/nginx.conf /etc/nginx/nginx.conf
 COPY --from=frontend-build /app/dist /usr/share/nginx/html/live
 COPY --from=frontend-build /app/dist /usr/share/nginx/html/demo
+COPY --from=frontend-build /app/dist/assets /usr/share/nginx/html/assets
 
 EXPOSE 8080
 HEALTHCHECK --interval=15s --timeout=3s --start-period=10s --retries=4 \
