@@ -107,6 +107,79 @@ function tasksEnvelope() {
   });
 }
 
+function mapConfigEnvelope() {
+  return envelope({
+    providers: [
+      {
+        id: "osm",
+        name: "OpenStreetMap",
+        urlTemplate: "https://tile.openstreetmap.org/{z}/{x}/{y}.png",
+        attribution: "© OpenStreetMap contributors",
+        priority: 2,
+      },
+    ],
+    preferredProvider: "osm",
+    fallbackActive: true,
+    fallbackReason: "VWORLD_NOT_CONFIGURED",
+    buildingZoom: { minimum: 14, maximum: 20 },
+  });
+}
+
+function mapRegionsEnvelope(level: "SIDO" | "SIGUNGU" = "SIDO") {
+  const features =
+    level === "SIDO"
+      ? [
+          ["29", "광주광역시", 113000, 1130, 12000, [126.83, 35.15]],
+          ["46", "전라남도", 104238, 1043, 9724, [126.4, 34.64]],
+        ]
+      : [["29170", "광주광역시 북구", 27585, 563, 5953, [126.91, 35.19]]];
+  return envelope({
+    type: "FeatureCollection",
+    riskReference: {
+      referenceMonth: "2026-03",
+      horizonDays: 60,
+      lineageVersion: "v27.1-focus-2026-03-60d",
+      isProbability: false,
+    },
+    features: features.map(([code, name, count, top1, top10, center]) => ({
+      type: "Feature",
+      id: code,
+      bbox: [126, 34, 127, 36],
+      geometry: {
+        type: "MultiPolygon",
+        coordinates: [
+          [
+            [
+              [126, 34],
+              [127, 34],
+              [127, 36],
+              [126, 34],
+            ],
+          ],
+        ],
+      },
+      properties: {
+        regionCode: code,
+        level,
+        name,
+        fullName: name,
+        parentCode: level === "SIGUNGU" ? "29" : null,
+        center,
+        buildingCount: count,
+        top1Count: top1,
+        top10Count: top10,
+        riskBands: { top1, high1To10: top10, watch10To25: 0, general: 0 },
+        scoreMedian: 0.5,
+        scoreP90: 0.8,
+        scoreP99: 0.9,
+        scoreMax: 0.97,
+        activeCaseCount: 0,
+        urgentCaseCount: 0,
+        hasCurrentSignal: false,
+      },
+    })),
+  });
+}
 function installAuthenticatedFetch(failedEndpoint?: string) {
   vi.stubGlobal(
     "fetch",
@@ -129,6 +202,15 @@ function installAuthenticatedFetch(failedEndpoint?: string) {
       }
       if (url.endsWith("/sources/health")) {
         return response(sourceEnvelope());
+      }
+      if (url.endsWith("/map/config")) {
+        return response(mapConfigEnvelope());
+      }
+      if (url.endsWith("/map/regions")) {
+        return response(mapRegionsEnvelope());
+      }
+      if (url.includes("/map/districts")) {
+        return response(mapRegionsEnvelope("SIGUNGU"));
       }
       throw new Error(`unexpected request: ${url}`);
     }),
@@ -194,6 +276,15 @@ describe("App authentication boundary", () => {
       if (url.endsWith("/sources/health")) {
         return response(sourceEnvelope());
       }
+      if (url.endsWith("/map/config")) {
+        return response(mapConfigEnvelope());
+      }
+      if (url.endsWith("/map/regions")) {
+        return response(mapRegionsEnvelope());
+      }
+      if (url.includes("/map/districts")) {
+        return response(mapRegionsEnvelope("SIGUNGU"));
+      }
       throw new Error(`unexpected request: ${url}`);
     });
     vi.stubGlobal("fetch", fetchMock);
@@ -212,7 +303,7 @@ describe("App authentication boundary", () => {
     await user.type(screen.getByLabelText("비밀번호"), "secret");
     await user.click(screen.getByRole("button", { name: "로그인" }));
 
-    expect(await screen.findByRole("heading", { name: "위험 지도" })).toBeVisible();
+    expect(await screen.findByRole("heading", { name: "통합 위험지도" })).toBeVisible();
     expect(window.location.pathname).toBe("/demo/map");
     expect(window.location.search).toBe("?zoom=7&region=29");
     expect(fetchMock).toHaveBeenCalledWith(
@@ -221,11 +312,15 @@ describe("App authentication boundary", () => {
     );
   });
 
-  it("labels unfinished authenticated routes honestly", async () => {
+  it("renders actual spatial map contracts instead of an unfinished route", async () => {
     installAuthenticatedFetch();
     renderApp("/demo/map");
 
-    expect(await screen.findByRole("heading", { name: "위험 지도" })).toBeVisible();
-    expect(screen.getByText("완료되지 않은 행동을 실제 기능처럼 표시하지 않습니다.")).toBeVisible();
+    expect(await screen.findByRole("heading", { name: "통합 위험지도" })).toBeVisible();
+    expect(
+      screen.getByText("지도 렌더링을 지원하지 않는 환경입니다.", { exact: false }),
+    ).toBeVisible();
+    expect(await screen.findByText("광주광역시")).toBeVisible();
+    expect(screen.queryByText("완료되지 않은 행동을 실제 기능처럼 표시하지 않습니다.")).toBeNull();
   });
 });

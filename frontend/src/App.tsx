@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { type FormEvent, useEffect, useState } from "react";
+import { type FormEvent, lazy, Suspense, useEffect, useState } from "react";
 import { type ApiEnvelope, ApiError, apiRequest } from "./api";
 import { formatKst, HomeDashboard, sourceSummaryLabel, useSourceHealth } from "./home";
 import type { ProfileRuntime } from "./profile";
@@ -10,6 +10,8 @@ import {
   safeReturnTo,
   useInternalPath,
 } from "./router";
+
+const RiskMap = lazy(() => import("./map").then((module) => ({ default: module.RiskMap })));
 
 interface SessionData {
   user: {
@@ -279,6 +281,18 @@ function AuthenticatedShell({
       <Sidebar currentPath={currentPath} runtime={runtime} />
       {currentPath === "/home" ? (
         <HomeDashboard currentPath={currentPath} runtime={runtime} />
+      ) : currentPath === "/map" ? (
+        <Suspense
+          fallback={
+            <main className="page" id="main-content">
+              <div className="auth-loading" role="status">
+                지도를 준비하고 있습니다.
+              </div>
+            </main>
+          }
+        >
+          <RiskMap currentPath={currentPath} runtime={runtime} />
+        </Suspense>
       ) : title ? (
         <SectionPlaceholder title={title} />
       ) : (
