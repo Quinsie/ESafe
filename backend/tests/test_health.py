@@ -1,10 +1,25 @@
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock
 from uuid import UUID, uuid4
 
 from fastapi.testclient import TestClient
 
+from app.api.auth import require_session
+from app.auth import AuthenticatedSession
 from app.config import Settings
 from app.main import PUBLIC_INTERNAL_ERROR_MESSAGE, app
+from app.security import token_hash
+
+
+def _authenticated_session() -> AuthenticatedSession:
+    return AuthenticatedSession(
+        session_id_hash=token_hash("test-session"),
+        user_id=uuid4(),
+        username="user",
+        display_name="사용자",
+        csrf_token_hash=token_hash("csrf"),
+        expires_at=datetime.now(UTC) + timedelta(hours=1),
+    )
 
 
 def test_liveness_has_contract_and_generated_request_id() -> None:
@@ -22,7 +37,7 @@ def test_liveness_has_contract_and_generated_request_id() -> None:
 def test_valid_request_id_is_preserved() -> None:
     request_id = str(uuid4())
     with TestClient(app) as client:
-        response = client.get("/api/v1/meta", headers={"x-request-id": request_id})
+        response = client.get("/api/v1/health/live", headers={"x-request-id": request_id})
 
     assert response.status_code == 200
     assert response.headers["x-request-id"] == request_id
@@ -31,7 +46,7 @@ def test_valid_request_id_is_preserved() -> None:
 
 def test_invalid_request_id_is_replaced() -> None:
     with TestClient(app) as client:
-        response = client.get("/api/v1/meta", headers={"x-request-id": "not-a-uuid"})
+        response = client.get("/api/v1/health/live", headers={"x-request-id": "not-a-uuid"})
 
     assert response.status_code == 200
     assert response.headers["x-request-id"] != "not-a-uuid"
@@ -62,17 +77,25 @@ def test_reference_metadata_exposes_active_lineage(monkeypatch) -> None:
     monkeypatch.setattr(
         "app.api.health.reference_dataset_metadata", AsyncMock(return_value=metadata)
     )
-    with TestClient(app) as client:
-        response = client.get("/api/v1/reference/meta")
-    assert response.status_code == 200
-    assert response.json()["data"] == metadata
+    app.dependency_overrides[require_session] = _authenticated_session
+    try:
+        with TestClient(app) as client:
+            response = client.get("/api/v1/reference/meta")
+        assert response.status_code == 200
+        assert response.json()["data"] == metadata
+    finally:
+        app.dependency_overrides.clear()
 
 
 def test_reference_metadata_fails_closed_without_active_snapshot(monkeypatch) -> None:
     monkeypatch.setattr(
         "app.api.health.reference_dataset_metadata", AsyncMock(return_value=None)
     )
-    with TestClient(app) as client:
-        response = client.get("/api/v1/reference/meta")
-    assert response.status_code == 503
-    assert response.json()["error"]["code"] == "REFERENCE_DATA_NOT_READY"
+    app.dependency_overrides[require_session] = _authenticated_session
+    try:
+        with TestClient(app) as client:
+            response = client.get("/api/v1/reference/meta")
+        assert response.status_code == 503
+        assert response.json()["error"]["code"] == "REFERENCE_DATA_NOT_READY"
+    finally:
+        app.dependency_overrides.clear()

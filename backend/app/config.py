@@ -61,6 +61,10 @@ class Settings(BaseSettings):
         return f"esafe_{self.profile.lower()}_session"
 
     @property
+    def csrf_cookie_name(self) -> str:
+        return f"esafe_{self.profile.lower()}_csrf"
+
+    @property
     def session_cookie_path(self) -> str:
         return f"/{self.profile.lower()}/"
 

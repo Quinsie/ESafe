@@ -1,29 +1,16 @@
-from datetime import UTC, datetime
-from typing import Any
+from typing import Annotated, Any
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
 
+from app.api.auth import require_session
+from app.api.responses import envelope
+from app.auth import AuthenticatedSession
 from app.config import Settings
 from app.db import dependency_health, reference_dataset_metadata
 
 router = APIRouter(prefix="/api/v1")
-
-
-def envelope(
-    request: Request, data: Any, *, error: dict[str, str] | None = None
-) -> dict[str, Any]:
-    settings: Settings = request.app.state.settings
-    return {
-        "data": data,
-        "meta": {
-            "requestId": request.state.request_id,
-            "profile": settings.profile,
-            "asOf": datetime.now(UTC).isoformat(),
-            "sourceStatus": [],
-        },
-        "error": error,
-    }
+Authenticated = Annotated[AuthenticatedSession, Depends(require_session)]
 
 
 @router.get("/health/live")
@@ -54,7 +41,7 @@ async def readiness(request: Request) -> JSONResponse:
 
 
 @router.get("/meta")
-async def metadata(request: Request) -> dict[str, Any]:
+async def metadata(request: Request, _session: Authenticated) -> dict[str, Any]:
     settings: Settings = request.app.state.settings
     return envelope(
         request,
@@ -68,7 +55,7 @@ async def metadata(request: Request) -> dict[str, Any]:
 
 
 @router.get("/reference/meta")
-async def reference_metadata(request: Request) -> JSONResponse:
+async def reference_metadata(request: Request, _session: Authenticated) -> JSONResponse:
     settings: Settings = request.app.state.settings
     metadata = await reference_dataset_metadata(
         request.app.state.db_engine, settings.health_timeout_seconds

@@ -7,7 +7,10 @@ from fastapi.responses import JSONResponse
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import create_async_engine
 
-from app.api.health import envelope, router
+from app.api.auth import AuthError
+from app.api.auth import router as auth_router
+from app.api.health import router as health_router
+from app.api.responses import envelope
 from app.config import get_settings
 from app.logging import configure_logging
 from app.middleware import RequestContextMiddleware
@@ -37,12 +40,28 @@ async def lifespan(application: FastAPI) -> AsyncIterator[None]:
 app = FastAPI(
     title="ESafe API",
     version=settings.app_version,
-    docs_url="/api/docs",
-    openapi_url="/api/openapi.json",
+    docs_url=None,
+    redoc_url=None,
+    openapi_url=None,
     lifespan=lifespan,
 )
 app.add_middleware(RequestContextMiddleware)
-app.include_router(router)
+app.include_router(auth_router)
+app.include_router(health_router)
+
+
+@app.exception_handler(AuthError)
+async def authentication_error(request: Request, exc: AuthError) -> JSONResponse:
+    headers = {"WWW-Authenticate": "Session"} if exc.status_code == 401 else None
+    return JSONResponse(
+        status_code=exc.status_code,
+        content=envelope(
+            request,
+            None,
+            error={"code": exc.code, "message": exc.message},
+        ),
+        headers=headers,
+    )
 
 
 @app.exception_handler(Exception)
