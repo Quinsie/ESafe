@@ -180,6 +180,84 @@ function mapRegionsEnvelope(level: "SIDO" | "SIGUNGU" = "SIDO") {
     })),
   });
 }
+function regionDetailEnvelope() {
+  return envelope({
+    regionCode: "29170",
+    level: "SIGUNGU",
+    name: "북구",
+    fullName: "광주광역시 북구",
+    parent: { regionCode: "29", fullName: "광주광역시" },
+    center: [126.91, 35.19],
+    bounds: [126.7, 35.0, 127.1, 35.3],
+    riskReference: {
+      referenceMonth: "2026-03",
+      horizonDays: 60,
+      lineageVersion: "v27.1-focus-2026-03-60d",
+      isProbability: false,
+      calculatedAt: "2026-07-29T00:00:00Z",
+    },
+    distribution: {
+      buildingCount: 27585,
+      top10Count: 5953,
+      bands: { top1: 563, high1To10: 5390, watch10To25: 4100, general: 17532 },
+      bandShares: { top1: 2.04, high1To10: 19.54, watch10To25: 14.86, general: 63.56 },
+      scoreStats: { minimum: 0.1, median: 0.5, p90: 0.8, p99: 0.969365, maximum: 0.99 },
+    },
+    currentSignals: { activeCaseCount: 0, urgentCaseCount: 0, hasCurrentSignal: false },
+    topBuildings: [
+      {
+        buildingId: "00000000-0000-4000-8000-000000000001",
+        name: "문흥동 공간아파트",
+        roadAddress: "광주광역시 북구 문흥동 996-2",
+        lotAddress: "광주광역시 북구 문흥동 996-2",
+        risk: { finalScore: 0.99, regionalRank: 1, topPercentile: 0.01, riskBand: "TOP_1" },
+      },
+    ],
+  });
+}
+
+function buildingDetailEnvelope() {
+  return envelope({
+    buildingId: "00000000-0000-4000-8000-000000000001",
+    sourceBuildingKey: "30104609",
+    region: { regionCode: "29170", fullName: "광주광역시 북구" },
+    name: "문흥동 공간아파트",
+    roadAddress: "광주광역시 북구 문흥동 996-2",
+    lotAddress: "광주광역시 북구 문흥동 996-2",
+    center: [126.91, 35.19],
+    geometryStatus: "MATCHED",
+    attributes: {
+      mainUseName: "공동주택",
+      mainStructure: "철근콘크리트",
+      buildingYear: 1998,
+      buildingAge: 28,
+      approvalDate: "1998-05-01",
+      floorsAbove: 15,
+      floorsBelow: 1,
+      grossFloorAreaM2: 12345.6,
+      landUseName: "제2종일반주거지역",
+      registerType: "일반건축물",
+    },
+    facilitySummary: {
+      linkedFacilityCount: 3,
+      generalCount: 2,
+      selfCount: 1,
+      latestInspectionDate: "2026-05-10",
+      candidateSourceCount: 4,
+    },
+    risk: {
+      finalScore: 0.99,
+      regionalRank: 1,
+      topPercentile: 0.01,
+      riskBand: "TOP_1",
+      sourceClass: "ORIG",
+      manifestHash: "abcdef0123456789abcdef0123456789",
+    },
+    currentSignals: { activeCaseCount: 0, urgentCaseCount: 0, hasCurrentSignal: false },
+    quality: { buildingFlags: [], riskFlags: [] },
+  });
+}
+
 function installAuthenticatedFetch(failedEndpoint?: string) {
   vi.stubGlobal(
     "fetch",
@@ -202,6 +280,12 @@ function installAuthenticatedFetch(failedEndpoint?: string) {
       }
       if (url.endsWith("/sources/health")) {
         return response(sourceEnvelope());
+      }
+      if (url.endsWith("/regions/29170")) {
+        return response(regionDetailEnvelope());
+      }
+      if (url.endsWith("/buildings/00000000-0000-4000-8000-000000000001")) {
+        return response(buildingDetailEnvelope());
       }
       if (url.endsWith("/map/config")) {
         return response(mapConfigEnvelope());
@@ -310,6 +394,30 @@ describe("App authentication boundary", () => {
       "/demo/api/v1/auth/login",
       expect.objectContaining({ credentials: "include", method: "POST" }),
     );
+  });
+
+  it("renders REG-01C from the actual region contract without probability claims", async () => {
+    installAuthenticatedFetch();
+    renderApp("/demo/regions/29170");
+
+    expect(await screen.findByRole("heading", { name: "지역 상세" })).toBeVisible();
+    expect(screen.getByText("광주광역시 북구")).toBeVisible();
+    expect(screen.getAllByText("27,585개").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("0.969365").length).toBeGreaterThan(0);
+    expect(screen.getByText("문흥동 공간아파트")).toBeVisible();
+    expect(screen.getAllByText("발생확률 아님").length).toBeGreaterThan(0);
+  });
+
+  it("renders REG-01B from the actual building and facility contract", async () => {
+    installAuthenticatedFetch();
+    renderApp("/demo/buildings/00000000-0000-4000-8000-000000000001");
+
+    expect(await screen.findByRole("heading", { name: "건물 상세" })).toBeVisible();
+    expect(screen.getAllByText("문흥동 공간아파트").length).toBeGreaterThan(0);
+    expect(screen.getByText("최상위 위험")).toBeVisible();
+    expect(screen.getByText("철근콘크리트")).toBeVisible();
+    expect(screen.getByText("3건")).toBeVisible();
+    expect(screen.getByText("건물·위험도 기준 데이터에 별도 품질 경고가 없습니다.")).toBeVisible();
   });
 
   it("renders actual spatial map contracts instead of an unfinished route", async () => {

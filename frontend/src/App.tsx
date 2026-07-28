@@ -12,6 +12,9 @@ import {
 } from "./router";
 
 const RiskMap = lazy(() => import("./map").then((module) => ({ default: module.RiskMap })));
+const SpatialAnalysis = lazy(() =>
+  import("./analysis").then((module) => ({ default: module.SpatialAnalysis })),
+);
 
 interface SessionData {
   user: {
@@ -49,6 +52,9 @@ function routeTitle(path: string): string | undefined {
   }
   if (/^\/regions\/[^/]+$/.test(path)) {
     return "지역 상세";
+  }
+  if (/^\/buildings\/[^/]+$/.test(path)) {
+    return "건물 상세";
   }
   if (/^\/cases\/[^/]+/.test(path)) {
     return "Case 상세";
@@ -292,6 +298,20 @@ function AuthenticatedShell({
           }
         >
           <RiskMap currentPath={currentPath} runtime={runtime} />
+        </Suspense>
+      ) : currentPath === "/regions" ||
+        /^\/regions\/[^/]+$/.test(currentPath) ||
+        /^\/buildings\/[^/]+$/.test(currentPath) ? (
+        <Suspense
+          fallback={
+            <main className="page" id="main-content">
+              <div className="auth-loading" role="status">
+                분석 화면을 준비하고 있습니다.
+              </div>
+            </main>
+          }
+        >
+          <SpatialAnalysis currentPath={currentPath} runtime={runtime} />
         </Suspense>
       ) : title ? (
         <SectionPlaceholder title={title} />

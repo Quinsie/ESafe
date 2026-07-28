@@ -15,7 +15,7 @@ import "maplibre-gl/dist/maplibre-gl.css";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { apiRequest } from "./api";
 import type { ProfileRuntime } from "./profile";
-import { AppLink } from "./router";
+import { AppLink, currentInternalLocation } from "./router";
 
 interface MapProvider {
   id: "vworld" | "osm";
@@ -514,6 +514,7 @@ export function RiskMap({
     0,
   );
   const levelLabel = viewport.zoom >= 14 ? "건물" : viewport.zoom >= 8.5 ? "시·군·구" : "광역시·도";
+  const returnToMap = encodeURIComponent(currentInternalLocation(runtime));
 
   const chooseRegionFromList = (feature: RegionFeature) => {
     setSelectedRegion(feature.properties.regionCode);
@@ -652,7 +653,7 @@ export function RiskMap({
                   className="outline-action"
                   currentPath={currentPath}
                   runtime={runtime}
-                  to={`/regions/${selectedRegionFeature.properties.regionCode}`}
+                  to={`/regions/${selectedRegionFeature.properties.regionCode}?returnTo=${returnToMap}`}
                 >
                   지역 분석 보기
                 </AppLink>
@@ -698,7 +699,7 @@ export function RiskMap({
                 className="primary-action"
                 currentPath={currentPath}
                 runtime={runtime}
-                to={`/buildings/${selectedDetail.data.buildingId}`}
+                to={`/buildings/${selectedDetail.data.buildingId}?returnTo=${returnToMap}`}
               >
                 건물 분석 보기
               </AppLink>

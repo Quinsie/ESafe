@@ -1,0 +1,697 @@
+import { useQuery } from "@tanstack/react-query";
+import { apiRequest } from "./api";
+import type { ProfileRuntime } from "./profile";
+import { AppLink, currentInternalLocation, safeReturnTo } from "./router";
+
+interface RiskValue {
+  finalScore: number;
+  regionalRank: number;
+  topPercentile: number;
+  riskBand: string;
+}
+
+interface RegionListItem {
+  properties: {
+    regionCode: string;
+    fullName: string;
+    buildingCount: number;
+    top1Count: number;
+    top10Count: number;
+    scoreP99: number | null;
+    activeCaseCount: number;
+  };
+}
+
+interface RegionCollection {
+  features: RegionListItem[];
+}
+
+interface RegionDetailData {
+  regionCode: string;
+  level: "SIDO" | "SIGUNGU";
+  name: string;
+  fullName: string;
+  parent: { regionCode: string; fullName: string } | null;
+  center: [number, number];
+  bounds: [number, number, number, number];
+  riskReference: {
+    referenceMonth: string;
+    horizonDays: number;
+    lineageVersion: string;
+    isProbability: boolean;
+    calculatedAt: string;
+  };
+  distribution: {
+    buildingCount: number;
+    top10Count: number;
+    bands: { top1: number; high1To10: number; watch10To25: number; general: number };
+    bandShares: { top1: number; high1To10: number; watch10To25: number; general: number };
+    scoreStats: { minimum: number; median: number; p90: number; p99: number; maximum: number };
+  };
+  currentSignals: { activeCaseCount: number; urgentCaseCount: number; hasCurrentSignal: boolean };
+  topBuildings: Array<{
+    buildingId: string;
+    name: string;
+    roadAddress: string | null;
+    lotAddress: string;
+    risk: RiskValue;
+  }>;
+}
+
+interface BuildingDetailData {
+  buildingId: string;
+  sourceBuildingKey: string;
+  region: { regionCode: string; fullName: string };
+  name: string;
+  roadAddress: string | null;
+  lotAddress: string;
+  center: [number, number];
+  geometryStatus: string;
+  attributes: {
+    mainUseName: string | null;
+    mainStructure: string | null;
+    buildingYear: number | null;
+    buildingAge: number | null;
+    approvalDate: string | null;
+    floorsAbove: number | null;
+    floorsBelow: number | null;
+    grossFloorAreaM2: number | null;
+    landUseName: string | null;
+    registerType: string | null;
+  };
+  facilitySummary: {
+    linkedFacilityCount: number;
+    generalCount: number;
+    selfCount: number;
+    latestInspectionDate: string | null;
+    candidateSourceCount: number;
+  };
+  risk: RiskValue & { sourceClass: string; manifestHash: string };
+  currentSignals: { activeCaseCount: number; urgentCaseCount: number; hasCurrentSignal: boolean };
+  quality: { buildingFlags: string[]; riskFlags: string[] };
+}
+
+const riskNames: Record<string, string> = {
+  TOP_1: "최상위 위험",
+  HIGH_1_10: "고위험",
+  WATCH_10_25: "관심",
+  GENERAL: "일반",
+};
+
+const bandRows = [
+  { key: "top1", label: "최상위 위험 · 상위 1%", className: "top" },
+  { key: "high1To10", label: "고위험 · 상위 1~10%", className: "high" },
+  { key: "watch10To25", label: "관심 · 상위 10~25%", className: "watch" },
+  { key: "general", label: "일반", className: "general" },
+] as const;
+
+function formatScore(value: number | null | undefined): string {
+  return value === null || value === undefined
+    ? "—"
+    : value.toLocaleString("ko-KR", { maximumFractionDigits: 6 });
+}
+
+function displayValue(value: string | number | null | undefined, suffix = ""): string {
+  if (value === null || value === undefined || value === "") return "미등록";
+  return `${typeof value === "number" ? value.toLocaleString("ko-KR") : value}${suffix}`;
+}
+
+function AnalysisLoading() {
+  return (
+    <main className="page analysis-page" id="main-content">
+      <div className="analysis-state" role="status">
+        분석 데이터를 불러오고 있습니다.
+      </div>
+    </main>
+  );
+}
+
+function AnalysisError({ retry }: { retry: () => void }) {
+  return (
+    <main className="page analysis-page" id="main-content">
+      <div className="analysis-state error" role="alert">
+        <strong>분석 데이터를 불러오지 못했습니다.</strong>
+        <button onClick={retry} type="button">
+          다시 시도
+        </button>
+      </div>
+    </main>
+  );
+}
+
+function RegionIndex({ currentPath, runtime }: { currentPath: string; runtime: ProfileRuntime }) {
+  const regions = useQuery({
+    queryKey: ["analysis-region-index", runtime.profile],
+    queryFn: async () => {
+      const [gwangju, jeonnam] = await Promise.all([
+        apiRequest<RegionCollection>(runtime, "/map/districts?parentCode=29"),
+        apiRequest<RegionCollection>(runtime, "/map/districts?parentCode=46"),
+      ]);
+      return [...gwangju.data.features, ...jeonnam.data.features].sort(
+        (left, right) =>
+          right.properties.top10Count - left.properties.top10Count ||
+          left.properties.regionCode.localeCompare(right.properties.regionCode),
+      );
+    },
+    staleTime: 5 * 60_000,
+  });
+  if (regions.isLoading) return <AnalysisLoading />;
+  if (regions.isError) return <AnalysisError retry={() => void regions.refetch()} />;
+  return (
+    <main className="page analysis-page" id="main-content">
+      <div className="page-heading analysis-heading">
+        <div>
+          <h1>위험 분석</h1>
+          <p>광주·전남 모델 대상 지역의 실제 기준 위험분포에서 분석할 지역을 선택합니다.</p>
+        </div>
+        <AppLink className="outline-action" currentPath={currentPath} runtime={runtime} to="/map">
+          통합 위험지도
+        </AppLink>
+      </div>
+      <aside className="analysis-contract-note">
+        v27.1 · 2026-03 · 향후 60일 상대점수입니다. 발생확률이나 실시간 재난점수가 아닙니다.
+      </aside>
+      <section className="region-index-grid" aria-label="분석 지역 목록">
+        {regions.data?.map((feature, index) => {
+          const item = feature.properties;
+          return (
+            <article key={item.regionCode}>
+              <div className="region-index-rank">{index + 1}</div>
+              <div>
+                <h2>{item.fullName}</h2>
+                <p>
+                  건물 {item.buildingCount.toLocaleString("ko-KR")}개 · 상위 10%{" "}
+                  {item.top10Count.toLocaleString("ko-KR")}개
+                </p>
+              </div>
+              <dl>
+                <div>
+                  <dt>상위 1%</dt>
+                  <dd>{item.top1Count.toLocaleString("ko-KR")}개</dd>
+                </div>
+                <div>
+                  <dt>p99 점수</dt>
+                  <dd>{formatScore(item.scoreP99)}</dd>
+                </div>
+                <div>
+                  <dt>활성 Case</dt>
+                  <dd>{item.activeCaseCount.toLocaleString("ko-KR")}건</dd>
+                </div>
+              </dl>
+              <AppLink
+                className="primary-action"
+                currentPath={currentPath}
+                runtime={runtime}
+                to={`/regions/${item.regionCode}`}
+              >
+                지역 분석 보기
+              </AppLink>
+            </article>
+          );
+        })}
+      </section>
+    </main>
+  );
+}
+
+function RegionDetail({
+  currentPath,
+  runtime,
+  regionCode,
+}: {
+  currentPath: string;
+  runtime: ProfileRuntime;
+  regionCode: string;
+}) {
+  const region = useQuery({
+    queryKey: ["analysis-region", runtime.profile, regionCode],
+    queryFn: () =>
+      apiRequest<RegionDetailData>(runtime, `/regions/${regionCode}`).then((result) => result.data),
+    staleTime: 5 * 60_000,
+  });
+  if (region.isLoading) return <AnalysisLoading />;
+  if (region.isError || !region.data) return <AnalysisError retry={() => void region.refetch()} />;
+  const data = region.data;
+  const returnTo = safeReturnTo(new URLSearchParams(window.location.search).get("returnTo"));
+  const mapTarget =
+    returnTo === "/home"
+      ? `/map?level=district&region=${data.regionCode}&lng=${data.center[0]}&lat=${data.center[1]}&zoom=${data.level === "SIDO" ? 9 : 12.5}`
+      : returnTo;
+  const highRiskMapTarget = (() => {
+    const [path, query = ""] = mapTarget.split("?", 2);
+    const params = new URLSearchParams(query);
+    params.set("level", "building");
+    params.set("zoom", "14");
+    return `${path}?${params.toString()}`;
+  })();
+  const currentLocation = currentInternalLocation(runtime);
+  return (
+    <main className="page analysis-page" id="main-content">
+      <AppLink className="analysis-back" currentPath={currentPath} runtime={runtime} to={mapTarget}>
+        ‹ 통합 위험지도로 돌아가기
+      </AppLink>
+      <div className="page-heading analysis-heading">
+        <div>
+          <h1>지역 상세</h1>
+          <p>
+            <strong>{data.fullName}</strong>
+            {data.parent ? ` · ${data.parent.fullName}` : ""}
+          </p>
+        </div>
+        <div className="analysis-heading-actions">
+          <AppLink
+            className="outline-action"
+            currentPath={currentPath}
+            runtime={runtime}
+            to="/regions"
+          >
+            지역 목록
+          </AppLink>
+          <AppLink
+            className="primary-action"
+            currentPath={currentPath}
+            runtime={runtime}
+            to={highRiskMapTarget}
+          >
+            고위험 건물
+          </AppLink>
+        </div>
+      </div>
+      <aside className="analysis-contract-note">
+        {data.riskReference.lineageVersion} · {data.riskReference.referenceMonth} · 향후{" "}
+        {data.riskReference.horizonDays}일 상대점수. 실시간 신호는 기준점수를 변경하지 않습니다.
+      </aside>
+      <section className="analysis-metrics" aria-label="지역 핵심 지표">
+        <article>
+          <span>분석 건물</span>
+          <strong>{data.distribution.buildingCount.toLocaleString("ko-KR")}개</strong>
+          <small>모델 대상·폴리곤 정합 건물</small>
+        </article>
+        <article>
+          <span>상위 10% 건물</span>
+          <strong>{data.distribution.top10Count.toLocaleString("ko-KR")}개</strong>
+          <small>
+            {((data.distribution.top10Count / data.distribution.buildingCount) * 100).toFixed(1)}%
+            집중
+          </small>
+        </article>
+        <article>
+          <span>p99 상대점수</span>
+          <strong>{formatScore(data.distribution.scoreStats.p99)}</strong>
+          <small>발생확률 아님</small>
+        </article>
+        <article className={data.currentSignals.hasCurrentSignal ? "signal" : ""}>
+          <span>현재 관제 Case</span>
+          <strong>{data.currentSignals.activeCaseCount.toLocaleString("ko-KR")}건</strong>
+          <small>긴급 {data.currentSignals.urgentCaseCount.toLocaleString("ko-KR")}건</small>
+        </article>
+      </section>
+      <div className="analysis-two-column">
+        <section className="analysis-panel">
+          <div className="analysis-panel-heading">
+            <h2>지역 위험구간 분포</h2>
+            <span>{data.distribution.buildingCount.toLocaleString("ko-KR")}개</span>
+          </div>
+          <div className="band-chart">
+            {bandRows.map((row) => {
+              const share = data.distribution.bandShares[row.key];
+              return (
+                <div className="band-row" key={row.key}>
+                  <span>{row.label}</span>
+                  <div>
+                    <i className={row.className} style={{ width: `${Math.max(share, 0.5)}%` }} />
+                  </div>
+                  <b>{data.distribution.bands[row.key].toLocaleString("ko-KR")}개</b>
+                  <em>{share.toFixed(2)}%</em>
+                </div>
+              );
+            })}
+          </div>
+        </section>
+        <section className="analysis-panel">
+          <div className="analysis-panel-heading">
+            <h2>상대점수 분포 기준</h2>
+            <span>v27.1</span>
+          </div>
+          <dl className="score-stat-grid">
+            <div>
+              <dt>최소</dt>
+              <dd>{formatScore(data.distribution.scoreStats.minimum)}</dd>
+            </div>
+            <div>
+              <dt>중앙값</dt>
+              <dd>{formatScore(data.distribution.scoreStats.median)}</dd>
+            </div>
+            <div>
+              <dt>p90</dt>
+              <dd>{formatScore(data.distribution.scoreStats.p90)}</dd>
+            </div>
+            <div>
+              <dt>p99</dt>
+              <dd>{formatScore(data.distribution.scoreStats.p99)}</dd>
+            </div>
+            <div>
+              <dt>최대</dt>
+              <dd>{formatScore(data.distribution.scoreStats.maximum)}</dd>
+            </div>
+          </dl>
+          <p className="analysis-explanation">
+            지역 간 점수 절대값을 위험확률로 비교하지 않고 광주·전남 전체 순위와 위험구간으로
+            우선순위를 정합니다.
+          </p>
+        </section>
+      </div>
+      <section className="analysis-panel top-building-panel">
+        <div className="analysis-panel-heading">
+          <div>
+            <h2>우선 확인 건물</h2>
+            <p>광주·전남 순위 기준 지역 내 상위 10개입니다.</p>
+          </div>
+          <span>실제 기준 데이터</span>
+        </div>
+        <div className="analysis-table-wrap">
+          <table className="analysis-table">
+            <thead>
+              <tr>
+                <th>건물</th>
+                <th>위험구간</th>
+                <th>광주·전남 순위</th>
+                <th>상위 백분위</th>
+                <th>상세</th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.topBuildings.map((building) => (
+                <tr key={building.buildingId}>
+                  <td>
+                    <strong>{building.name}</strong>
+                    <small>{building.roadAddress ?? building.lotAddress}</small>
+                  </td>
+                  <td>
+                    <span className={`risk-pill ${building.risk.riskBand.toLowerCase()}`}>
+                      {riskNames[building.risk.riskBand]}
+                    </span>
+                  </td>
+                  <td>{building.risk.regionalRank.toLocaleString("ko-KR")}위</td>
+                  <td>상위 {building.risk.topPercentile.toFixed(2)}%</td>
+                  <td>
+                    <AppLink
+                      className="table-action"
+                      currentPath={currentPath}
+                      runtime={runtime}
+                      to={`/buildings/${building.buildingId}?returnTo=${encodeURIComponent(currentLocation)}`}
+                    >
+                      분석 보기
+                    </AppLink>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </section>
+      <section className="analysis-actions">
+        <div>
+          <h2>분석 결과로 할 수 있는 작업</h2>
+          <p>현재 지역과 기준 위험분포가 다음 작업의 초기 조건으로 전달됩니다.</p>
+        </div>
+        <div>
+          <AppLink
+            className="outline-action"
+            currentPath={currentPath}
+            runtime={runtime}
+            to={`/inspections/simulations/new?region=${data.regionCode}`}
+          >
+            지역 점검 시뮬레이션
+          </AppLink>
+          <AppLink
+            className="outline-action"
+            currentPath={currentPath}
+            runtime={runtime}
+            to={`/similar/incidents?region=${data.regionCode}`}
+          >
+            지역 화재 사례 검색
+          </AppLink>
+          <AppLink
+            className="primary-action"
+            currentPath={currentPath}
+            runtime={runtime}
+            to={`/regions/${data.regionCode}/report`}
+          >
+            지역 분석 보고서
+          </AppLink>
+        </div>
+      </section>
+    </main>
+  );
+}
+
+function BuildingDetail({
+  currentPath,
+  runtime,
+  buildingId,
+}: {
+  currentPath: string;
+  runtime: ProfileRuntime;
+  buildingId: string;
+}) {
+  const building = useQuery({
+    queryKey: ["analysis-building", runtime.profile, buildingId],
+    queryFn: () =>
+      apiRequest<BuildingDetailData>(runtime, `/buildings/${buildingId}`).then(
+        (result) => result.data,
+      ),
+    staleTime: 5 * 60_000,
+  });
+  if (building.isLoading) return <AnalysisLoading />;
+  if (building.isError || !building.data)
+    return <AnalysisError retry={() => void building.refetch()} />;
+  const data = building.data;
+  const requestedReturn = new URLSearchParams(window.location.search).get("returnTo");
+  const returnTarget = requestedReturn
+    ? safeReturnTo(requestedReturn)
+    : `/regions/${data.region.regionCode}`;
+  const attributeRows = [
+    ["주용도", data.attributes.mainUseName],
+    ["주구조", data.attributes.mainStructure],
+    ["사용승인", data.attributes.approvalDate],
+    ["건축연도", data.attributes.buildingYear],
+    ["건물연령", data.attributes.buildingAge, "년"],
+    ["지상층", data.attributes.floorsAbove, "층"],
+    ["지하층", data.attributes.floorsBelow, "층"],
+    ["연면적", data.attributes.grossFloorAreaM2, "㎡"],
+    ["토지이용", data.attributes.landUseName],
+    ["대장구분", data.attributes.registerType],
+  ] as const;
+  const qualityFlags = [...data.quality.buildingFlags, ...data.quality.riskFlags];
+  return (
+    <main className="page analysis-page" id="main-content">
+      <AppLink
+        className="analysis-back"
+        currentPath={currentPath}
+        runtime={runtime}
+        to={returnTarget}
+      >
+        ‹ 이전 분석으로 돌아가기
+      </AppLink>
+      <div className="page-heading analysis-heading">
+        <div>
+          <h1>건물 상세</h1>
+          <p>
+            <strong>{data.name}</strong> · {data.roadAddress ?? data.lotAddress} ·{" "}
+            {data.region.fullName}
+          </p>
+        </div>
+        <div className="analysis-heading-actions">
+          <AppLink
+            className="outline-action"
+            currentPath={currentPath}
+            runtime={runtime}
+            to={`/map?level=building&region=${data.region.regionCode}&building=${data.buildingId}&lng=${data.center[0]}&lat=${data.center[1]}&zoom=17`}
+          >
+            지도에서 보기
+          </AppLink>
+          <AppLink
+            className="primary-action"
+            currentPath={currentPath}
+            runtime={runtime}
+            to={`/buildings/${data.buildingId}/report`}
+          >
+            건물 분석 보고서
+          </AppLink>
+        </div>
+      </div>
+      <aside className="analysis-contract-note">
+        기준 위험도는 v27.1 · 2026-03 · 향후 60일 광주·전남 상대순위입니다. 현재 신호는 기준점수를
+        변경하지 않습니다.
+      </aside>
+      <section className="analysis-metrics building-metrics" aria-label="건물 핵심 지표">
+        <article className={data.risk.riskBand === "TOP_1" ? "signal" : ""}>
+          <span>위험구간</span>
+          <strong>{riskNames[data.risk.riskBand]}</strong>
+          <small>상위 {data.risk.topPercentile.toFixed(2)}%</small>
+        </article>
+        <article>
+          <span>광주·전남 순위</span>
+          <strong>{data.risk.regionalRank.toLocaleString("ko-KR")}위</strong>
+          <small>217,238개 기준</small>
+        </article>
+        <article>
+          <span>상대점수</span>
+          <strong>{formatScore(data.risk.finalScore)}</strong>
+          <small>발생확률 아님</small>
+        </article>
+        <article className={data.currentSignals.hasCurrentSignal ? "signal" : ""}>
+          <span>100m 내 활성 Case</span>
+          <strong>{data.currentSignals.activeCaseCount.toLocaleString("ko-KR")}건</strong>
+          <small>긴급 {data.currentSignals.urgentCaseCount.toLocaleString("ko-KR")}건</small>
+        </article>
+      </section>
+      <div className="analysis-two-column building-columns">
+        <section className="analysis-panel">
+          <div className="analysis-panel-heading">
+            <h2>건축물 기준 정보</h2>
+            <span>{data.geometryStatus}</span>
+          </div>
+          <dl className="building-attribute-grid">
+            {attributeRows.map(([label, value, suffix]) => (
+              <div key={label}>
+                <dt>{label}</dt>
+                <dd>{displayValue(value, suffix)}</dd>
+              </div>
+            ))}
+          </dl>
+        </section>
+        <section className="analysis-panel">
+          <div className="analysis-panel-heading">
+            <h2>연결 설비·점검 정보</h2>
+            <span>정규 연결</span>
+          </div>
+          <dl className="facility-summary">
+            <div>
+              <dt>연결 설비</dt>
+              <dd>{data.facilitySummary.linkedFacilityCount.toLocaleString("ko-KR")}건</dd>
+            </div>
+            <div>
+              <dt>일반용 설비</dt>
+              <dd>{data.facilitySummary.generalCount.toLocaleString("ko-KR")}건</dd>
+            </div>
+            <div>
+              <dt>자가용 설비</dt>
+              <dd>{data.facilitySummary.selfCount.toLocaleString("ko-KR")}건</dd>
+            </div>
+            <div>
+              <dt>최근 점검일</dt>
+              <dd>{displayValue(data.facilitySummary.latestInspectionDate)}</dd>
+            </div>
+            <div>
+              <dt>원천 후보</dt>
+              <dd>{data.facilitySummary.candidateSourceCount.toLocaleString("ko-KR")}건</dd>
+            </div>
+          </dl>
+        </section>
+      </div>
+      <div className="analysis-two-column building-columns">
+        <section className="analysis-panel">
+          <div className="analysis-panel-heading">
+            <h2>위험도 해석</h2>
+            <span>{data.risk.sourceClass}</span>
+          </div>
+          <p className="analysis-explanation">
+            이 건물은 광주·전남 모델 대상 217,238개 중{" "}
+            {data.risk.regionalRank.toLocaleString("ko-KR")}위이며 {riskNames[data.risk.riskBand]}{" "}
+            구간입니다. 점수는 우선 확인 순서를 정하는 상대값이며 사고 발생확률이 아닙니다.
+          </p>
+          <AppLink
+            className="text-action"
+            currentPath={currentPath}
+            runtime={runtime}
+            to={`/regions/${data.region.regionCode}`}
+          >
+            {data.region.fullName} 지역 분포와 비교
+          </AppLink>
+        </section>
+        <section className="analysis-panel">
+          <div className="analysis-panel-heading">
+            <h2>데이터 품질</h2>
+            <span>{qualityFlags.length ? `${qualityFlags.length}개 표시` : "확인됨"}</span>
+          </div>
+          {qualityFlags.length ? (
+            <ul className="quality-flags">
+              {qualityFlags.map((flag) => (
+                <li key={flag}>{flag}</li>
+              ))}
+            </ul>
+          ) : (
+            <p className="analysis-explanation">
+              건물·위험도 기준 데이터에 별도 품질 경고가 없습니다.
+            </p>
+          )}
+          <p className="lineage-copy">
+            건물키 {data.sourceBuildingKey} · 계보 {data.risk.manifestHash.slice(0, 12)}…
+          </p>
+        </section>
+      </div>
+      <section className="analysis-actions">
+        <div>
+          <h2>분석 결과로 할 수 있는 작업</h2>
+          <p>이 건물과 실제 기준정보가 다음 업무의 초기 조건으로 전달됩니다.</p>
+        </div>
+        <div>
+          <AppLink
+            className="outline-action"
+            currentPath={currentPath}
+            runtime={runtime}
+            to={`/inspections/simulations/new?building=${data.buildingId}`}
+          >
+            점검 시뮬레이션
+          </AppLink>
+          <AppLink
+            className="outline-action"
+            currentPath={currentPath}
+            runtime={runtime}
+            to={`/similar/incidents?building=${data.buildingId}`}
+          >
+            유사 화재 검색
+          </AppLink>
+          <AppLink
+            className="outline-action"
+            currentPath={currentPath}
+            runtime={runtime}
+            to={`/outputs/new?building=${data.buildingId}&type=inspection-request`}
+          >
+            현장점검 요청 작성
+          </AppLink>
+          <AppLink
+            className="primary-action"
+            currentPath={currentPath}
+            runtime={runtime}
+            to={`/buildings/${data.buildingId}/report`}
+          >
+            건물 분석 보고서
+          </AppLink>
+        </div>
+      </section>
+    </main>
+  );
+}
+
+export function SpatialAnalysis({
+  currentPath,
+  runtime,
+}: {
+  currentPath: string;
+  runtime: ProfileRuntime;
+}) {
+  if (currentPath === "/regions")
+    return <RegionIndex currentPath={currentPath} runtime={runtime} />;
+  const regionMatch = currentPath.match(/^\/regions\/([^/]+)$/);
+  if (regionMatch)
+    return <RegionDetail currentPath={currentPath} runtime={runtime} regionCode={regionMatch[1]} />;
+  const buildingMatch = currentPath.match(/^\/buildings\/([^/]+)$/);
+  if (buildingMatch)
+    return (
+      <BuildingDetail buildingId={buildingMatch[1]} currentPath={currentPath} runtime={runtime} />
+    );
+  return null;
+}
