@@ -1720,3 +1720,249 @@ input:focus-visible {
     grid-template-columns: 125px minmax(80px, 1fr) 68px 52px;
   }
 }
+
+.report-page {
+  padding-bottom: 32px;
+}
+
+.evidence-badge {
+  align-self: center;
+  border: 1px solid #f0b8b8;
+  border-radius: 999px;
+  color: #b42318;
+  font-size: 13px;
+  font-weight: 700;
+  padding: 10px 18px;
+}
+
+.evidence-badge.insufficient {
+  background: #fff4f2;
+}
+
+.report-layout {
+  display: grid;
+  gap: 24px;
+  grid-template-columns: minmax(0, 2fr) minmax(310px, 0.8fr);
+}
+
+.report-preview-card,
+.report-settings-card {
+  background: #fff;
+  border: 1px solid #cbd8e8;
+  border-radius: 8px;
+  min-width: 0;
+  padding: 22px;
+}
+
+.report-preview-card > .analysis-panel-heading {
+  margin-bottom: 18px;
+}
+
+.report-preview-card > .analysis-panel-heading p,
+.report-settings-card > p {
+  color: #5d708a;
+  font-size: 13px;
+  margin: 6px 0 0;
+}
+
+.report-paper {
+  background: #fbfcfe;
+  border: 1px solid #d7e0ec;
+  border-radius: 6px;
+  padding: 28px;
+}
+
+.report-paper > header {
+  border-bottom: 2px solid #203c60;
+  margin-bottom: 24px;
+  padding-bottom: 20px;
+}
+
+.report-paper > header > p {
+  color: #58708f;
+  font-size: 12px;
+  font-weight: 700;
+  margin: 0 0 8px;
+}
+
+.report-paper > header h2 {
+  color: #10243f;
+  font-size: 22px;
+  letter-spacing: -0.02em;
+  margin: 0 0 18px;
+}
+
+.report-paper > header dl {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin: 0;
+}
+
+.report-paper > header dl div {
+  border: 1px solid #dbe3ee;
+  display: flex;
+  font-size: 12px;
+  justify-content: space-between;
+  padding: 8px 10px;
+}
+
+.report-paper > header dt {
+  color: #687b95;
+}
+
+.report-paper > header dd {
+  color: #243d5c;
+  font-weight: 700;
+  margin: 0;
+}
+
+.report-kpis {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin-bottom: 22px;
+}
+
+.report-kpis > div {
+  background: #fff;
+  border: 1px solid #d7e0ec;
+  border-radius: 5px;
+  display: grid;
+  gap: 8px;
+  padding: 14px;
+}
+
+.report-kpis span {
+  color: #657a96;
+  font-size: 12px;
+}
+
+.report-kpis strong {
+  color: #143155;
+  font-size: 20px;
+}
+
+.report-section {
+  border-top: 1px solid #dde5ef;
+  padding: 18px 0;
+}
+
+.report-section h3 {
+  align-items: center;
+  color: #173557;
+  display: flex;
+  font-size: 15px;
+  gap: 9px;
+  margin: 0 0 10px;
+}
+
+.report-section h3 span {
+  color: #1e66b3;
+  font-size: 12px;
+  letter-spacing: 0.05em;
+}
+
+.report-section > div {
+  color: #4c617c;
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+.report-list-item {
+  display: block;
+}
+
+.report-list-item + .report-list-item {
+  margin-top: 5px;
+}
+
+.report-list-item::before {
+  color: #1e66b3;
+  content: "·";
+  font-weight: 900;
+  margin-right: 7px;
+}
+
+.report-list-item.warning {
+  color: #a33a22;
+}
+
+.report-settings-card {
+  align-self: start;
+  position: sticky;
+  top: 92px;
+}
+
+.report-settings-card h2 {
+  color: #10243f;
+  font-size: 19px;
+  margin: 0;
+}
+
+.report-settings-card dl {
+  border-bottom: 1px solid #dce4ef;
+  border-top: 1px solid #dce4ef;
+  margin: 20px 0;
+}
+
+.report-settings-card dl div {
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
+  padding: 14px 0;
+}
+
+.report-settings-card dl div + div {
+  border-top: 1px solid #e5ebf3;
+}
+
+.report-settings-card dt {
+  color: #667a94;
+  font-size: 12px;
+}
+
+.report-settings-card dd {
+  color: #183859;
+  font-size: 13px;
+  font-weight: 700;
+  margin: 0;
+  text-align: right;
+}
+
+.report-warning {
+  background: #fff6eb;
+  border: 1px solid #f1c98f;
+  border-radius: 6px;
+  color: #855017;
+  font-size: 12px;
+  line-height: 1.6;
+  margin-bottom: 16px;
+  padding: 13px;
+}
+
+.report-disabled-action {
+  border: 0;
+  cursor: not-allowed;
+  display: block;
+  opacity: 0.55;
+  text-align: center;
+  width: 100%;
+}
+
+.report-settings-card > small {
+  color: #77899f;
+  display: block;
+  line-height: 1.5;
+  margin-top: 10px;
+}
+
+@media (max-width: 1500px) {
+  .report-layout {
+    grid-template-columns: minmax(0, 1fr) 320px;
+  }
+
+  .report-paper {
+    padding: 22px;
+  }
+}

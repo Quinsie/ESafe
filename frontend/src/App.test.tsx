@@ -420,6 +420,28 @@ describe("App authentication boundary", () => {
     expect(screen.getByText("건물·위험도 기준 데이터에 별도 품질 경고가 없습니다.")).toBeVisible();
   });
 
+  it("renders REG-02B with actual regional facts and an evidence warning", async () => {
+    installAuthenticatedFetch();
+    renderApp("/demo/regions/29170/report");
+
+    expect(await screen.findByRole("heading", { name: "지역 분석 보고서" })).toBeVisible();
+    expect(screen.getByText("광주광역시 북구 전기재해 예방 위험 분석 보고서")).toBeVisible();
+    expect(screen.getAllByText("27,585개").length).toBeGreaterThan(0);
+    expect(screen.getByText("근거 부족 · 검토 필요")).toBeVisible();
+    expect(screen.getByText("HWPX + PDF")).toBeVisible();
+    expect(screen.getAllByText("미입력").length).toBe(3);
+  });
+
+  it("renders BLD-02 without inventing inspection history or citations", async () => {
+    installAuthenticatedFetch();
+    renderApp("/demo/buildings/00000000-0000-4000-8000-000000000001/report");
+
+    expect(await screen.findByRole("heading", { name: "건물 분석 보고서" })).toBeVisible();
+    expect(screen.getByText("문흥동 공간아파트 전기재해 예방 위험 분석 보고서")).toBeVisible();
+    expect(screen.getByText("광주·전남 순위")).toBeVisible();
+    expect(screen.getByText(/최근 등록 점검일 2026-05-10/)).toBeVisible();
+    expect(screen.getByText(/공식 매뉴얼·과거 사고 인용이 아직 연결되지 않아/)).toBeVisible();
+  });
   it("renders actual spatial map contracts instead of an unfinished route", async () => {
     installAuthenticatedFetch();
     renderApp("/demo/map");

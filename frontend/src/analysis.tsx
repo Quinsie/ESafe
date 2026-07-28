@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
+import type { ReactNode } from "react";
 import { apiRequest } from "./api";
 import type { ProfileRuntime } from "./profile";
 import { AppLink, currentInternalLocation, safeReturnTo } from "./router";
@@ -676,6 +677,248 @@ function BuildingDetail({
   );
 }
 
+function ReportPreview({
+  currentPath,
+  runtime,
+  kind,
+  targetId,
+}: {
+  currentPath: string;
+  runtime: ProfileRuntime;
+  kind: "region" | "building";
+  targetId: string;
+}) {
+  const region = useQuery({
+    queryKey: ["analysis-report-region", runtime.profile, targetId],
+    queryFn: () =>
+      apiRequest<RegionDetailData>(runtime, `/regions/${targetId}`).then((result) => result.data),
+    enabled: kind === "region",
+    staleTime: 5 * 60_000,
+  });
+  const building = useQuery({
+    queryKey: ["analysis-report-building", runtime.profile, targetId],
+    queryFn: () =>
+      apiRequest<BuildingDetailData>(runtime, `/buildings/${targetId}`).then(
+        (result) => result.data,
+      ),
+    enabled: kind === "building",
+    staleTime: 5 * 60_000,
+  });
+  const activeQuery = kind === "region" ? region : building;
+  if (activeQuery.isLoading) return <AnalysisLoading />;
+  if (activeQuery.isError) return <AnalysisError retry={() => void activeQuery.refetch()} />;
+
+  const regionData = kind === "region" ? region.data : undefined;
+  const buildingData = kind === "building" ? building.data : undefined;
+  if (!regionData && !buildingData)
+    return <AnalysisError retry={() => void activeQuery.refetch()} />;
+
+  const title = regionData
+    ? `${regionData.fullName} 전기재해 예방 위험 분석 보고서`
+    : `${buildingData?.name} 전기재해 예방 위험 분석 보고서`;
+  const backTarget = regionData
+    ? `/regions/${regionData.regionCode}`
+    : `/buildings/${buildingData?.buildingId}`;
+  const currentSignals = regionData?.currentSignals ?? buildingData?.currentSignals;
+  return (
+    <main className="page analysis-page report-page" id="main-content">
+      <AppLink
+        className="analysis-back"
+        currentPath={currentPath}
+        runtime={runtime}
+        to={backTarget}
+      >
+        ‹ 분석 화면으로 돌아가기
+      </AppLink>
+      <div className="page-heading analysis-heading">
+        <div>
+          <h1>{regionData ? "지역 분석 보고서" : "건물 분석 보고서"}</h1>
+          <p>실제 기준 데이터와 현재 관제 상태를 검토하고 문서 초안 범위를 확인합니다.</p>
+        </div>
+        <span className="evidence-badge insufficient">근거 부족 · 검토 필요</span>
+      </div>
+      <div className="report-layout">
+        <article className="report-preview-card">
+          <div className="analysis-panel-heading">
+            <div>
+              <h2>보고서 미리보기</h2>
+              <p>v27.1 · 2026-03 · 향후 60일 광주·전남 상대위험 기준</p>
+            </div>
+            <span>검토용 초안</span>
+          </div>
+          <section className="report-paper" aria-label="분석 보고서 미리보기">
+            <header>
+              <p>한국전기안전공사 · 내부 업무용</p>
+              <h2>{title}</h2>
+              <dl>
+                <div>
+                  <dt>작성자</dt>
+                  <dd>미입력</dd>
+                </div>
+                <div>
+                  <dt>승인자</dt>
+                  <dd>미입력</dd>
+                </div>
+                <div>
+                  <dt>문서번호</dt>
+                  <dd>미입력</dd>
+                </div>
+              </dl>
+            </header>
+            {regionData ? (
+              <>
+                <div className="report-kpis">
+                  <div>
+                    <span>분석 건물</span>
+                    <strong>
+                      {regionData.distribution.buildingCount.toLocaleString("ko-KR")}개
+                    </strong>
+                  </div>
+                  <div>
+                    <span>상위 10% 건물</span>
+                    <strong>{regionData.distribution.top10Count.toLocaleString("ko-KR")}개</strong>
+                  </div>
+                  <div>
+                    <span>p99 상대점수</span>
+                    <strong>{formatScore(regionData.distribution.scoreStats.p99)}</strong>
+                  </div>
+                </div>
+                <ReportSection number="01" title="분석 범위">
+                  {regionData.fullName}의 모델 대상 건물{" "}
+                  {regionData.distribution.buildingCount.toLocaleString("ko-KR")}개를 광주·전남 전체
+                  순위와 네 위험구간으로 비교했습니다. 점수는 사고 발생확률이 아닙니다.
+                </ReportSection>
+                <ReportSection number="02" title="위험구간 분포">
+                  최상위 위험 {regionData.distribution.bands.top1.toLocaleString("ko-KR")}개, 고위험{" "}
+                  {regionData.distribution.bands.high1To10.toLocaleString("ko-KR")}개, 관심{" "}
+                  {regionData.distribution.bands.watch10To25.toLocaleString("ko-KR")}개, 일반{" "}
+                  {regionData.distribution.bands.general.toLocaleString("ko-KR")}개입니다.
+                </ReportSection>
+                <ReportSection number="03" title="우선 확인 대상">
+                  {regionData.topBuildings.slice(0, 5).map((item) => (
+                    <span className="report-list-item" key={item.buildingId}>
+                      {item.name} · 광주·전남 {item.risk.regionalRank.toLocaleString("ko-KR")}위 ·{" "}
+                      {riskNames[item.risk.riskBand]}
+                    </span>
+                  ))}
+                </ReportSection>
+              </>
+            ) : buildingData ? (
+              <>
+                <div className="report-kpis">
+                  <div>
+                    <span>위험구간</span>
+                    <strong>{riskNames[buildingData.risk.riskBand]}</strong>
+                  </div>
+                  <div>
+                    <span>광주·전남 순위</span>
+                    <strong>{buildingData.risk.regionalRank.toLocaleString("ko-KR")}위</strong>
+                  </div>
+                  <div>
+                    <span>상대점수</span>
+                    <strong>{formatScore(buildingData.risk.finalScore)}</strong>
+                  </div>
+                </div>
+                <ReportSection number="01" title="대상 건물">
+                  {buildingData.name} · {buildingData.roadAddress ?? buildingData.lotAddress} ·{" "}
+                  {buildingData.region.fullName}
+                </ReportSection>
+                <ReportSection number="02" title="건축물·설비 현황">
+                  주용도 {displayValue(buildingData.attributes.mainUseName)}, 주구조{" "}
+                  {displayValue(buildingData.attributes.mainStructure)}, 건물연령{" "}
+                  {displayValue(buildingData.attributes.buildingAge, "년")}, 연결 설비{" "}
+                  {buildingData.facilitySummary.linkedFacilityCount.toLocaleString("ko-KR")}
+                  건입니다.
+                </ReportSection>
+                <ReportSection number="03" title="우선 확인 항목">
+                  <span className="report-list-item">
+                    기준 위험구간과 현장 설비 현황의 일치 여부 확인
+                  </span>
+                  <span className="report-list-item">연결 설비 목록과 최근 점검 이력 확인</span>
+                  {buildingData.facilitySummary.latestInspectionDate ? (
+                    <span className="report-list-item">
+                      최근 등록 점검일 {buildingData.facilitySummary.latestInspectionDate} 이후
+                      변경사항 확인
+                    </span>
+                  ) : (
+                    <span className="report-list-item warning">
+                      최근 점검일 미등록 · 사용자 확인 필요
+                    </span>
+                  )}
+                </ReportSection>
+              </>
+            ) : null}
+            <ReportSection number="04" title="현재 관제 상태">
+              {currentSignals?.hasCurrentSignal
+                ? `연결된 활성 Case ${currentSignals.activeCaseCount.toLocaleString("ko-KR")}건, 긴급 ${currentSignals.urgentCaseCount.toLocaleString("ko-KR")}건을 별도 확인해야 합니다.`
+                : "현재 연결된 관제 Case가 없습니다. 기준 위험도만으로 실상황이 발생했다고 해석하지 않습니다."}
+            </ReportSection>
+            <ReportSection number="05" title="대응 근거 상태">
+              <span className="report-list-item warning">
+                공식 매뉴얼·과거 사고 인용이 아직 연결되지 않아 대응 조치의 근거가 부족합니다. 근거
+                연결 전에는 사실·분포 미리보기로만 사용합니다.
+              </span>
+            </ReportSection>
+          </section>
+        </article>
+        <aside className="report-settings-card">
+          <h2>문서 생성 계약</h2>
+          <p>검토가 끝난 같은 승인 버전에서 두 형식을 함께 생성합니다.</p>
+          <dl>
+            <div>
+              <dt>필수 출력</dt>
+              <dd>HWPX + PDF</dd>
+            </div>
+            <div>
+              <dt>문서 상태</dt>
+              <dd>승인 전 검토용</dd>
+            </div>
+            <div>
+              <dt>개인정보</dt>
+              <dd>자동 추정 안 함</dd>
+            </div>
+            <div>
+              <dt>작성자·승인자</dt>
+              <dd>사용자 입력 전 빈칸</dd>
+            </div>
+            <div>
+              <dt>보관 위치</dt>
+              <dd>보고서·산출물</dd>
+            </div>
+          </dl>
+          <div className="report-warning" role="status">
+            근거가 부족해도 초안은 만들되 문서와 화면에 경고를 유지합니다. 허위 인용은 생성하지
+            않습니다.
+          </div>
+          <button className="primary-action report-disabled-action" disabled type="button">
+            문서 워커 연결 후 초안 작성
+          </button>
+          <small>문서 생성·승인·HWPX/PDF 다운로드는 S7 문서 흐름에서 활성화됩니다.</small>
+        </aside>
+      </div>
+    </main>
+  );
+}
+
+function ReportSection({
+  number,
+  title,
+  children,
+}: {
+  number: string;
+  title: string;
+  children: ReactNode;
+}) {
+  return (
+    <section className="report-section">
+      <h3>
+        <span>{number}</span>
+        {title}
+      </h3>
+      <div>{children}</div>
+    </section>
+  );
+}
 export function SpatialAnalysis({
   currentPath,
   runtime,
@@ -685,6 +928,26 @@ export function SpatialAnalysis({
 }) {
   if (currentPath === "/regions")
     return <RegionIndex currentPath={currentPath} runtime={runtime} />;
+  const regionReportMatch = currentPath.match(/^\/regions\/([^/]+)\/report$/);
+  if (regionReportMatch)
+    return (
+      <ReportPreview
+        currentPath={currentPath}
+        kind="region"
+        runtime={runtime}
+        targetId={regionReportMatch[1]}
+      />
+    );
+  const buildingReportMatch = currentPath.match(/^\/buildings\/([^/]+)\/report$/);
+  if (buildingReportMatch)
+    return (
+      <ReportPreview
+        currentPath={currentPath}
+        kind="building"
+        runtime={runtime}
+        targetId={buildingReportMatch[1]}
+      />
+    );
   const regionMatch = currentPath.match(/^\/regions\/([^/]+)$/);
   if (regionMatch)
     return <RegionDetail currentPath={currentPath} runtime={runtime} regionCode={regionMatch[1]} />;

@@ -50,6 +50,12 @@ function routeTitle(path: string): string | undefined {
   if (routeTitles[path]) {
     return routeTitles[path];
   }
+  if (/^\/regions\/[^/]+\/report$/.test(path)) {
+    return "지역 분석 보고서";
+  }
+  if (/^\/buildings\/[^/]+\/report$/.test(path)) {
+    return "건물 분석 보고서";
+  }
   if (/^\/regions\/[^/]+$/.test(path)) {
     return "지역 상세";
   }
@@ -300,8 +306,8 @@ function AuthenticatedShell({
           <RiskMap currentPath={currentPath} runtime={runtime} />
         </Suspense>
       ) : currentPath === "/regions" ||
-        /^\/regions\/[^/]+$/.test(currentPath) ||
-        /^\/buildings\/[^/]+$/.test(currentPath) ? (
+        /^\/regions\/[^/]+(?:\/report)?$/.test(currentPath) ||
+        /^\/buildings\/[^/]+(?:\/report)?$/.test(currentPath) ? (
         <Suspense
           fallback={
             <main className="page" id="main-content">
