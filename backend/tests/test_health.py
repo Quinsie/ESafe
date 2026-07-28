@@ -1,3 +1,4 @@
+from unittest.mock import AsyncMock
 from uuid import UUID, uuid4
 
 from fastapi.testclient import TestClient
@@ -49,3 +50,29 @@ def test_public_korean_labels_are_preserved() -> None:
     assert Settings(ESAFE_PROFILE="LIVE").profile_badge == "실시간 연동"
     assert Settings(ESAFE_PROFILE="DEMO").profile_badge == "체험 데이터"
     assert PUBLIC_INTERNAL_ERROR_MESSAGE == "요청을 처리하지 못했습니다."
+
+
+def test_reference_metadata_exposes_active_lineage(monkeypatch) -> None:
+    metadata = {
+        "importId": "20260729T0438-s2-v27-1",
+        "manifestHash": "a" * 64,
+        "buildingCount": 217238,
+        "riskCount": 217238,
+    }
+    monkeypatch.setattr(
+        "app.api.health.reference_dataset_metadata", AsyncMock(return_value=metadata)
+    )
+    with TestClient(app) as client:
+        response = client.get("/api/v1/reference/meta")
+    assert response.status_code == 200
+    assert response.json()["data"] == metadata
+
+
+def test_reference_metadata_fails_closed_without_active_snapshot(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "app.api.health.reference_dataset_metadata", AsyncMock(return_value=None)
+    )
+    with TestClient(app) as client:
+        response = client.get("/api/v1/reference/meta")
+    assert response.status_code == 503
+    assert response.json()["error"]["code"] == "REFERENCE_DATA_NOT_READY"
