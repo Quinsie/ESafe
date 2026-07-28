@@ -1,0 +1,47 @@
+# Runtime secrets
+.env
+.env.*
+!.env.example
+secrets/
+
+# User-owned and generated data
+data/
+storage/
+artifacts/
+backups/
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.venv/
+dist/
+build/
+*.egg-info/
+
+# Node
+node_modules/
+frontend/dist/
+frontend/coverage/
+frontend/playwright-report/
+frontend/test-results/
+
+# Editors and OS
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Logs and local process state
+*.log
+*.pid
+*.sock
+
+# Generated documents and reports
+*.hwpx
