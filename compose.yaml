@@ -1,0 +1,373 @@
+name: esafe
+
+x-backend-build: &backend-build
+  context: .
+  dockerfile: backend/Dockerfile
+  target: runtime
+  args:
+    ESAFE_BUILD_COMMIT: ${ESAFE_BUILD_COMMIT:-unknown}
+
+x-backend-common: &backend-common
+  image: esafe-backend:${ESAFE_APP_VERSION:-dev}
+  build: *backend-build
+  restart: unless-stopped
+  init: true
+  user: "${ESAFE_HOST_UID:-1001}:${ESAFE_HOST_GID:-1001}"
+  security_opt:
+    - no-new-privileges:true
+  cap_drop:
+    - ALL
+  tmpfs:
+    - /tmp:rw,noexec,nosuid,size=128m
+
+x-api-healthcheck: &api-healthcheck
+  test:
+    - CMD
+    - python
+    - -c
+    - import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/v1/health/ready', timeout=3)
+  interval: 15s
+  timeout: 5s
+  start_period: 20s
+  retries: 5
+
+services:
+  db-live:
+    image: esafe-database:${ESAFE_APP_VERSION:-dev}
+    build:
+      context: .
+      dockerfile: infra/database/Dockerfile
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${LIVE_DATABASE_NAME}
+      TZ: ${TZ:-Asia/Seoul}
+    volumes:
+      - postgres-live-data:/var/lib/postgresql/data
+    networks:
+      - live-backend
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      start_period: 20s
+      retries: 8
+    security_opt:
+      - no-new-privileges:true
+
+  db-demo:
+    image: esafe-database:${ESAFE_APP_VERSION:-dev}
+    build:
+      context: .
+      dockerfile: infra/database/Dockerfile
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${DEMO_DATABASE_NAME}
+      TZ: ${TZ:-Asia/Seoul}
+    volumes:
+      - postgres-demo-data:/var/lib/postgresql/data
+    networks:
+      - demo-backend
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      start_period: 20s
+      retries: 8
+    security_opt:
+      - no-new-privileges:true
+
+  redis-live:
+    image: redis:8.0.1-bookworm
+    restart: unless-stopped
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+    command: ["redis-server", "--appendonly", "yes", "--requirepass", "${REDIS_PASSWORD}"]
+    volumes:
+      - redis-live-data:/data
+    networks:
+      - live-backend
+    healthcheck:
+      test: ["CMD-SHELL", "REDISCLI_AUTH=$${REDIS_PASSWORD} redis-cli ping | grep -q PONG"]
+      interval: 10s
+      timeout: 5s
+      start_period: 10s
+      retries: 8
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - SETGID
+      - SETUID
+
+  redis-demo:
+    image: redis:8.0.1-bookworm
+    restart: unless-stopped
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+    command: ["redis-server", "--appendonly", "yes", "--requirepass", "${REDIS_PASSWORD}"]
+    volumes:
+      - redis-demo-data:/data
+    networks:
+      - demo-backend
+    healthcheck:
+      test: ["CMD-SHELL", "REDISCLI_AUTH=$${REDIS_PASSWORD} redis-cli ping | grep -q PONG"]
+      interval: 10s
+      timeout: 5s
+      start_period: 10s
+      retries: 8
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - SETGID
+      - SETUID
+
+  api-live:
+    <<: *backend-common
+    environment:
+      ESAFE_PROFILE: LIVE
+      ESAFE_APP_VERSION: ${ESAFE_APP_VERSION:-dev}
+      ESAFE_BUILD_COMMIT: ${ESAFE_BUILD_COMMIT:-unknown}
+      ESAFE_SESSION_SECRET: ${ESAFE_SESSION_SECRET_LIVE}
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db-live:5432/${LIVE_DATABASE_NAME}
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis-live:6379/0
+      CELERY_BROKER_URL: redis://:${REDIS_PASSWORD}@redis-live:6379/0
+      CELERY_RESULT_BACKEND: redis://:${REDIS_PASSWORD}@redis-live:6379/1
+      CELERY_QUEUE: live
+      LOG_LEVEL: INFO
+    volumes:
+      - ./storage/live:/srv/esafe/storage
+      - ./storage/reference:/srv/esafe/reference:ro
+    networks:
+      - live-backend
+      - edge
+    depends_on:
+      db-live:
+        condition: service_healthy
+      redis-live:
+        condition: service_healthy
+    healthcheck: *api-healthcheck
+
+  api-demo:
+    <<: *backend-common
+    environment:
+      ESAFE_PROFILE: DEMO
+      ESAFE_APP_VERSION: ${ESAFE_APP_VERSION:-dev}
+      ESAFE_BUILD_COMMIT: ${ESAFE_BUILD_COMMIT:-unknown}
+      ESAFE_SESSION_SECRET: ${ESAFE_SESSION_SECRET_DEMO}
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db-demo:5432/${DEMO_DATABASE_NAME}
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis-demo:6379/0
+      CELERY_BROKER_URL: redis://:${REDIS_PASSWORD}@redis-demo:6379/0
+      CELERY_RESULT_BACKEND: redis://:${REDIS_PASSWORD}@redis-demo:6379/1
+      CELERY_QUEUE: demo
+      LOG_LEVEL: INFO
+    volumes:
+      - ./storage/demo:/srv/esafe/storage
+      - ./storage/reference:/srv/esafe/reference:ro
+    networks:
+      - demo-backend
+      - edge
+    depends_on:
+      db-demo:
+        condition: service_healthy
+      redis-demo:
+        condition: service_healthy
+    healthcheck: *api-healthcheck
+
+  worker-live:
+    <<: *backend-common
+    command:
+      - celery
+      - -A
+      - app.celery_app:celery_app
+      - worker
+      - --loglevel=INFO
+      - --queues=live
+      - --hostname=worker-live@%h
+      - --concurrency=2
+    environment:
+      ESAFE_PROFILE: LIVE
+      ESAFE_SESSION_SECRET: ${ESAFE_SESSION_SECRET_LIVE}
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db-live:5432/${LIVE_DATABASE_NAME}
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis-live:6379/0
+      CELERY_BROKER_URL: redis://:${REDIS_PASSWORD}@redis-live:6379/0
+      CELERY_RESULT_BACKEND: redis://:${REDIS_PASSWORD}@redis-live:6379/1
+      CELERY_QUEUE: live
+      UPSTAGE_API_KEY: ${UPSTAGE_API_KEY}
+    volumes:
+      - ./storage/live:/srv/esafe/storage
+      - ./storage/reference:/srv/esafe/reference:ro
+    networks:
+      - live-backend
+      - outbound
+    depends_on:
+      db-live:
+        condition: service_healthy
+      redis-live:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "celery -A app.celery_app:celery_app inspect ping --timeout=5 | grep -q pong"]
+      interval: 20s
+      timeout: 10s
+      start_period: 25s
+      retries: 5
+
+  worker-demo:
+    <<: *backend-common
+    command:
+      - celery
+      - -A
+      - app.celery_app:celery_app
+      - worker
+      - --loglevel=INFO
+      - --queues=demo
+      - --hostname=worker-demo@%h
+      - --concurrency=2
+    environment:
+      ESAFE_PROFILE: DEMO
+      ESAFE_SESSION_SECRET: ${ESAFE_SESSION_SECRET_DEMO}
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db-demo:5432/${DEMO_DATABASE_NAME}
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis-demo:6379/0
+      CELERY_BROKER_URL: redis://:${REDIS_PASSWORD}@redis-demo:6379/0
+      CELERY_RESULT_BACKEND: redis://:${REDIS_PASSWORD}@redis-demo:6379/1
+      CELERY_QUEUE: demo
+      UPSTAGE_API_KEY: ${UPSTAGE_API_KEY}
+    volumes:
+      - ./storage/demo:/srv/esafe/storage
+      - ./storage/reference:/srv/esafe/reference:ro
+    networks:
+      - demo-backend
+      - outbound
+    depends_on:
+      db-demo:
+        condition: service_healthy
+      redis-demo:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "celery -A app.celery_app:celery_app inspect ping --timeout=5 | grep -q pong"]
+      interval: 20s
+      timeout: 10s
+      start_period: 25s
+      retries: 5
+
+  scheduler-live:
+    <<: *backend-common
+    command:
+      - celery
+      - -A
+      - app.celery_app:celery_app
+      - beat
+      - --loglevel=INFO
+      - --schedule=/srv/esafe/storage/scheduler/celerybeat-schedule
+    environment:
+      ESAFE_PROFILE: LIVE
+      ESAFE_SESSION_SECRET: ${ESAFE_SESSION_SECRET_LIVE}
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db-live:5432/${LIVE_DATABASE_NAME}
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis-live:6379/0
+      CELERY_BROKER_URL: redis://:${REDIS_PASSWORD}@redis-live:6379/0
+      CELERY_RESULT_BACKEND: redis://:${REDIS_PASSWORD}@redis-live:6379/1
+      CELERY_QUEUE: live
+      DATA_GO_KR_SERVICE_KEY: ${DATA_GO_KR_SERVICE_KEY}
+      NFDS_ENABLED: ${NFDS_ENABLED:-true}
+    volumes:
+      - ./storage/live:/srv/esafe/storage
+      - ./storage/reference:/srv/esafe/reference:ro
+    networks:
+      - live-backend
+      - outbound
+    depends_on:
+      worker-live:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "test -f /srv/esafe/storage/scheduler/celerybeat-schedule"]
+      interval: 20s
+      timeout: 5s
+      start_period: 30s
+      retries: 5
+
+  scheduler-demo:
+    <<: *backend-common
+    command:
+      - celery
+      - -A
+      - app.celery_app:celery_app
+      - beat
+      - --loglevel=INFO
+      - --schedule=/srv/esafe/storage/scheduler/celerybeat-schedule
+    environment:
+      ESAFE_PROFILE: DEMO
+      ESAFE_SESSION_SECRET: ${ESAFE_SESSION_SECRET_DEMO}
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db-demo:5432/${DEMO_DATABASE_NAME}
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis-demo:6379/0
+      CELERY_BROKER_URL: redis://:${REDIS_PASSWORD}@redis-demo:6379/0
+      CELERY_RESULT_BACKEND: redis://:${REDIS_PASSWORD}@redis-demo:6379/1
+      CELERY_QUEUE: demo
+      NFDS_ENABLED: "false"
+    volumes:
+      - ./storage/demo:/srv/esafe/storage
+      - ./storage/reference:/srv/esafe/reference:ro
+    networks:
+      - demo-backend
+    depends_on:
+      worker-demo:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "test -f /srv/esafe/storage/scheduler/celerybeat-schedule"]
+      interval: 20s
+      timeout: 5s
+      start_period: 30s
+      retries: 5
+
+  gateway:
+    image: esafe-gateway:${ESAFE_APP_VERSION:-dev}
+    build:
+      context: .
+      dockerfile: infra/gateway/Dockerfile
+      args:
+        ESAFE_BUILD_COMMIT: ${ESAFE_BUILD_COMMIT:-unknown}
+    restart: unless-stopped
+    ports:
+      - 127.0.0.1:8080:8080
+    networks:
+      - edge
+    depends_on:
+      api-live:
+        condition: service_healthy
+      api-demo:
+        condition: service_healthy
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - SETGID
+      - SETUID
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--spider", "http://127.0.0.1:8080/health"]
+      interval: 15s
+      timeout: 5s
+      start_period: 15s
+      retries: 5
+
+networks:
+  live-backend:
+    internal: true
+  demo-backend:
+    internal: true
+  edge:
+  outbound:
+
+volumes:
+  postgres-live-data:
+  postgres-demo-data:
+  redis-live-data:
+  redis-demo-data:
