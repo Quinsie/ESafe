@@ -38,6 +38,7 @@ class Settings(BaseSettings):
         default="http://127.0.0.1:8080",
         alias="ESAFE_PUBLIC_ORIGINS",
     )
+    vworld_tile_url: str | None = Field(default=None, alias="VWORLD_TILE_URL")
     nfds_enabled: bool = Field(default=True, alias="NFDS_ENABLED")
     session_idle_seconds: int = Field(default=8 * 60 * 60, ge=60)
     session_absolute_seconds: int = Field(default=12 * 60 * 60, ge=60)

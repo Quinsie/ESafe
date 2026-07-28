@@ -64,6 +64,36 @@ login_and_verify() {
     --cookie "$jar" "$ORIGIN/$profile/api/v1/sources/health")
   test "$(printf '%s' "$sources" | jq -r '.data.sources | length')" = "3"
 
+  map_config=$(curl --fail --silent --show-error \
+    --cookie "$jar" "$ORIGIN/$profile/api/v1/map/config")
+  test "$(printf '%s' "$map_config" | jq -r '.data.providers | length')" -ge 1
+
+  regions=$(curl --fail --silent --show-error \
+    --cookie "$jar" "$ORIGIN/$profile/api/v1/map/regions")
+  test "$(printf '%s' "$regions" | jq -r '.data.features | length')" = "2"
+
+  districts=$(curl --fail --silent --show-error \
+    --cookie "$jar" "$ORIGIN/$profile/api/v1/map/districts?parentCode=29")
+  test "$(printf '%s' "$districts" | jq -r '.data.features | length')" = "5"
+
+  region=$(curl --fail --silent --show-error \
+    --cookie "$jar" "$ORIGIN/$profile/api/v1/regions/29170")
+  test "$(printf '%s' "$region" | jq -r '.data.distribution.buildingCount > 0')" = "true"
+  building_id=$(printf '%s' "$region" | jq -r '.data.topBuildings[0].buildingId')
+  test -n "$building_id"
+
+  building=$(curl --fail --silent --show-error \
+    --cookie "$jar" "$ORIGIN/$profile/api/v1/buildings/$building_id")
+  test "$(printf '%s' "$building" | jq -r .data.buildingId)" = "$building_id"
+
+  viewport=$(curl --fail --silent --show-error \
+    --cookie "$jar" "$ORIGIN/$profile/api/v1/map/buildings?bbox=126.88%2C35.15%2C126.96%2C35.23&zoom=14&pageSize=10")
+  test "$(printf '%s' "$viewport" | jq -r '.data.items | length > 0')" = "true"
+
+  tile_size=$(curl --fail --silent --show-error \
+    --cookie "$jar" --output /dev/null --write-out '%{size_download}' \
+    "$ORIGIN/$profile/api/v1/map/buildings/14/13968/6479.mvt")
+  test "$tile_size" -gt 0
   csrf_name="esafe_${profile}_csrf"
   csrf=$(awk -v name="$csrf_name" '$6 == name { print $7 }' "$jar")
   test -n "$csrf"
