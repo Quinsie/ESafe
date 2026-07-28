@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
@@ -32,7 +32,82 @@ function sessionEnvelope() {
   });
 }
 
-function installAuthenticatedFetch() {
+function sourceEnvelope() {
+  return envelope({
+    summary: "HEALTHY",
+    dataAsOf: "2026-07-29T00:00:00Z",
+    sources: [
+      {
+        source: "NFDS",
+        executionMode: "FIXTURE",
+        enabled: true,
+        status: "HEALTHY",
+        lastAttemptAt: "2026-07-29T00:00:00Z",
+        lastSuccessAt: "2026-07-29T00:00:00Z",
+        lastFailureAt: null,
+        consecutiveFailures: 0,
+        nextPollAt: null,
+        backoffUntil: null,
+        parserVersion: "test",
+        contractVersion: "test",
+        updatedAt: "2026-07-29T00:00:00Z",
+      },
+    ],
+  });
+}
+
+function briefingEnvelope() {
+  return envelope({
+    headline: {
+      state: "NO_ACTIVE_CASES",
+      title: "현재 확인된 광주·전남 관제 Case가 없습니다.",
+      description: "수집원 상태를 함께 확인하세요.",
+      caseId: null,
+    },
+    metrics: {
+      urgentCases: 0,
+      activeCases: 0,
+      dueWithin24Hours: 0,
+      waitingApproval: 0,
+      sourceResolvedReview: 0,
+    },
+    riskReference: {
+      importId: "test",
+      sourceVersion: "test",
+      lineageVersion: "v27.1-focus-2026-03-60d",
+      referenceMonth: "2026-03",
+      horizonDays: 60,
+      buildingCount: 217238,
+      top1Count: 2173,
+      top10Count: 21724,
+      calculatedAt: "2026-07-29T00:00:00Z",
+    },
+    priorityRegions: [
+      {
+        regionCode: "29170",
+        name: "북구",
+        fullName: "광주광역시 북구",
+        buildingCount: 27585,
+        top1Count: 563,
+        top10Count: 5953,
+        top10Share: 21.58,
+        scoreP99: 0.969365,
+      },
+    ],
+    recentCases: [],
+    dataAsOf: "2026-07-29T00:00:00Z",
+  });
+}
+
+function tasksEnvelope() {
+  return envelope({
+    counts: { queued: 0, running: 0, waitingApproval: 0, onHold: 0, failed: 0 },
+    items: [],
+    dataAsOf: null,
+  });
+}
+
+function installAuthenticatedFetch(failedEndpoint?: string) {
   vi.stubGlobal(
     "fetch",
     vi.fn(async (input: RequestInfo | URL) => {
@@ -40,15 +115,20 @@ function installAuthenticatedFetch() {
       if (url.endsWith("/auth/session")) {
         return response(sessionEnvelope());
       }
-      if (url.endsWith("/meta")) {
+      if (failedEndpoint && url.endsWith(failedEndpoint)) {
         return response(
-          envelope({
-            profile: "DEMO",
-            profileBadge: "체험 데이터",
-            version: "0.1.0",
-            commit: "test",
-          }),
+          { data: null, error: { code: "PANEL_FAILED", message: "패널 점검 필요" } },
+          503,
         );
+      }
+      if (url.endsWith("/briefing")) {
+        return response(briefingEnvelope());
+      }
+      if (url.endsWith("/tasks/summary")) {
+        return response(tasksEnvelope());
+      }
+      if (url.endsWith("/sources/health")) {
+        return response(sourceEnvelope());
       }
       throw new Error(`unexpected request: ${url}`);
     }),
@@ -73,7 +153,7 @@ afterEach(() => {
 });
 
 describe("App authentication boundary", () => {
-  it("keeps the DEMO badge visible and renders H-01D only after session validation", async () => {
+  it("renders actual H-01D panels only after session validation", async () => {
     installAuthenticatedFetch();
     renderApp();
 
@@ -81,6 +161,22 @@ describe("App authentication boundary", () => {
     expect(await screen.findByRole("heading", { name: "오늘의 상황 브리핑" })).toBeVisible();
     expect(screen.getByText("체험 데이터")).toBeVisible();
     expect(await screen.findByText("데이터 정상")).toBeVisible();
+    expect(screen.getByText("217,238개", { exact: false })).toBeVisible();
+    const priorityPanel = screen
+      .getByRole("heading", { name: "우선 확인이 필요한 지역" })
+      .closest("section");
+    expect(priorityPanel).not.toBeNull();
+    expect(within(priorityPanel as HTMLElement).getByText("북구")).toBeVisible();
+  });
+
+  it("keeps healthy panels visible when the task panel fails", async () => {
+    installAuthenticatedFetch("/tasks/summary");
+    renderApp();
+
+    expect(await screen.findByText("패널 점검 필요")).toBeVisible();
+    expect(screen.getByText("현재 확인된 광주·전남 관제 Case가 없습니다.")).toBeVisible();
+    expect(screen.getByText("북구")).toBeVisible();
+    expect(screen.getAllByText("데이터 정상").length).toBeGreaterThan(0);
   });
 
   it("redirects an anonymous route to AUTH-01 and preserves the full return location", async () => {
@@ -95,8 +191,8 @@ describe("App authentication boundary", () => {
       if (url.endsWith("/auth/login")) {
         return response(sessionEnvelope());
       }
-      if (url.endsWith("/meta")) {
-        return response(envelope({ profile: "DEMO", profileBadge: "체험 데이터", commit: "test" }));
+      if (url.endsWith("/sources/health")) {
+        return response(sourceEnvelope());
       }
       throw new Error(`unexpected request: ${url}`);
     });
