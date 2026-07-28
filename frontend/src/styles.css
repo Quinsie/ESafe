@@ -383,3 +383,175 @@ a:focus-visible {
     gap: 16px;
   }
 }
+
+input:focus-visible {
+  outline: 3px solid #56a3ff;
+  outline-offset: 1px;
+}
+
+.auth-page {
+  min-height: 100vh;
+  padding: 0 42px 72px;
+  background: #fff;
+}
+
+.auth-topbar {
+  display: flex;
+  min-height: 76px;
+  align-items: center;
+  justify-content: space-between;
+  margin: 0 -42px;
+  padding: 0 28px;
+  border-bottom: 1px solid #1d2734;
+  font-size: 14px;
+}
+
+.auth-topbar > strong {
+  font-size: 22px;
+}
+
+.auth-topbar-meta {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+}
+
+.auth-intro {
+  margin-top: 34px;
+}
+
+.auth-intro h1 {
+  margin: 0 0 6px;
+  font-size: 30px;
+  letter-spacing: -0.035em;
+}
+
+.auth-intro p,
+.login-card-heading p,
+.auth-state-copy {
+  margin: 0;
+  color: #364152;
+}
+
+.login-card {
+  width: min(880px, calc(100vw - 160px));
+  min-height: 500px;
+  margin: 88px auto 0;
+  padding: 44px 40px 38px;
+  border: 2px solid #1c2530;
+  background: #fff;
+}
+
+.login-card-heading > strong {
+  display: block;
+  margin-bottom: 8px;
+  font-size: 32px;
+}
+
+.login-card form {
+  display: grid;
+  margin-top: 40px;
+  gap: 10px;
+}
+
+.login-card label {
+  margin-top: 8px;
+  font-weight: 800;
+}
+
+.login-card input {
+  width: 100%;
+  min-height: 48px;
+  padding: 0 14px;
+  border: 1px solid #26313e;
+  border-radius: 0;
+  color: #142033;
+  background: #fff;
+  font: inherit;
+}
+
+.auth-notice,
+.auth-error {
+  margin-top: 24px;
+  padding: 12px 14px;
+  border-left: 4px solid var(--warning);
+  color: #563000;
+  background: #fff4df;
+  line-height: 1.5;
+}
+
+.auth-error {
+  margin-top: 10px;
+  border-left-color: var(--danger);
+  color: #82171c;
+  background: #fff0f0;
+}
+
+.login-button {
+  min-width: 150px;
+  min-height: 56px;
+  margin: 22px auto 0;
+  padding: 0 30px;
+  border: 0;
+  color: white;
+  background: #151515;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.login-button:disabled,
+.logout-button:disabled {
+  cursor: wait;
+  opacity: 0.65;
+}
+
+.auth-state-copy {
+  margin-top: 32px;
+  font-size: 14px;
+}
+
+.auth-help {
+  width: min(880px, calc(100vw - 160px));
+  margin: 42px auto 0;
+  padding: 28px;
+  border: 2px solid #1c2530;
+  line-height: 1.6;
+}
+
+.auth-loading {
+  display: grid;
+  min-height: calc(100vh - 76px);
+  place-items: center;
+  color: var(--muted);
+  font-weight: 700;
+}
+
+.signed-in-user {
+  color: #26354a;
+  font-weight: 800;
+}
+
+.logout-button {
+  min-height: 38px;
+  padding: 0 12px;
+  border: 1px solid #bdcad9;
+  border-radius: 6px;
+  color: #152238;
+  background: white;
+  cursor: pointer;
+}
+
+@media (max-width: 1500px) {
+  .topbar-status {
+    gap: 9px;
+    font-size: 13px;
+  }
+
+  .as-of {
+    display: none;
+  }
+
+  .login-card {
+    margin-top: 54px;
+  }
+}
