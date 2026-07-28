@@ -92,6 +92,22 @@ login_and_verify() {
   incident_id=$(printf '%s' "$similar_incidents" | jq -r '.data.items[0].incidentId')
   test -n "$incident_id"
 
+  matched_incidents=$(curl --fail --silent --show-error \
+    --cookie "$jar" "$ORIGIN/$profile/api/v1/similar/incidents?building=$building_id&pageSize=2")
+  test "$(printf '%s' "$matched_incidents" | jq -r '.data.filters.sort')" = "match"
+  test "$(printf '%s' "$matched_incidents" | jq -r '.data.items[0].conditionMatch.isProbability')" = "false"
+  test "$(printf '%s' "$matched_incidents" | jq -r '.data.items[0].conditionMatch.score >= .data.items[1].conditionMatch.score')" = "true"
+
+  oldest_incidents=$(curl --fail --silent --show-error \
+    --cookie "$jar" "$ORIGIN/$profile/api/v1/similar/incidents?sort=oldest&from=1900-01-01&to=2099-12-31&pageSize=2")
+  test "$(printf '%s' "$oldest_incidents" | jq -r '.data.filters.sort')" = "oldest"
+  test "$(printf '%s' "$oldest_incidents" | jq -r '.data.pagination.total')" = "197"
+
+  invalid_body="$TMP_DIR/$profile-invalid-date.json"
+  invalid_status=$(curl --silent --show-error --output "$invalid_body" --write-out '%{http_code}' \
+    --cookie "$jar" "$ORIGIN/$profile/api/v1/similar/incidents?from=2026-05-02&to=2026-05-01")
+  test "$invalid_status" = "422"
+  test "$(jq -r '.error.code' "$invalid_body")" = "INVALID_DATE_RANGE"
   similar_candidates=$(curl --fail --silent --show-error \
     --cookie "$jar" "$ORIGIN/$profile/api/v1/similar/facilities?referenceIncident=$incident_id&pageSize=1")
   test "$(printf '%s' "$similar_candidates" | jq -r '.data.pagination.total')" = "217238"
