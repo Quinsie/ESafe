@@ -41,8 +41,8 @@ live_schema=$(docker compose exec -T db-live sh -c \
 demo_schema=$(docker compose exec -T db-demo sh -c \
   'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atc "$0"' \
   "SELECT (SELECT version_num FROM alembic_version) || ':' || (SELECT value FROM system_metadata WHERE key = 'bootstrap_profile')")
-test "$live_schema" = "20260729_0001:LIVE"
-test "$demo_schema" = "20260729_0001:DEMO"
+test "$live_schema" = "20260729_0002:LIVE"
+test "$demo_schema" = "20260729_0002:DEMO"
 
 live_queue=$(docker compose exec -T redis-live sh -c \
   'REDISCLI_AUTH="$REDIS_PASSWORD" redis-cli --raw LLEN live')
