@@ -20,6 +20,25 @@ x-backend-common: &backend-common
   tmpfs:
     - /tmp:rw,noexec,nosuid,size=128m
 
+x-importer-common: &importer-common
+  image: esafe-importer:${ESAFE_APP_VERSION:-dev}
+  build:
+    context: .
+    dockerfile: infra/importer/Dockerfile
+    target: runtime
+  profiles: ["tools"]
+  restart: "no"
+  init: true
+  user: "${ESAFE_HOST_UID:-1001}:${ESAFE_HOST_GID:-1001}"
+  security_opt:
+    - no-new-privileges:true
+  cap_drop:
+    - ALL
+  tmpfs:
+    - /tmp:rw,noexec,nosuid,size=256m
+  volumes:
+    - ./storage/reference:/reference:ro
+
 x-api-healthcheck: &api-healthcheck
   test:
     - CMD
@@ -361,6 +380,36 @@ services:
       timeout: 5s
       start_period: 30s
       retries: 5
+
+  import-live:
+    <<: *importer-common
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db-live:5432/${LIVE_DATABASE_NAME}
+      REFERENCE_ROOT: /reference
+      REFERENCE_IMPORT_ID: ${REFERENCE_IMPORT_ID}
+      ADMIN_BOUNDARY_SNAPSHOT: ${ADMIN_BOUNDARY_SNAPSHOT}
+    networks:
+      - live-backend
+    depends_on:
+      db-live:
+        condition: service_healthy
+      migrate-live:
+        condition: service_completed_successfully
+
+  import-demo:
+    <<: *importer-common
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db-demo:5432/${DEMO_DATABASE_NAME}
+      REFERENCE_ROOT: /reference
+      REFERENCE_IMPORT_ID: ${REFERENCE_IMPORT_ID}
+      ADMIN_BOUNDARY_SNAPSHOT: ${ADMIN_BOUNDARY_SNAPSHOT}
+    networks:
+      - demo-backend
+    depends_on:
+      db-demo:
+        condition: service_healthy
+      migrate-demo:
+        condition: service_completed_successfully
 
   gateway:
     image: esafe-gateway:${ESAFE_APP_VERSION:-dev}
