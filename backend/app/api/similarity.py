@@ -1,3 +1,4 @@
+from datetime import date
 from typing import Annotated, Any
 from uuid import UUID
 
@@ -32,6 +33,13 @@ async def incidents(
     region: Annotated[str | None, Query(pattern="^[0-9]{2,10}$")] = None,
     building: UUID | None = None,
     case: UUID | None = None,
+    from_date: Annotated[date | None, Query(alias="from")] = None,
+    to_date: Annotated[date | None, Query(alias="to")] = None,
+    incident_type: Annotated[str | None, Query(alias="incidentType", max_length=64)] = None,
+    facility_type: Annotated[str | None, Query(alias="facilityType", max_length=64)] = None,
+    damage: Annotated[str | None, Query(max_length=64)] = None,
+    query_text: Annotated[str | None, Query(alias="q", max_length=80)] = None,
+    sort: str | None = None,
     page: Annotated[int, Query(ge=1)] = 1,
     page_size: Annotated[int, Query(alias="pageSize", ge=1, le=50)] = 20,
 ) -> Any:
@@ -42,6 +50,13 @@ async def incidents(
             region,
             building,
             case,
+            from_date,
+            to_date,
+            incident_type,
+            facility_type,
+            damage,
+            query_text,
+            sort or ("match" if building or case else "recent"),
             page,
             page_size,
             settings.health_timeout_seconds,

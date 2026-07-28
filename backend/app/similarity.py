@@ -2,6 +2,7 @@
 import asyncio
 import math
 from dataclasses import dataclass
+from datetime import date
 from typing import Any
 from uuid import UUID
 
@@ -20,13 +21,45 @@ _BUILDING_USE_RULES = (
     ("단독주택", ("단독주택",)),
     ("숙박시설", ("숙박",)),
     ("공장", ("공장",)),
-    ("동식물 관련시설", ("동식물", "축사",)),
-    ("판매시설", ("판매", "시장",)),
+    (
+        "동식물 관련시설",
+        (
+            "동식물",
+            "축사",
+        ),
+    ),
+    (
+        "판매시설",
+        (
+            "판매",
+            "시장",
+        ),
+    ),
     ("근린생활시설", ("근린생활", "제1종근생", "제2종근생")),
     ("창고시설", ("창고",)),
-    ("자동차 관련시설", ("자동차", "주차",)),
-    ("교육연구시설", ("교육", "학교", "연구",)),
-    ("의료시설", ("의료", "병원", "요양",)),
+    (
+        "자동차 관련시설",
+        (
+            "자동차",
+            "주차",
+        ),
+    ),
+    (
+        "교육연구시설",
+        (
+            "교육",
+            "학교",
+            "연구",
+        ),
+    ),
+    (
+        "의료시설",
+        (
+            "의료",
+            "병원",
+            "요양",
+        ),
+    ),
     ("종교시설", ("종교",)),
 )
 
@@ -144,13 +177,19 @@ def _incident(row: Any, match: dict[str, Any] | None = None) -> dict[str, Any]:
 
 async def _load_incident(connection: AsyncConnection, incident_id: UUID) -> Any:
     row = (
-        await connection.execute(
-            text("SELECT * FROM historical_incident WHERE incident_id = :incident_id"),
-            {"incident_id": incident_id},
+        (
+            await connection.execute(
+                text("SELECT * FROM historical_incident WHERE incident_id = :incident_id"),
+                {"incident_id": incident_id},
+            )
         )
-    ).mappings().one_or_none()
+        .mappings()
+        .one_or_none()
+    )
     if row is None:
-        raise SimilarityContractError(404, "INCIDENT_NOT_FOUND", "과거 사고사례를 찾을 수 없습니다.")
+        raise SimilarityContractError(
+            404, "INCIDENT_NOT_FOUND", "과거 사고사례를 찾을 수 없습니다."
+        )
     return row
 
 
@@ -163,9 +202,10 @@ async def _load_context(
     explicit_region = None
     if region_code:
         explicit_region = (
-            await connection.execute(
-                text(
-                    """
+            (
+                await connection.execute(
+                    text(
+                        """
                     SELECT a.region_code, a.level, a.name, a.full_name,
                            CASE WHEN a.level = 'SIDO' THEN a.full_name ELSE p.full_name END AS sido_name,
                            CASE WHEN a.level = 'SIGUNGU' THEN a.name END AS sigungu_name
@@ -173,19 +213,23 @@ async def _load_context(
                     LEFT JOIN admin_region p ON p.region_code = a.parent_code
                     WHERE a.region_code = :region_code
                     """
-                ),
-                {"region_code": region_code},
+                    ),
+                    {"region_code": region_code},
+                )
             )
-        ).mappings().one_or_none()
+            .mappings()
+            .one_or_none()
+        )
         if explicit_region is None:
             raise SimilarityContractError(404, "REGION_NOT_FOUND", "지역을 찾을 수 없습니다.")
 
     case = None
     if case_id:
         case = (
-            await connection.execute(
-                text(
-                    """
+            (
+                await connection.execute(
+                    text(
+                        """
                     SELECT c.case_id, c.case_number, c.title, c.case_type, c.status,
                            c.primary_region_code, a.full_name AS region_name,
                            CASE WHEN a.level = 'SIDO' THEN a.full_name ELSE p.full_name END AS sido_name,
@@ -196,10 +240,13 @@ async def _load_context(
                     LEFT JOIN admin_region p ON p.region_code = a.parent_code
                     WHERE c.case_id = :case_id
                     """
-                ),
-                {"case_id": case_id},
+                    ),
+                    {"case_id": case_id},
+                )
             )
-        ).mappings().one_or_none()
+            .mappings()
+            .one_or_none()
+        )
         if case is None:
             raise SimilarityContractError(404, "CASE_NOT_FOUND", "관제 사건을 찾을 수 없습니다.")
 
@@ -228,9 +275,10 @@ async def _load_context(
     building = None
     if resolved_building_id:
         building = (
-            await connection.execute(
-                text(
-                    """
+            (
+                await connection.execute(
+                    text(
+                        """
                     SELECT b.building_id, b.building_name, b.road_address, b.lot_address,
                            b.region_code, a.full_name AS region_name, a.name AS sigungu_name,
                            p.full_name AS sido_name, b.customer_data ->> 'main_use_name' AS main_use_name
@@ -239,15 +287,20 @@ async def _load_context(
                     LEFT JOIN admin_region p ON p.region_code = a.parent_code
                     WHERE b.building_id = :building_id
                     """
-                ),
-                {"building_id": resolved_building_id},
+                    ),
+                    {"building_id": resolved_building_id},
+                )
             )
-        ).mappings().one_or_none()
+            .mappings()
+            .one_or_none()
+        )
         if building is None:
             raise SimilarityContractError(404, "BUILDING_NOT_FOUND", "건물을 찾을 수 없습니다.")
 
     scoring_sido = building["sido_name"] if building else (case["sido_name"] if case else None)
-    scoring_sigungu = building["sigungu_name"] if building else (case["sigungu_name"] if case else None)
+    scoring_sigungu = (
+        building["sigungu_name"] if building else (case["sigungu_name"] if case else None)
+    )
     return {
         "explicitRegion": dict(explicit_region) if explicit_region else None,
         "case": (
@@ -290,18 +343,38 @@ async def incident_search(
     region_code: str | None,
     building_id: UUID | None,
     case_id: UUID | None,
+    from_date: date | None,
+    to_date: date | None,
+    incident_type_filter: str | None,
+    facility_type_filter: str | None,
+    damage_filter: str | None,
+    query_text: str | None,
+    sort: str,
     page: int,
     page_size: int,
     timeout_seconds: float,
 ) -> dict[str, Any]:
+    if from_date and to_date and from_date > to_date:
+        raise SimilarityContractError(
+            422, "INVALID_DATE_RANGE", "조회 시작일이 종료일보다 늦습니다."
+        )
+    if sort not in {"recent", "oldest", "match"}:
+        raise SimilarityContractError(422, "INVALID_SORT", "사고사례 정렬값이 올바르지 않습니다.")
+
     async def query() -> dict[str, Any]:
         async with engine.connect() as connection:
             context = await _load_context(connection, region_code, building_id, case_id)
             rows = (
-                await connection.execute(
-                    text("SELECT * FROM historical_incident ORDER BY reported_on DESC NULLS LAST, incident_id")
+                (
+                    await connection.execute(
+                        text(
+                            "SELECT * FROM historical_incident ORDER BY reported_on DESC NULLS LAST, incident_id"
+                        )
+                    )
                 )
-            ).mappings().all()
+                .mappings()
+                .all()
+            )
         explicit = context["explicitRegion"]
         if explicit:
             rows = [
@@ -309,8 +382,40 @@ async def incident_search(
                 for row in rows
                 if (
                     row["sido_name"] == explicit["sido_name"]
-                    and (explicit["sigungu_name"] is None or row["sigungu_name"] == explicit["sigungu_name"])
+                    and (
+                        explicit["sigungu_name"] is None
+                        or row["sigungu_name"] == explicit["sigungu_name"]
+                    )
                 )
+            ]
+        if from_date:
+            rows = [row for row in rows if row["reported_on"] and row["reported_on"] >= from_date]
+        if to_date:
+            rows = [row for row in rows if row["reported_on"] and row["reported_on"] <= to_date]
+        if incident_type_filter:
+            rows = [row for row in rows if row["incident_type"] == incident_type_filter]
+        if facility_type_filter:
+            rows = [row for row in rows if row["facility_type"] == facility_type_filter]
+        if damage_filter:
+            rows = [row for row in rows if damage_filter in list(row["damage_categories"])]
+        normalized_query = (query_text or "").strip().casefold()
+        if normalized_query:
+            rows = [
+                row
+                for row in rows
+                if normalized_query
+                in " ".join(
+                    [
+                        row["display_title"],
+                        row["incident_type"],
+                        row["facility_type"],
+                        row["sido_name"] or "",
+                        row["sigungu_name"] or "",
+                        *list(row["cause_categories"]),
+                        *list(row["damage_categories"]),
+                        *list(row["equipment_categories"]),
+                    ]
+                ).casefold()
             ]
         scoring = context["scoring"]
         scored: list[tuple[Any, dict[str, Any] | None]] = []
@@ -326,10 +431,25 @@ async def incident_search(
                     scoring["sigunguName"],
                 )
             scored.append((row, match))
-        if any(match is not None for _, match in scored):
+        if sort == "match" and any(match is not None for _, match in scored):
             scored.sort(
                 key=lambda item: (
                     -(item[1]["score"] if item[1] else -1),
+                    -(item[0]["reported_on"].toordinal() if item[0]["reported_on"] else 0),
+                    str(item[0]["incident_id"]),
+                )
+            )
+        elif sort == "oldest":
+            scored.sort(
+                key=lambda item: (
+                    item[0]["reported_on"] is None,
+                    item[0]["reported_on"].toordinal() if item[0]["reported_on"] else 0,
+                    str(item[0]["incident_id"]),
+                )
+            )
+        else:
+            scored.sort(
+                key=lambda item: (
                     -(item[0]["reported_on"].toordinal() if item[0]["reported_on"] else 0),
                     str(item[0]["incident_id"]),
                 )
@@ -346,6 +466,15 @@ async def incident_search(
                 "totalPages": math.ceil(total / page_size) if total else 0,
             },
             "selection": {key: value for key, value in context.items() if key != "scoring"},
+            "filters": {
+                "from": from_date.isoformat() if from_date else None,
+                "to": to_date.isoformat() if to_date else None,
+                "incidentType": incident_type_filter,
+                "facilityType": facility_type_filter,
+                "damage": damage_filter,
+                "query": query_text,
+                "sort": sort,
+            },
             "matchDefinition": {
                 "label": "조건 정합도",
                 "isProbability": False,
@@ -390,9 +519,10 @@ async def candidate_buildings(
                 ).scalar_one()
             )
             rows = (
-                await connection.execute(
-                    text(
-                        f"""
+                (
+                    await connection.execute(
+                        text(
+                            f"""
                         WITH scored AS (
                             SELECT b.building_id, b.building_name, b.road_address, b.lot_address,
                                    b.region_code, a.full_name AS region_name, a.name AS sigungu_name,
@@ -433,10 +563,13 @@ async def candidate_buildings(
                         ) f ON true
                         ORDER BY s.facility_points + s.geography_points DESC, s.regional_rank, s.building_id
                         """
-                    ),
-                    params,
+                        ),
+                        params,
+                    )
                 )
-            ).mappings().all()
+                .mappings()
+                .all()
+            )
         items = []
         for row in rows:
             match = condition_match(
@@ -483,7 +616,9 @@ async def candidate_buildings(
                     },
                     "facilitySummary": {
                         "linkedFacilityCount": int(row["linked_count"]),
-                        "latestInspectionDate": row["latest_inspection_date"].isoformat() if row["latest_inspection_date"] else None,
+                        "latestInspectionDate": row["latest_inspection_date"].isoformat()
+                        if row["latest_inspection_date"]
+                        else None,
                     },
                 }
             )
@@ -512,9 +647,10 @@ async def comparison(
         async with engine.connect() as connection:
             incident = await _load_incident(connection, reference_incident_id)
             row = (
-                await connection.execute(
-                    text(
-                        """
+                (
+                    await connection.execute(
+                        text(
+                            """
                         SELECT b.building_id, b.building_name, b.road_address, b.lot_address,
                                b.region_code, a.full_name AS region_name, a.name AS sigungu_name,
                                p.full_name AS sido_name, b.customer_data ->> 'main_use_name' AS main_use,
@@ -540,12 +676,17 @@ async def comparison(
                         ) f ON true
                         WHERE b.building_id = :building_id
                         """
-                    ),
-                    {"building_id": candidate_building_id},
+                        ),
+                        {"building_id": candidate_building_id},
+                    )
                 )
-            ).mappings().one_or_none()
+                .mappings()
+                .one_or_none()
+            )
         if row is None:
-            raise SimilarityContractError(404, "BUILDING_NOT_FOUND", "후보 건물을 찾을 수 없습니다.")
+            raise SimilarityContractError(
+                404, "BUILDING_NOT_FOUND", "후보 건물을 찾을 수 없습니다."
+            )
         match = condition_match(
             incident["facility_type"],
             incident["sido_name"],
@@ -594,7 +735,9 @@ async def comparison(
                 },
                 "facilitySummary": {
                     "linkedFacilityCount": int(row["linked_count"]),
-                    "latestInspectionDate": row["latest_inspection_date"].isoformat() if row["latest_inspection_date"] else None,
+                    "latestInspectionDate": row["latest_inspection_date"].isoformat()
+                    if row["latest_inspection_date"]
+                    else None,
                 },
                 "risk": {
                     "referenceMonth": REFERENCE_MONTH,

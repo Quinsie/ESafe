@@ -15,6 +15,9 @@ const RiskMap = lazy(() => import("./map").then((module) => ({ default: module.R
 const SpatialAnalysis = lazy(() =>
   import("./analysis").then((module) => ({ default: module.SpatialAnalysis })),
 );
+const SimilarityAnalysis = lazy(() =>
+  import("./similarity").then((module) => ({ default: module.SimilarityAnalysis })),
+);
 
 interface SessionData {
   user: {
@@ -43,6 +46,9 @@ const routeTitles: Record<string, string> = {
   "/approvals": "검토·승인",
   "/automation/runs": "자동화 기록",
   "/artifacts": "보고서·산출물",
+  "/similar/incidents": "과거 사고사례 검색",
+  "/similar/facilities": "유사 위험시설 탐색",
+  "/similar/compare": "후보 시설 비교",
   "/notifications": "알림",
 };
 
@@ -206,7 +212,11 @@ function Sidebar({ currentPath, runtime }: { currentPath: string; runtime: Profi
               .filter((item) => item.group === group)
               .map((item) => (
                 <AppLink
-                  className="nav-item"
+                  className={
+                    item.to === "/regions" && currentPath.startsWith("/similar/")
+                      ? "nav-item is-active"
+                      : "nav-item"
+                  }
                   currentPath={currentPath}
                   key={item.to}
                   runtime={runtime}
@@ -318,6 +328,18 @@ function AuthenticatedShell({
           }
         >
           <SpatialAnalysis currentPath={currentPath} runtime={runtime} />
+        </Suspense>
+      ) : currentPath.startsWith("/similar/") ? (
+        <Suspense
+          fallback={
+            <main className="page" id="main-content">
+              <div className="auth-loading" role="status">
+                유사분석 화면을 준비하고 있습니다.
+              </div>
+            </main>
+          }
+        >
+          <SimilarityAnalysis currentPath={currentPath} runtime={runtime} />
         </Suspense>
       ) : title ? (
         <SectionPlaceholder title={title} />
