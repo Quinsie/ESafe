@@ -1,12 +1,10 @@
 FROM python:3.12-slim-bookworm AS runtime
 
-ARG ESAFE_BUILD_COMMIT=unknown
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
-    PIP_NO_CACHE_DIR=1 \
-    ESAFE_BUILD_COMMIT=${ESAFE_BUILD_COMMIT}
+    PIP_NO_CACHE_DIR=1
 
 WORKDIR /app
 
@@ -19,6 +17,9 @@ RUN python -m pip install --requirement /tmp/requirements.txt
 COPY --chown=esafe:esafe backend/app /app/app
 COPY --chown=esafe:esafe backend/alembic /app/alembic
 COPY --chown=esafe:esafe backend/alembic.ini /app/alembic.ini
+
+ARG ESAFE_BUILD_COMMIT=unknown
+ENV ESAFE_BUILD_COMMIT=${ESAFE_BUILD_COMMIT}
 
 USER 10001:10001
 EXPOSE 8000
