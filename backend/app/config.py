@@ -38,6 +38,7 @@ class Settings(BaseSettings):
         default="http://127.0.0.1:8080",
         alias="ESAFE_PUBLIC_ORIGINS",
     )
+    nfds_enabled: bool = Field(default=True, alias="NFDS_ENABLED")
     session_idle_seconds: int = Field(default=8 * 60 * 60, ge=60)
     session_absolute_seconds: int = Field(default=12 * 60 * 60, ge=60)
     login_rate_limit_attempts: int = Field(default=5, ge=1, le=100)

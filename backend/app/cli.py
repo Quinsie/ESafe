@@ -56,6 +56,49 @@ async def seed_system_metadata() -> None:
                 raise RuntimeError(
                     "The configured public user ID differs from the initialized account"
                 )
+
+            execution_mode = "EXTERNAL" if settings.profile == "LIVE" else "FIXTURE"
+            sources = (
+                ("NFDS", settings.nfds_enabled if settings.profile == "LIVE" else True),
+                ("KMA_WARNING", True),
+                ("DISASTER_MESSAGE", True),
+            )
+            for source, enabled in sources:
+                await connection.execute(
+                    text(
+                        """
+                        INSERT INTO source_health (
+                            source, execution_mode, enabled, status,
+                            parser_version, contract_version
+                        )
+                        VALUES (
+                            :source, :execution_mode, :enabled,
+                            CASE WHEN :enabled THEN 'OUTAGE' ELSE 'DISABLED' END,
+                            'pending', 'pending'
+                        )
+                        ON CONFLICT (source) DO UPDATE
+                        SET execution_mode = EXCLUDED.execution_mode,
+                            enabled = EXCLUDED.enabled,
+                            status = CASE
+                                WHEN NOT EXCLUDED.enabled THEN 'DISABLED'
+                                WHEN source_health.status = 'DISABLED' THEN 'OUTAGE'
+                                ELSE source_health.status
+                            END,
+                            updated_at = CASE
+                                WHEN source_health.execution_mode
+                                     IS DISTINCT FROM EXCLUDED.execution_mode
+                                  OR source_health.enabled IS DISTINCT FROM EXCLUDED.enabled
+                                THEN CURRENT_TIMESTAMP
+                                ELSE source_health.updated_at
+                            END
+                        """
+                    ),
+                    {
+                        "source": source,
+                        "execution_mode": execution_mode,
+                        "enabled": enabled,
+                    },
+                )
     finally:
         await engine.dispose()
 
