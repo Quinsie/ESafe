@@ -423,6 +423,38 @@ services:
       migrate-demo:
         condition: service_completed_successfully
 
+  import-similarity-live:
+    <<: *importer-common
+    entrypoint: ["python", "-m", "esafe_importer.similarity"]
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db-live:5432/${LIVE_DATABASE_NAME}
+      REFERENCE_ROOT: /reference
+      REFERENCE_IMPORT_ID: ${REFERENCE_IMPORT_ID}
+      ADMIN_BOUNDARY_SNAPSHOT: ${ADMIN_BOUNDARY_SNAPSHOT}
+    networks:
+      - live-backend
+    depends_on:
+      db-live:
+        condition: service_healthy
+      migrate-live:
+        condition: service_completed_successfully
+
+  import-similarity-demo:
+    <<: *importer-common
+    entrypoint: ["python", "-m", "esafe_importer.similarity"]
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db-demo:5432/${DEMO_DATABASE_NAME}
+      REFERENCE_ROOT: /reference
+      REFERENCE_IMPORT_ID: ${REFERENCE_IMPORT_ID}
+      ADMIN_BOUNDARY_SNAPSHOT: ${ADMIN_BOUNDARY_SNAPSHOT}
+    networks:
+      - demo-backend
+    depends_on:
+      db-demo:
+        condition: service_healthy
+      migrate-demo:
+        condition: service_completed_successfully
+
   gateway:
     image: esafe-gateway:${ESAFE_APP_VERSION:-dev}
     build:
