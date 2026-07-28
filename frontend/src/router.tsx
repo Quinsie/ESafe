@@ -78,6 +78,7 @@ export function AppLink({
     }
     event.preventDefault();
     navigateInternal(runtime, to);
+    window.scrollTo({ behavior: "auto", left: 0, top: 0 });
   };
 
   return (
