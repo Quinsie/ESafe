@@ -40,7 +40,7 @@ class Settings(BaseSettings):
 
     @property
     def profile_badge(self) -> str:
-        return "??? ??" if self.profile == "LIVE" else "?? ???"
+        return "실시간 연동" if self.profile == "LIVE" else "체험 데이터"
 
 
 @lru_cache(maxsize=1)

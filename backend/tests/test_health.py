@@ -2,7 +2,8 @@ from uuid import UUID, uuid4
 
 from fastapi.testclient import TestClient
 
-from app.main import app
+from app.config import Settings
+from app.main import PUBLIC_INTERNAL_ERROR_MESSAGE, app
 
 
 def test_liveness_has_contract_and_generated_request_id() -> None:
@@ -42,3 +43,9 @@ def test_readiness_fails_closed_without_dependencies() -> None:
 
     assert response.status_code == 503
     assert response.json()["data"]["status"] == "DOWN"
+
+
+def test_public_korean_labels_are_preserved() -> None:
+    assert Settings(ESAFE_PROFILE="LIVE").profile_badge == "실시간 연동"
+    assert Settings(ESAFE_PROFILE="DEMO").profile_badge == "체험 데이터"
+    assert PUBLIC_INTERNAL_ERROR_MESSAGE == "요청을 처리하지 못했습니다."

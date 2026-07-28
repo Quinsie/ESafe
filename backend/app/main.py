@@ -14,6 +14,7 @@ from app.middleware import RequestContextMiddleware
 
 settings = get_settings()
 configure_logging(settings.log_level)
+PUBLIC_INTERNAL_ERROR_MESSAGE = "요청을 처리하지 못했습니다."
 
 
 @asynccontextmanager
@@ -52,6 +53,6 @@ async def unhandled_exception(request: Request, exc: Exception) -> JSONResponse:
         content=envelope(
             request,
             None,
-            error={"code": "INTERNAL_ERROR", "message": "??? ???? ?????."},
+            error={"code": "INTERNAL_ERROR", "message": PUBLIC_INTERNAL_ERROR_MESSAGE},
         ),
     )
