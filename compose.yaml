@@ -130,6 +130,34 @@ services:
       - SETGID
       - SETUID
 
+  migrate-live:
+    <<: *backend-common
+    restart: "no"
+    command: ["sh", "-c", "alembic upgrade head && python -m app.cli seed"]
+    environment:
+      ESAFE_PROFILE: LIVE
+      ESAFE_SESSION_SECRET: ${ESAFE_SESSION_SECRET_LIVE}
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db-live:5432/${LIVE_DATABASE_NAME}
+    networks:
+      - live-backend
+    depends_on:
+      db-live:
+        condition: service_healthy
+
+  migrate-demo:
+    <<: *backend-common
+    restart: "no"
+    command: ["sh", "-c", "alembic upgrade head && python -m app.cli seed"]
+    environment:
+      ESAFE_PROFILE: DEMO
+      ESAFE_SESSION_SECRET: ${ESAFE_SESSION_SECRET_DEMO}
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db-demo:5432/${DEMO_DATABASE_NAME}
+    networks:
+      - demo-backend
+    depends_on:
+      db-demo:
+        condition: service_healthy
+
   api-live:
     <<: *backend-common
     environment:
@@ -152,6 +180,8 @@ services:
     depends_on:
       db-live:
         condition: service_healthy
+      migrate-live:
+        condition: service_completed_successfully
       redis-live:
         condition: service_healthy
     healthcheck: *api-healthcheck
@@ -178,6 +208,8 @@ services:
     depends_on:
       db-demo:
         condition: service_healthy
+      migrate-demo:
+        condition: service_completed_successfully
       redis-demo:
         condition: service_healthy
     healthcheck: *api-healthcheck
@@ -211,6 +243,8 @@ services:
     depends_on:
       db-live:
         condition: service_healthy
+      migrate-live:
+        condition: service_completed_successfully
       redis-live:
         condition: service_healthy
     healthcheck:
@@ -249,6 +283,8 @@ services:
     depends_on:
       db-demo:
         condition: service_healthy
+      migrate-demo:
+        condition: service_completed_successfully
       redis-demo:
         condition: service_healthy
     healthcheck:

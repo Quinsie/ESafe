@@ -17,6 +17,8 @@ COPY backend/requirements.txt /tmp/requirements.txt
 RUN python -m pip install --requirement /tmp/requirements.txt
 
 COPY --chown=esafe:esafe backend/app /app/app
+COPY --chown=esafe:esafe backend/alembic /app/alembic
+COPY --chown=esafe:esafe backend/alembic.ini /app/alembic.ini
 
 USER 10001:10001
 EXPOSE 8000
@@ -33,6 +35,4 @@ COPY backend/requirements-dev.txt /tmp/requirements-dev.txt
 RUN python -m pip install --requirement /tmp/requirements-dev.txt
 COPY backend/pyproject.toml /app/pyproject.toml
 COPY backend/tests /app/tests
-RUN ruff check app tests \
-    && mypy app \
-    && pytest
+RUN ruff check app alembic tests && mypy app alembic && pytest
