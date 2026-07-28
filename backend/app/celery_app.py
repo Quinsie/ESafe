@@ -32,7 +32,7 @@ def create_celery_app(settings: Settings) -> Celery:
         },
     )
 
-    @application.task(name="esafe.runtime_heartbeat")
+    @application.task(name="esafe.runtime_heartbeat", shared=False, lazy=False)
     def runtime_heartbeat() -> dict[str, Any]:
         return {
             "profile": settings.profile,
