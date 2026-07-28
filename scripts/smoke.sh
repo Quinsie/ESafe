@@ -86,6 +86,22 @@ login_and_verify() {
     --cookie "$jar" "$ORIGIN/$profile/api/v1/buildings/$building_id")
   test "$(printf '%s' "$building" | jq -r .data.buildingId)" = "$building_id"
 
+  similar_incidents=$(curl --fail --silent --show-error \
+    --cookie "$jar" "$ORIGIN/$profile/api/v1/similar/incidents?pageSize=1")
+  test "$(printf '%s' "$similar_incidents" | jq -r '.data.pagination.total')" = "197"
+  incident_id=$(printf '%s' "$similar_incidents" | jq -r '.data.items[0].incidentId')
+  test -n "$incident_id"
+
+  similar_candidates=$(curl --fail --silent --show-error \
+    --cookie "$jar" "$ORIGIN/$profile/api/v1/similar/facilities?referenceIncident=$incident_id&pageSize=1")
+  test "$(printf '%s' "$similar_candidates" | jq -r '.data.pagination.total')" = "217238"
+  candidate_id=$(printf '%s' "$similar_candidates" | jq -r '.data.items[0].buildingId')
+  test -n "$candidate_id"
+
+  comparison=$(curl --fail --silent --show-error \
+    --cookie "$jar" "$ORIGIN/$profile/api/v1/similar/compare?referenceIncident=$incident_id&candidateBuilding=$candidate_id")
+  test "$(printf '%s' "$comparison" | jq -r '.data.conditionMatch.isProbability')" = "false"
+  test "$(printf '%s' "$comparison" | jq -r '.data.evidence.status')" = "INSUFFICIENT"
   viewport=$(curl --fail --silent --show-error \
     --cookie "$jar" "$ORIGIN/$profile/api/v1/map/buildings?bbox=126.88%2C35.15%2C126.96%2C35.23&zoom=14&pageSize=10")
   test "$(printf '%s' "$viewport" | jq -r '.data.items | length > 0')" = "true"

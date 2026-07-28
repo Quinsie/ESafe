@@ -12,6 +12,7 @@ from app.api.auth import router as auth_router
 from app.api.health import router as health_router
 from app.api.home import router as home_router
 from app.api.responses import envelope
+from app.api.similarity import router as similarity_router
 from app.api.spatial import router as spatial_router
 from app.config import get_settings
 from app.logging import configure_logging
@@ -52,6 +53,7 @@ app.include_router(auth_router)
 app.include_router(health_router)
 app.include_router(home_router)
 app.include_router(spatial_router)
+app.include_router(similarity_router)
 
 
 @app.exception_handler(AuthError)
