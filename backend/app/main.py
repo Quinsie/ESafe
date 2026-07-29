@@ -16,6 +16,7 @@ from app.api.demo import router as demo_router
 from app.api.documents import router as documents_router
 from app.api.health import router as health_router
 from app.api.home import router as home_router
+from app.api.inspections import router as inspections_router
 from app.api.responses import envelope
 from app.api.similarity import router as similarity_router
 from app.api.spatial import router as spatial_router
@@ -61,6 +62,7 @@ app.include_router(health_router)
 app.include_router(automation_router)
 app.include_router(home_router)
 app.include_router(spatial_router)
+app.include_router(inspections_router)
 app.include_router(similarity_router)
 app.include_router(cases_router)
 app.include_router(workflow_router)

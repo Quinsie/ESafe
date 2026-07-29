@@ -538,6 +538,30 @@ async def _reset_rows(connection: AsyncConnection) -> tuple[dict[str, int], list
     ]
     statements = (
         (
+            "inspection_approval_decisions",
+            "DELETE FROM approval_decision WHERE approval_request_id IN (SELECT approval_request_id FROM approval_request WHERE target_type = 'INSPECTION_SCENARIO')",
+        ),
+        (
+            "inspection_approval_requests",
+            "DELETE FROM approval_request WHERE target_type = 'INSPECTION_SCENARIO'",
+        ),
+        (
+            "inspection_team_links",
+            "DELETE FROM inspection_team_work_item",
+        ),
+        (
+            "inspection_work_items",
+            "DELETE FROM work_item WHERE work_type = 'INSPECTION_PLAN'",
+        ),
+        (
+            "inspection_selection_clear",
+            "UPDATE inspection_simulation SET selected_scenario_id = NULL WHERE selected_scenario_id IS NOT NULL",
+        ),
+        (
+            "inspection_simulations",
+            "DELETE FROM inspection_simulation",
+        ),
+        (
             "approval_decisions",
             "DELETE FROM approval_decision WHERE approval_request_id IN (SELECT r.approval_request_id FROM approval_request r JOIN case_record c ON c.case_id=r.case_id WHERE c.is_simulated)",
         ),

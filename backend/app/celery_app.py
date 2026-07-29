@@ -150,6 +150,18 @@ def create_celery_app(settings: Settings) -> Celery:
 
         return asyncio.run(generate_document_artifact(settings, UUID(artifact_id)))
 
+    @application.task(
+        name="esafe.run_inspection_simulation",
+        shared=False,
+        lazy=False,
+    )
+    def run_inspection_simulation_task(simulation_id: str) -> dict[str, Any]:
+        from uuid import UUID
+
+        from app.inspection_engine import run_inspection_simulation
+
+        return asyncio.run(run_inspection_simulation(settings, UUID(simulation_id)))
+
     return application
 
 

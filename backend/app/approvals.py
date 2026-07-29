@@ -448,6 +448,15 @@ async def _approval_target(
             target_version,
             lock=lock,
         )
+    elif target_type == "INSPECTION_SCENARIO":
+        from app.inspection_approval import inspection_approval_target
+
+        target = await inspection_approval_target(
+            connection,
+            target_id,
+            target_version,
+            lock=lock,
+        )
     else:
         raise WorkflowContractError(
             409,
@@ -511,6 +520,24 @@ async def _detail(
         .mappings()
         .one_or_none()
     )
+    if request["target_type"] == "RECOMMENDATION":
+        work_item_count = len(target["recommendation"]["actions"])
+        impact_summary = (
+            "승인하면 제안 행동별 내부 수행과업과 체크리스트가 생성됩니다. "
+            "외부 기관 연락·발송·현장 조치는 자동 실행되지 않습니다."
+        )
+    elif request["target_type"] == "INSPECTION_SCENARIO":
+        work_item_count = len(target["inspection"]["teams"])
+        impact_summary = (
+            "승인하면 익명 점검반별 내부 수행과업이 생성되고 대상 목록이 잠깁니다. "
+            "개인 담당자 배정이나 외부 요청은 자동 실행되지 않습니다."
+        )
+    else:
+        work_item_count = 0
+        impact_summary = (
+            "승인하면 현재 문서 버전이 잠기고 FINAL HWPX·PDF 생성이 "
+            "시작됩니다. 외부 전송은 실행되지 않습니다."
+        )
     return {
         "approvalRequestId": str(request["approval_request_id"]),
         "caseId": (
@@ -532,24 +559,11 @@ async def _detail(
         "case": target["case"],
         "recommendation": target.get("recommendation"),
         "document": target.get("document"),
+        "inspection": target.get("inspection"),
         "executionImpact": {
-            "workItemCount": (
-                len(target["recommendation"]["actions"])
-                if request["target_type"] == "RECOMMENDATION"
-                else 0
-            ),
+            "workItemCount": work_item_count,
             "externalEffect": False,
-            "summary": (
-                (
-                    "승인하면 제안 행동별 내부 수행과업과 체크리스트가 생성됩니다. "
-                    "외부 기관 연락·발송·현장 조치는 자동 실행되지 않습니다."
-                )
-                if request["target_type"] == "RECOMMENDATION"
-                else (
-                    "승인하면 현재 문서 버전이 잠기고 FINAL HWPX·PDF 생성이 "
-                    "시작됩니다. 외부 전송은 실행되지 않습니다."
-                )
-            ),
+            "summary": impact_summary,
         },
         "decision": (
             {
@@ -1176,6 +1190,17 @@ async def decide_approval(
                         "APPROVAL_CONTENT_CHANGED",
                         "승인 요청 이후 문서 상태가 달라졌습니다. 새로 검토해 주세요.",
                     )
+            if request["target_type"] == "INSPECTION_SCENARIO":
+                inspection = target["inspection"]
+                if (
+                    inspection["status"] != "APPROVAL_PENDING"
+                    or not inspection["confirmable"]
+                ):
+                    raise WorkflowContractError(
+                        409,
+                        "APPROVAL_CONTENT_CHANGED",
+                        "승인 요청 이후 점검계획 상태가 달라졌습니다. 새로 검토해 주세요.",
+                    )
             if (
                 normalized_decision == "APPROVED"
                 and request["evidence_status"] in ("INSUFFICIENT", "CONFLICT")
@@ -1372,7 +1397,7 @@ async def decide_approval(
                         ),
                         {"recommendation_id": request["target_id"]},
                     )
-            else:
+            elif request["target_type"] == "DOCUMENT_DRAFT":
                 document = target["document"]
                 document_version_id = UUID(document["documentVersionId"])
                 if normalized_decision == "APPROVED":
@@ -1426,6 +1451,15 @@ async def decide_approval(
                         "decision": normalized_decision,
                         "document_draft_id": request["target_id"],
                     },
+                )
+            else:
+                from app.inspection_approval import apply_inspection_decision
+
+                created_work_item_ids = await apply_inspection_decision(
+                    connection,
+                    scenario_id=request["target_id"],
+                    decision=normalized_decision,
+                    approval_request_id=approval_request_id,
                 )
             await _audit(
                 connection,
