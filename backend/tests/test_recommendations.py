@@ -21,8 +21,8 @@ PAST = UUID("00000000-0000-4000-8000-000000000103")
 
 
 def test_prompt_treats_unapplied_official_amendment_as_conflict() -> None:
-    assert PROMPT_VERSION == "case-recommendation-ko-v4"
-    assert GENERATION_VERSION == "recommendation-generator-v8"
+    assert PROMPT_VERSION == "case-recommendation-ko-v5"
+    assert GENERATION_VERSION == "recommendation-generator-v9"
     assert "변경 전 용어나 내용이 그대로 남아 있으면" in SYSTEM_PROMPT
     assert "하나의 CONFLICT 행동" in SYSTEM_PROMPT
 

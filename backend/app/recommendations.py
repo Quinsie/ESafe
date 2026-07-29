@@ -16,8 +16,8 @@ from app.ai_control import AiCostGate
 from app.config import Settings
 from app.upstage import UpstageChatClient
 
-PROMPT_VERSION = "case-recommendation-ko-v4"
-GENERATION_VERSION = "recommendation-generator-v8"
+PROMPT_VERSION = "case-recommendation-ko-v5"
+GENERATION_VERSION = "recommendation-generator-v9"
 ALLOWED_PRIVACY_STATUSES = frozenset(("PUBLIC_SAFE", "MASKED_VERIFIED"))
 QUOTE_TOKEN_PATTERN = re.compile(r"[가-힣A-Za-z0-9]{2,}")
 QUOTE_STOP_WORDS = frozenset(
@@ -1157,8 +1157,7 @@ async def run_case_recommendation(
             feature_name="case-recommendation-v1",
             privacy_verified=True,
             case_reference=case_id,
-            response_schema=recommendation_response_schema(evidence_rows),
-            schema_name="case_recommendation",
+            response_schema=None,
         )
         value = validate_recommendation_payload(
             chat_result.payload,
