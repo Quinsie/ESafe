@@ -61,6 +61,24 @@ docker compose config --quiet
 
 키와 비용값은 브라우저나 로그에 노출하지 않는다. 개인정보가 포함된 자료는 서버 내부 비식별 검증을 통과한 사본만 Upstage에 전송한다.
 
+### 공용 로그인 비밀번호 교체
+
+최초 배포 직후와 로그인 정보가 노출됐다고 의심되는 즉시 아래 명령으로 LIVE·DEMO 비밀번호를 함께 교체한다. 명령은 새 무작위 비밀번호를 생성하고 두 DB의 Argon2id 해시를 갱신한 뒤 기존 세션을 모두 폐기하며, 평문 비밀번호를 프로세스 인자나 로그에 넣지 않는다.
+
+```bash
+cd /data2/ESafe
+./scripts/rotate-public-password.sh
+```
+
+새 값은 권한이 `600`인 `.env`의 `ESAFE_PUBLIC_USER_PASSWORD`에만 저장된다. 운영자에게 전달할 때만 다음 명령을 보안 터미널에서 실행하고 출력·셸 이력·메신저 보관 정책을 확인한다.
+
+```bash
+sed -n 's/^ESAFE_PUBLIC_USER_ID=//p' .env
+sed -n 's/^ESAFE_PUBLIC_USER_PASSWORD=//p' .env
+```
+
+교체 스크립트는 두 프로필 중 하나의 갱신이 실패하면 이미 변경한 프로필을 기존 비밀번호로 되돌린다. 완료 뒤 로그인 smoke와 공개 터널 검증까지 통과해야 성공한다.
+
 ### 최초 기준자산 구성
 
 현재 서버에는 검증된 기준자산이 준비돼 있다. 새 환경에서만 manifest와 snapshot 경로를 먼저 배치한 뒤 아래 순서를 사용한다.
