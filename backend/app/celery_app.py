@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import secrets
 from datetime import UTC, datetime
 from typing import Any
@@ -9,6 +10,10 @@ from app.config import Settings, get_settings
 
 
 def create_celery_app(settings: Settings) -> Celery:
+    # Query strings can contain API credentials. Never allow dependency
+    # request logging to emit full upstream URLs.
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("httpcore").setLevel(logging.WARNING)
     application = Celery(
         "esafe",
         broker=settings.celery_broker_url,

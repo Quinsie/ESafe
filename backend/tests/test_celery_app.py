@@ -1,3 +1,4 @@
+import logging
 from unittest.mock import Mock
 
 from app.celery_app import create_celery_app
@@ -25,6 +26,8 @@ def test_celery_runtime_is_bound_to_profile_queue() -> None:
     assert application.conf.task_routes["esafe.*"]["queue"] == "demo"
     assert application.conf.broker_url == "redis://redis-demo:6379/0"
     assert application.backend.as_uri() == "redis://redis-demo:6379/1"
+    assert logging.getLogger("httpx").level == logging.WARNING
+    assert logging.getLogger("httpcore").level == logging.WARNING
 
 
 def test_runtime_heartbeat_contains_no_cross_profile_state() -> None:
