@@ -96,6 +96,47 @@ interface ApprovalDocument {
   approvedAt: string | null;
   artifacts: ApprovalDocumentArtifact[];
 }
+interface ApprovalInspection {
+  inspectionSimulationId: string;
+  inspectionScenarioId: string;
+  scenarioType: "BALANCED" | "HIGH_RISK_FOCUSED" | "COVERAGE_EXPANDED";
+  status: string;
+  version: number;
+  regionName: string | null;
+  startDate: string;
+  endDate: string;
+  inclusiveDayCount: number;
+  teamCount: number;
+  dailyCapacityPerTeam: number;
+  totalCapacity: number;
+  candidateCount: number;
+  selectedCount: number;
+  excludedCount: number;
+  candidateCoveragePercent: number;
+  requiredDays: number;
+  overCapacity: boolean;
+  confirmable: boolean;
+  referenceMonth: string;
+  horizonDays: number;
+  lineageVersion: string;
+  algorithmVersion: string;
+  explanation: { strategy: string; coverageFormula: string };
+  teams: {
+    teamNumber: number;
+    targetCount: number;
+    firstOrder: number;
+    lastOrder: number;
+  }[];
+  sampleTargets: {
+    buildingId: string;
+    buildingLabel: string;
+    selectionOrder: number;
+    teamNumber: number;
+    finalScore: number;
+    regionName: string;
+    facilityType: string;
+  }[];
+}
 
 interface ApprovalDetailData {
   approvalRequestId: string;
@@ -137,6 +178,7 @@ interface ApprovalDetailData {
     actions: ApprovalAction[];
   } | null;
   document: ApprovalDocument | null;
+  inspection: ApprovalInspection | null;
   executionImpact: {
     workItemCount: number;
     externalEffect: boolean;
@@ -358,6 +400,7 @@ function ApprovalDetail({
   const warningRequired =
     data.evidenceStatus === "INSUFFICIENT" || data.evidenceStatus === "CONFLICT";
   const isDocument = data.targetType === "DOCUMENT_DRAFT" && data.document !== null;
+  const isInspection = data.targetType === "INSPECTION_SCENARIO" && data.inspection !== null;
   const canDecide =
     data.status === "APPROVAL_PENDING" && data.contentMatches && reason.trim().length > 0;
   const canDiscard =
@@ -368,7 +411,9 @@ function ApprovalDetail({
   const submit = (decision: Decision) => {
     const discardMessage = isDocument
       ? "이 문서 버전을 폐기하시겠습니까?"
-      : "이 대응안 버전을 폐기하시겠습니까?";
+      : isInspection
+        ? "이 점검계획을 폐기하시겠습니까?"
+        : "이 대응안 버전을 폐기하시겠습니까?";
     if (decision === "DISCARDED" && !window.confirm(discardMessage)) {
       return;
     }
@@ -391,7 +436,9 @@ function ApprovalDetail({
           <p>
             {isDocument
               ? "문서 버전·근거·산출물과 승인 후 실행 범위를 확인합니다."
-              : "제안의 근거·영향·실행 범위를 확인한 뒤 사용자가 결정합니다."}
+              : isInspection
+                ? "점검 대상·처리용량·익명 점검반 배분과 승인 후 내부 과업을 확인합니다."
+                : "제안의 근거·영향·실행 범위를 확인한 뒤 사용자가 결정합니다."}
           </p>
         </div>
         <span className={`approval-status ${statusClass(data.status)}`}>
@@ -401,7 +448,13 @@ function ApprovalDetail({
       <div className="approval-layout">
         <div className="approval-explanation">
           <section className="panel approval-section">
-            <h2>{isDocument ? "1. Case·문서 사실" : "1. 감지 사실"}</h2>
+            <h2>
+              {isDocument
+                ? "1. Case·문서 사실"
+                : isInspection
+                  ? "1. 점검계획 사실"
+                  : "1. 감지 사실"}
+            </h2>
             <strong>{data.case?.title ?? data.document?.title ?? data.title}</strong>
             <dl className="approval-facts">
               <div>
@@ -410,11 +463,15 @@ function ApprovalDetail({
               </div>
               <div>
                 <dt>지역</dt>
-                <dd>{data.case?.regionName ?? "지역 확인 필요"}</dd>
+                <dd>{data.inspection?.regionName ?? data.case?.regionName ?? "광주·전남 전체"}</dd>
               </div>
               <div>
-                <dt>관제 우선상태</dt>
-                <dd>{data.case?.monitoringPriority ?? "해당 없음"}</dd>
+                <dt>{isInspection ? "점검 기간" : "관제 우선상태"}</dt>
+                <dd>
+                  {isInspection
+                    ? `${data.inspection?.startDate} ~ ${data.inspection?.endDate}`
+                    : (data.case?.monitoringPriority ?? "해당 없음")}
+                </dd>
               </div>
               <div>
                 <dt>요청 시각</dt>
@@ -426,15 +483,21 @@ function ApprovalDetail({
             <h2>2. 근거 데이터·규칙</h2>
             <div className="approval-evidence-heading">
               <span
-                className={`evidence-status ${statusClass(data.evidenceStatus ?? "INSUFFICIENT")}`}
+                className={`evidence-status ${statusClass(isInspection ? "SUFFICIENT" : (data.evidenceStatus ?? "INSUFFICIENT"))}`}
               >
-                {data.evidenceStatus ? evidenceLabels[data.evidenceStatus] : "근거 상태 없음"}
+                {isInspection
+                  ? "규칙·스냅샷 고정"
+                  : data.evidenceStatus
+                    ? evidenceLabels[data.evidenceStatus]
+                    : "근거 상태 없음"}
               </span>
               <small>내용 해시 {data.contentSha256.slice(0, 12)}…</small>
             </div>
             <p>
-              {data.recommendation?.situationSummary ??
-                "현재 문서 버전의 내용, 근거 상태와 생성 산출물을 검토합니다."}
+              {isInspection
+                ? `${data.inspection?.lineageVersion} 위험도와 ${data.inspection?.algorithmVersion} 결정 규칙으로 계산한 순서입니다. 발생확률이 아닙니다.`
+                : (data.recommendation?.situationSummary ??
+                  "현재 문서 버전의 내용, 근거 상태와 생성 산출물을 검토합니다.")}
             </p>
             {(data.warning ?? data.recommendation?.warning ?? data.document?.warning) ? (
               <div className="evidence-warning insufficient" role="status">
@@ -458,8 +521,85 @@ function ApprovalDetail({
             ) : null}
           </section>
           <section className="panel approval-section">
-            <h2>{isDocument ? "3. 승인 대상 문서" : "3. 시스템이 준비한 작업"}</h2>
-            {data.recommendation ? (
+            <h2>
+              {isDocument
+                ? "3. 승인 대상 문서"
+                : isInspection
+                  ? "3. 확정할 점검대상·점검반"
+                  : "3. 시스템이 준비한 작업"}
+            </h2>
+            {data.inspection ? (
+              <div className="approval-inspection-review">
+                <dl className="approval-facts">
+                  <div>
+                    <dt>실행안</dt>
+                    <dd>
+                      {data.inspection.scenarioType === "BALANCED"
+                        ? "균형형"
+                        : data.inspection.scenarioType === "HIGH_RISK_FOCUSED"
+                          ? "고위험 집중형"
+                          : "커버리지 확대형"}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt>점검 대상</dt>
+                    <dd>{data.inspection.selectedCount.toLocaleString()}개소</dd>
+                  </div>
+                  <div>
+                    <dt>처리용량</dt>
+                    <dd>{data.inspection.totalCapacity.toLocaleString()}개소</dd>
+                  </div>
+                  <div>
+                    <dt>후보 충족률</dt>
+                    <dd>{data.inspection.candidateCoveragePercent.toFixed(1)}%</dd>
+                  </div>
+                  <div>
+                    <dt>기준 위험도</dt>
+                    <dd>
+                      {data.inspection.referenceMonth.slice(0, 7)} · {data.inspection.horizonDays}일
+                    </dd>
+                  </div>
+                  <div>
+                    <dt>계산 버전</dt>
+                    <dd>{data.inspection.algorithmVersion}</dd>
+                  </div>
+                </dl>
+                <p>{data.inspection.explanation.strategy}</p>
+                <div className="approval-inspection-teams">
+                  {data.inspection.teams.map((team) => (
+                    <div key={team.teamNumber}>
+                      <strong>점검반 {team.teamNumber}</strong>
+                      <span>
+                        {team.targetCount.toLocaleString()}개소 · 순번 {team.firstOrder}~
+                        {team.lastOrder}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+                <ol className="approval-inspection-sample">
+                  {data.inspection.sampleTargets.slice(0, 5).map((target) => (
+                    <li key={target.buildingId}>
+                      <span>{target.selectionOrder}</span>
+                      <div>
+                        <strong>{target.buildingLabel}</strong>
+                        <small>
+                          {target.regionName} · {target.facilityType} · 상대점수{" "}
+                          {target.finalScore.toFixed(6)}
+                        </small>
+                      </div>
+                    </li>
+                  ))}
+                </ol>
+                <AppLink
+                  className="workflow-action-link"
+                  currentPath={currentPath}
+                  runtime={runtime}
+                  to={`/inspections/simulations/${data.inspection.inspectionSimulationId}/targets`}
+                >
+                  전체 점검대상 다시 확인
+                </AppLink>
+              </div>
+            ) : data.recommendation ? (
               <ol className="approval-actions">
                 {data.recommendation.actions.map((action) => (
                   <li key={action.recommendationActionId}>
@@ -560,7 +700,9 @@ function ApprovalDetail({
             <strong className="approval-boundary">
               {isDocument
                 ? "승인 전에는 최종본을 생성하지 않으며 외부 전송은 승인 후에도 자동 실행하지 않습니다."
-                : "준비 단계이며 승인 전에는 과업·외부 연락·발송·상태 변경을 실행하지 않습니다."}
+                : isInspection
+                  ? "승인 전에는 내부 점검과업을 만들지 않으며 승인 후에도 담당자 지정·외부 요청은 자동 실행하지 않습니다."
+                  : "준비 단계이며 승인 전에는 과업·외부 연락·발송·상태 변경을 실행하지 않습니다."}
             </strong>
           </section>
           <section className="panel approval-section">
@@ -592,7 +734,9 @@ function ApprovalDetail({
             <p>
               {isDocument
                 ? "FINAL HWPX·PDF 2건 생성 시작"
-                : `내부 수행과업 ${data.executionImpact.workItemCount}건 생성`}
+                : isInspection
+                  ? `익명 점검반 내부 수행과업 ${data.executionImpact.workItemCount}건 생성`
+                  : `내부 수행과업 ${data.executionImpact.workItemCount}건 생성`}
             </p>
             <p>외부 영향: 없음 · 외부 연락·문서 발송 자동 실행 안 함</p>
             <p>{data.executionImpact.summary}</p>

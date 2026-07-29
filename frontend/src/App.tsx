@@ -41,6 +41,11 @@ const DocumentManagement = lazy(() =>
     default: module.DocumentManagement,
   })),
 );
+const InspectionPlanning = lazy(() =>
+  import("./inspections").then((module) => ({
+    default: module.InspectionPlanning,
+  })),
+);
 
 interface SessionData {
   user: {
@@ -97,6 +102,9 @@ function routeTitle(path: string): string | undefined {
   }
   if (/^\/approvals\/[0-9a-f-]+$/i.test(path)) {
     return "검토·승인";
+  }
+  if (/^\/inspections\/simulations\/[0-9a-f-]+\/(?:compare|targets)$/i.test(path)) {
+    return "점검 계획";
   }
   if (
     path === "/artifacts" ||
@@ -412,6 +420,19 @@ function AuthenticatedShell({
           }
         >
           <AutomationManagement currentPath={currentPath} runtime={runtime} />
+        </Suspense>
+      ) : currentPath === "/inspections/simulations/new" ||
+        /^\/inspections\/simulations\/[0-9a-f-]+\/(?:compare|targets)$/i.test(currentPath) ? (
+        <Suspense
+          fallback={
+            <main className="page" id="main-content">
+              <div className="auth-loading" role="status">
+                점검계획 화면을 준비하고 있습니다.
+              </div>
+            </main>
+          }
+        >
+          <InspectionPlanning currentPath={currentPath} runtime={runtime} />
         </Suspense>
       ) : currentPath === "/approvals" || /^\/approvals\/[0-9a-f-]+$/i.test(currentPath) ? (
         <Suspense
