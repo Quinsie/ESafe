@@ -259,7 +259,10 @@ async def _search_channels(
                                    coalesce(document.issuing_agency, '') || ' ' ||
                                    array_to_string(document.disaster_types, ' ')
                                ),
-                               plainto_tsquery('simple', :query_text)
+                               websearch_to_tsquery(
+                                   'simple',
+                                   regexp_replace(:query_text, '\\s+', ' OR ', 'g')
+                               )
                            ) AS lexical_score
                     FROM rag_chunk chunk
                     JOIN rag_document document
@@ -282,7 +285,10 @@ async def _search_channels(
                               coalesce(document.issuing_agency, '') || ' ' ||
                               array_to_string(document.disaster_types, ' ')
                           )
-                      ) @@ plainto_tsquery('simple', :query_text)
+                      ) @@ websearch_to_tsquery(
+                          'simple',
+                          regexp_replace(:query_text, '\\s+', ' OR ', 'g')
+                      )
                     ORDER BY lexical_score DESC, chunk.chunk_id
                     LIMIT {MAX_CANDIDATES_PER_CHANNEL}
                     """
