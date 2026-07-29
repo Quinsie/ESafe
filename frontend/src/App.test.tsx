@@ -429,7 +429,7 @@ describe("App authentication boundary", () => {
     const user = userEvent.setup();
     renderApp("/demo/map?zoom=7&region=29");
 
-    expect(await screen.findByRole("heading", { name: "로그인·세션 확인" })).toBeVisible();
+    expect(await screen.findByRole("heading", { name: /전기재해 위험을/ })).toBeVisible();
     await waitFor(() => {
       expect(window.location.pathname).toBe("/demo/login");
       expect(new URLSearchParams(window.location.search).get("returnTo")).toBe(
@@ -484,6 +484,8 @@ describe("App authentication boundary", () => {
     expect(screen.getByText("근거 부족 · 검토 필요")).toBeVisible();
     expect(screen.getByText("HWPX + PDF")).toBeVisible();
     expect(screen.getAllByText("미입력").length).toBe(3);
+    expect(screen.getByRole("link", { name: "Case에서 문서 초안 만들기" })).toBeVisible();
+    expect(screen.queryByText(/S7 문서 흐름/)).toBeNull();
   });
 
   it("renders BLD-02 without inventing inspection history or citations", async () => {

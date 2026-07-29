@@ -890,10 +890,23 @@ function ReportPreview({
             근거가 부족해도 초안은 만들되 문서와 화면에 경고를 유지합니다. 허위 인용은 생성하지
             않습니다.
           </div>
-          <button className="primary-action report-disabled-action" disabled type="button">
-            문서 워커 연결 후 초안 작성
-          </button>
-          <small>문서 생성·승인·HWPX/PDF 다운로드는 S7 문서 흐름에서 활성화됩니다.</small>
+          <AppLink
+            className="primary-action"
+            currentPath={currentPath}
+            runtime={runtime}
+            to="/cases"
+          >
+            Case에서 문서 초안 만들기
+          </AppLink>
+          <AppLink
+            className="outline-action"
+            currentPath={currentPath}
+            runtime={runtime}
+            to="/artifacts"
+          >
+            문서·산출물 보관함 보기
+          </AppLink>
+          <small>문서 초안은 연결할 사건 Case를 선택한 뒤 만들 수 있습니다.</small>
         </aside>
       </div>
     </main>

@@ -134,7 +134,7 @@ function AuthLoading({ runtime }: { runtime: ProfileRuntime }) {
   return (
     <main className="auth-page" aria-busy="true">
       <header className="auth-topbar">
-        <strong>E-Safe / 로그인</strong>
+        <strong>E-Safe / 전기재해 예방 관제</strong>
         <span className={`profile-badge ${runtime.profile.toLowerCase()}`}>{runtime.badge}</span>
       </header>
       <div className="auth-loading" role="status">
@@ -188,62 +188,92 @@ function LoginPage({
   return (
     <main className="auth-page" id="main-content">
       <header className="auth-topbar">
-        <strong>E-Safe / 로그인</strong>
+        <strong>E-Safe / 전기재해 예방 관제</strong>
         <div className="auth-topbar-meta">
           <span className={`profile-badge ${runtime.profile.toLowerCase()}`}>{runtime.badge}</span>
-          <span>최초 진입 · 세션 만료 시 안전하게 복귀</span>
+          <span>광주·전남 관제 시스템</span>
         </div>
       </header>
-      <section className="auth-intro" aria-labelledby="auth-page-title">
-        <h1 id="auth-page-title">로그인·세션 확인</h1>
-        <p>인증 시작과 만료된 작업의 안전한 복귀를 지원합니다.</p>
-      </section>
-      <section className="login-card" aria-label="E-Safe 로그인">
-        <div className="login-card-heading">
-          <strong>E-Safe</strong>
-          <p>한국전기안전공사 재난안전 관제</p>
-        </div>
-        {sessionExpired ? (
-          <div className="auth-notice" role="status">
-            세션이 만료되었습니다. 다시 로그인하면 마지막 화면으로 돌아갑니다.
+      <div className="auth-workspace">
+        <section className="auth-intro" aria-labelledby="auth-page-title">
+          <span className="auth-eyebrow">ELECTRICAL SAFETY CONTROL</span>
+          <h1 id="auth-page-title">
+            전기재해 위험을
+            <br />
+            한곳에서 확인합니다.
+          </h1>
+          <p>
+            실제 신호와 기준 위험도, 대응 근거와 승인 문서를 연결해 광주·전남의 관제 판단을
+            지원합니다.
+          </p>
+          <div className="auth-capabilities">
+            <span>24시간 신호 감시</span>
+            <span>실제 건물 위험지도</span>
+            <span>근거 기반 대응·문서</span>
           </div>
-        ) : null}
-        <form onSubmit={submit}>
-          <label htmlFor="user-id">사용자 ID</label>
-          <input
-            autoComplete="username"
-            id="user-id"
-            maxLength={128}
-            onChange={(event) => setUserId(event.target.value)}
-            placeholder="사용자 ID 입력"
-            required
-            value={userId}
-          />
-          <label htmlFor="password">비밀번호</label>
-          <input
-            autoComplete="current-password"
-            id="password"
-            maxLength={256}
-            onChange={(event) => setPassword(event.target.value)}
-            placeholder="비밀번호 입력"
-            required
-            type="password"
-            value={password}
-          />
-          {errorMessage ? (
-            <div className="auth-error" role="alert">
-              {errorMessage}
+          <div className="auth-mode-card">
+            <span className={`profile-badge ${runtime.profile.toLowerCase()}`}>
+              {runtime.badge}
+            </span>
+            <div>
+              <strong>
+                {runtime.profile === "LIVE" ? "실시간 관제 환경" : "전체 기능 체험 환경"}
+              </strong>
+              <small>
+                {runtime.profile === "LIVE"
+                  ? "실제 외부 신호를 수집합니다."
+                  : "통제 가능한 시나리오로 같은 처리 흐름을 재생합니다."}
+              </small>
+            </div>
+          </div>
+        </section>
+        <section className="login-card" aria-label="E-Safe 로그인">
+          <div className="login-card-heading">
+            <span>사용자 인증</span>
+            <strong>관제 시스템 로그인</strong>
+            <p>공용 사용자 계정으로 업무 화면에 접속합니다.</p>
+          </div>
+          {sessionExpired ? (
+            <div className="auth-notice" role="status">
+              세션이 만료되었습니다. 다시 로그인하면 마지막 화면으로 돌아갑니다.
             </div>
           ) : null}
-          <button className="login-button" disabled={login.isPending} type="submit">
-            {login.isPending ? "확인 중…" : "로그인"}
-          </button>
-        </form>
-        <p className="auth-state-copy">인증 중 · 인증 실패·잠김 · 세션 만료 상태를 안내합니다.</p>
-      </section>
-      <aside className="auth-help">
-        인증은 업무 권한 확인이며 승인과는 다릅니다. 성공하면 요청한 업무 화면으로 이동합니다.
-      </aside>
+          <form onSubmit={submit}>
+            <label htmlFor="user-id">사용자 ID</label>
+            <input
+              autoComplete="username"
+              id="user-id"
+              maxLength={128}
+              onChange={(event) => setUserId(event.target.value)}
+              placeholder="사용자 ID 입력"
+              required
+              value={userId}
+            />
+            <label htmlFor="password">비밀번호</label>
+            <input
+              autoComplete="current-password"
+              id="password"
+              maxLength={256}
+              onChange={(event) => setPassword(event.target.value)}
+              placeholder="비밀번호 입력"
+              required
+              type="password"
+              value={password}
+            />
+            {errorMessage ? (
+              <div className="auth-error" role="alert">
+                {errorMessage}
+              </div>
+            ) : null}
+            <button className="login-button" disabled={login.isPending} type="submit">
+              {login.isPending ? "확인 중…" : "로그인"}
+            </button>
+          </form>
+          <p className="auth-state-copy">
+            로그인 후 상황 브리핑으로 이동하며, 만료 시 현재 업무 위치를 보존합니다.
+          </p>
+        </section>
+      </div>
     </main>
   );
 }
@@ -284,14 +314,14 @@ function SectionPlaceholder({ title }: { title: string }) {
     <main className="page" id="main-content">
       <div className="page-heading">
         <div>
-          <h1>{title}</h1>
-          <p>확정 화면과 데이터 계약에 따라 구현 중입니다.</p>
+          <h1>페이지를 찾을 수 없습니다</h1>
+          <p>주소를 확인하거나 왼쪽 메뉴에서 다시 이동해 주세요.</p>
         </div>
       </div>
-      <section className="panel route-placeholder">
-        <span className="status-pill neutral">구현 중</span>
-        <h2>{title} 모듈 준비 중</h2>
-        <p>완료되지 않은 행동을 실제 기능처럼 표시하지 않습니다.</p>
+      <section className="panel not-found-panel">
+        <span className="status-pill neutral">404</span>
+        <h2>요청한 화면이 없습니다.</h2>
+        <p>요청 화면: {title}</p>
       </section>
     </main>
   );

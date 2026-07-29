@@ -65,16 +65,16 @@ export function DemoScenarioPanel({ runtime }: { runtime: ProfileRuntime }) {
     staleTime: 10_000,
   });
   const scenarios = catalog.data?.data.items ?? [];
+  const activeScenario = scenarios.find((item) =>
+    item.playback ? ["READY", "RUNNING", "PAUSED"].includes(item.playback.status) : false,
+  );
 
   useEffect(() => {
     if (scenarios.length === 0) return;
     const selectedExists = scenarios.some((item) => item.scenarioId === selectedId);
     if (selectedExists) return;
-    const active = scenarios.find((item) =>
-      item.playback ? ["READY", "RUNNING", "PAUSED"].includes(item.playback.status) : false,
-    );
-    setSelectedId((active ?? scenarios[0]).scenarioId);
-  }, [scenarios, selectedId]);
+    setSelectedId((activeScenario ?? scenarios[0]).scenarioId);
+  }, [activeScenario, scenarios, selectedId]);
 
   const selected = scenarios.find((item) => item.scenarioId === selectedId) ?? scenarios[0];
   const mutation = useMutation({
@@ -128,13 +128,14 @@ export function DemoScenarioPanel({ runtime }: { runtime: ProfileRuntime }) {
 
   const run = (command: Command) => {
     if (busy) return;
+    const target = command === "reset" && activeScenario ? activeScenario : selected;
     if (
       command === "reset" &&
-      !window.confirm("현재 체험 Case·업무·문서 초안을 지우고 처음부터 초기화할까요?")
+      !window.confirm(`${target.code} 체험 Case·업무·문서 초안을 지우고 처음부터 초기화할까요?`)
     ) {
       return;
     }
-    mutation.mutate({ scenario: selected, command });
+    mutation.mutate({ scenario: target, command });
   };
 
   return (
@@ -160,6 +161,12 @@ export function DemoScenarioPanel({ runtime }: { runtime: ProfileRuntime }) {
           </select>
         </label>
       </div>
+      {activeScenario && activeScenario.scenarioId !== selected.scenarioId ? (
+        <div className="demo-active-notice" role="status">
+          <strong>{activeScenario.code} 시나리오가 초기화 대기 또는 실행 중입니다.</strong>
+          <span>아래 초기화 버튼은 현재 활성 시나리오를 정리합니다.</span>
+        </div>
+      ) : null}
       <div className="demo-scenario-body">
         <div>
           <strong>{selected.name}</strong>
@@ -199,11 +206,13 @@ export function DemoScenarioPanel({ runtime }: { runtime: ProfileRuntime }) {
           </button>
           <button
             className="danger-action"
-            disabled={busy || !playback}
+            disabled={busy || (!activeScenario && !playback)}
             onClick={() => run("reset")}
             type="button"
           >
-            처음부터 초기화
+            {activeScenario && activeScenario.scenarioId !== selected.scenarioId
+              ? `${activeScenario.code} 처음부터 초기화`
+              : "처음부터 초기화"}
           </button>
         </div>
       </div>
