@@ -1,0 +1,21 @@
+{
+  "defail": [
+    {
+      "sidoOvrNum": "DEMO-NFDS-20260729-001",
+      "sidoNm": "광주광역시",
+      "lawSidoCd": "29",
+      "lawGunguCd": "110",
+      "addr": "광주광역시 동구 금남로 1",
+      "frfalTypeCd": "건물화재",
+      "overDate": "20260729100000",
+      "progressStat": "1",
+      "progressNm": "출동 중",
+      "dethNum": "0",
+      "injuNum": "0",
+      "expMount": "0",
+      "longitude": "126.9196",
+      "latitude": "35.1468"
+    }
+  ],
+  "nowDate": "20260729100000"
+}
