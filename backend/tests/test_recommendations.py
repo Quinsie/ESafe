@@ -205,7 +205,7 @@ def test_explicit_amendment_conflict_is_deterministic() -> None:
         value,
         rows,
         case_title=(
-            "공통 개정사항은 '대통령실'을 '청와대'로 변경하지만 "
+            "공통 개정사항은 '대통령실'을 '청와대'로 변경하도록 정했지만 "
             "화재 영상회의 참여기관에는 대통령실로 남아 있다."
         ),
         case_type="FIRE",

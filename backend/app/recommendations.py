@@ -37,7 +37,7 @@ QUOTE_STOP_WORDS = frozenset(
     }
 )
 QUOTED_TERM_PATTERN = re.compile(r"'([^']+)'|‘([^’]+)’|\"([^\"]+)\"")
-CONTRAST_MARKERS = ("하지만", "반면", "충돌", "불일치")
+CONTRAST_MARKERS = ("하지만", "지만", "반면", "충돌", "불일치")
 CHANGE_MARKERS = ("변경", "개정", "수정", "대체")
 CASE_DOCUMENT_TERMS = {
     "FIRE": ("화재", "소방"),
