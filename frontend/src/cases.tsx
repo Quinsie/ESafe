@@ -966,6 +966,30 @@ function CaseDetail({
           )}
         </section>
         <aside className="panel case-next-actions">
+          <AppLink
+            className="case-workflow-link primary"
+            currentPath={currentPath}
+            runtime={runtime}
+            to={`/cases/${caseId}/evidence`}
+          >
+            근거 기반 대응 절차
+          </AppLink>
+          <AppLink
+            className="case-workflow-link"
+            currentPath={currentPath}
+            runtime={runtime}
+            to={`/cases/${caseId}/tasks`}
+          >
+            단계별 수행과업
+          </AppLink>
+          <AppLink
+            className="case-workflow-link"
+            currentPath={currentPath}
+            runtime={runtime}
+            to={`/cases/${caseId}/close`}
+          >
+            상황 종료 검토
+          </AppLink>
           <div className="case-contract-note">
             <strong>표시 기준</strong>
             <span>

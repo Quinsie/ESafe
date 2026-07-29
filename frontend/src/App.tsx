@@ -23,6 +23,9 @@ const SimilarityAnalysis = lazy(() =>
 const CaseManagement = lazy(() =>
   import("./cases").then((module) => ({ default: module.CaseManagement })),
 );
+const CaseWorkflow = lazy(() =>
+  import("./case_workflow").then((module) => ({ default: module.CaseWorkflow })),
+);
 const AutomationManagement = lazy(() =>
   import("./automation").then((module) => ({
     default: module.AutomationManagement,
@@ -365,6 +368,18 @@ function AuthenticatedShell({
           }
         >
           <CaseManagement currentPath={currentPath} runtime={runtime} />
+        </Suspense>
+      ) : /^\/cases\/[0-9a-f-]+\/(?:evidence|close|tasks(?:\/[0-9a-f-]+)?)$/i.test(currentPath) ? (
+        <Suspense
+          fallback={
+            <main className="page" id="main-content">
+              <div className="auth-loading" role="status">
+                Case 업무 화면을 준비하고 있습니다.
+              </div>
+            </main>
+          }
+        >
+          <CaseWorkflow currentPath={currentPath} runtime={runtime} />
         </Suspense>
       ) : currentPath === "/automation/runs" || currentPath === "/automation/policies" ? (
         <Suspense

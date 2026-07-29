@@ -311,6 +311,17 @@ describe("case management screens", () => {
       screen.getByText("브라우저 지도 대신 오른쪽의 실제 영향 건물 목록을 사용합니다."),
     ).toBeVisible();
     expect(screen.getByText(/final_score는 발생확률이 아닙니다/)).toBeVisible();
-    expect(screen.queryByRole("link", { name: "근거 기반 대응 절차" })).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "근거 기반 대응 절차" })).toHaveAttribute(
+      "href",
+      `/demo/cases/${caseId}/evidence`,
+    );
+    expect(screen.getByRole("link", { name: "단계별 수행과업" })).toHaveAttribute(
+      "href",
+      `/demo/cases/${caseId}/tasks`,
+    );
+    expect(screen.getByRole("link", { name: "상황 종료 검토" })).toHaveAttribute(
+      "href",
+      `/demo/cases/${caseId}/close`,
+    );
   });
 });
