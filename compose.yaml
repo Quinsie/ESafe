@@ -101,6 +101,31 @@ services:
     security_opt:
       - no-new-privileges:true
 
+  db-control:
+    image: esafe-database:${ESAFE_APP_VERSION:-dev}
+    build:
+      context: .
+      dockerfile: infra/database/Dockerfile
+    restart: unless-stopped
+    shm_size: 128m
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${CONTROL_DATABASE_NAME:-esafe_control}
+      TZ: ${TZ:-Asia/Seoul}
+    volumes:
+      - postgres-control-data:/var/lib/postgresql/data
+    networks:
+      - ai-control
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      start_period: 20s
+      retries: 8
+    security_opt:
+      - no-new-privileges:true
+
   redis-live:
     image: redis:8.0.1-bookworm
     restart: unless-stopped
@@ -185,6 +210,19 @@ services:
       db-demo:
         condition: service_healthy
 
+  migrate-control:
+    <<: *backend-common
+    restart: "no"
+    command: ["python", "-m", "app.cli", "init-ai-control"]
+    environment:
+      AI_CONTROL_DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db-control:5432/${CONTROL_DATABASE_NAME:-esafe_control}
+      UPSTAGE_COST_HARD_STOP_USD: ${UPSTAGE_COST_HARD_STOP_USD:-450}
+    networks:
+      - ai-control
+    depends_on:
+      db-control:
+        condition: service_healthy
+
   api-live:
     <<: *backend-common
     environment:
@@ -266,7 +304,13 @@ services:
       CELERY_BROKER_URL: redis://:${REDIS_PASSWORD}@redis-live:6379/0
       CELERY_RESULT_BACKEND: redis://:${REDIS_PASSWORD}@redis-live:6379/1
       CELERY_QUEUE: live
+      AI_CONTROL_DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db-control:5432/${CONTROL_DATABASE_NAME:-esafe_control}
       UPSTAGE_API_KEY: ${UPSTAGE_API_KEY}
+      UPSTAGE_BASE_URL: ${UPSTAGE_BASE_URL:-https://api.upstage.ai/v1}
+      UPSTAGE_CHAT_MODEL: ${UPSTAGE_CHAT_MODEL:-solar-pro3}
+      UPSTAGE_EMBED_QUERY_MODEL: ${UPSTAGE_EMBED_QUERY_MODEL:-solar-embedding-2-query}
+      UPSTAGE_EMBED_PASSAGE_MODEL: ${UPSTAGE_EMBED_PASSAGE_MODEL:-solar-embedding-2-passage}
+      UPSTAGE_COST_HARD_STOP_USD: ${UPSTAGE_COST_HARD_STOP_USD:-450}
       DATA_GO_KR_SERVICE_KEY: ${DATA_GO_KR_SERVICE_KEY}
       NFDS_ENABLED: ${NFDS_ENABLED:-true}
     volumes:
@@ -274,11 +318,14 @@ services:
       - ./storage/reference/source-documents/${RAG_SOURCE_SNAPSHOT:-initial-20260729}/derived/${RAG_DERIVED_VERSION:-rag-local-parser-v2-rag-privacy-ko-v2-rag-paragraph-chunker-v2}:/srv/esafe/reference/rag:ro
     networks:
       - live-backend
+      - ai-control
       - outbound
     depends_on:
       db-live:
         condition: service_healthy
       migrate-live:
+        condition: service_completed_successfully
+      migrate-control:
         condition: service_completed_successfully
       redis-live:
         condition: service_healthy
@@ -308,18 +355,27 @@ services:
       CELERY_BROKER_URL: redis://:${REDIS_PASSWORD}@redis-demo:6379/0
       CELERY_RESULT_BACKEND: redis://:${REDIS_PASSWORD}@redis-demo:6379/1
       CELERY_QUEUE: demo
+      AI_CONTROL_DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db-control:5432/${CONTROL_DATABASE_NAME:-esafe_control}
       UPSTAGE_API_KEY: ${UPSTAGE_API_KEY}
+      UPSTAGE_BASE_URL: ${UPSTAGE_BASE_URL:-https://api.upstage.ai/v1}
+      UPSTAGE_CHAT_MODEL: ${UPSTAGE_CHAT_MODEL:-solar-pro3}
+      UPSTAGE_EMBED_QUERY_MODEL: ${UPSTAGE_EMBED_QUERY_MODEL:-solar-embedding-2-query}
+      UPSTAGE_EMBED_PASSAGE_MODEL: ${UPSTAGE_EMBED_PASSAGE_MODEL:-solar-embedding-2-passage}
+      UPSTAGE_COST_HARD_STOP_USD: ${UPSTAGE_COST_HARD_STOP_USD:-450}
       NFDS_ENABLED: "false"
     volumes:
       - ./storage/demo:/srv/esafe/storage
       - ./storage/reference/source-documents/${RAG_SOURCE_SNAPSHOT:-initial-20260729}/derived/${RAG_DERIVED_VERSION:-rag-local-parser-v2-rag-privacy-ko-v2-rag-paragraph-chunker-v2}:/srv/esafe/reference/rag:ro
     networks:
       - demo-backend
+      - ai-control
       - outbound
     depends_on:
       db-demo:
         condition: service_healthy
       migrate-demo:
+        condition: service_completed_successfully
+      migrate-control:
         condition: service_completed_successfully
       redis-demo:
         condition: service_healthy
@@ -539,9 +595,12 @@ networks:
     internal: true
   edge:
   outbound:
+  ai-control:
+    internal: true
 
 volumes:
   postgres-live-data:
   postgres-demo-data:
+  postgres-control-data:
   redis-live-data:
   redis-demo-data:

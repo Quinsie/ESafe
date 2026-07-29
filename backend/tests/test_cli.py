@@ -12,6 +12,11 @@ def test_mutating_commands_are_explicit() -> None:
     assert build_parser().parse_args(["seed"]).command == "seed"
     assert build_parser().parse_args(["reprocess-kma"]).command == "reprocess-kma"
     assert build_parser().parse_args(["repair-kma-source"]).command == "repair-kma-source"
+    assert build_parser().parse_args(["init-ai-control"]).command == "init-ai-control"
+    assert (
+        build_parser().parse_args(["probe-upstage-embedding"]).command
+        == "probe-upstage-embedding"
+    )
 
 
 def test_argon2id_password_contract() -> None:

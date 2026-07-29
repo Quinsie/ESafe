@@ -1,3 +1,4 @@
+from decimal import Decimal
 from functools import lru_cache
 from typing import Literal
 
@@ -43,6 +44,29 @@ class Settings(BaseSettings):
     data_go_kr_service_key: SecretStr | None = Field(
         default=None,
         alias="DATA_GO_KR_SERVICE_KEY",
+    )
+    upstage_api_key: SecretStr | None = Field(default=None, alias="UPSTAGE_API_KEY")
+    upstage_base_url: str = Field(
+        default="https://api.upstage.ai/v1",
+        alias="UPSTAGE_BASE_URL",
+    )
+    upstage_chat_model: str = Field(default="solar-pro3", alias="UPSTAGE_CHAT_MODEL")
+    upstage_embed_query_model: str = Field(
+        default="solar-embedding-2-query",
+        alias="UPSTAGE_EMBED_QUERY_MODEL",
+    )
+    upstage_embed_passage_model: str = Field(
+        default="solar-embedding-2-passage",
+        alias="UPSTAGE_EMBED_PASSAGE_MODEL",
+    )
+    upstage_cost_hard_stop_usd: Decimal = Field(
+        default=Decimal("450"),
+        gt=0,
+        alias="UPSTAGE_COST_HARD_STOP_USD",
+    )
+    ai_control_database_url: str | None = Field(
+        default=None,
+        alias="AI_CONTROL_DATABASE_URL",
     )
     nfds_monitor_url: str = Field(
         default="https://www.nfds.go.kr/dashboard/monitorData.do",

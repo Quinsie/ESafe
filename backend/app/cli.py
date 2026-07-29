@@ -7,10 +7,12 @@ from uuid import uuid4
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine
 
+from app.ai_control import AiCostGate, initialize_ai_control
 from app.config import get_settings
 from app.security import hash_password
 from app.signals.ingestion import run_kma_source_repair
 from app.signals.reprocess import reprocess_kma_events
+from app.upstage import UpstageEmbeddingClient
 
 
 async def seed_system_metadata() -> None:
@@ -108,8 +110,37 @@ async def seed_system_metadata() -> None:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="python -m app.cli")
-    parser.add_argument("command", choices=("seed", "reprocess-kma", "repair-kma-source"))
+    parser.add_argument(
+        "command",
+        choices=(
+            "seed",
+            "reprocess-kma",
+            "repair-kma-source",
+            "init-ai-control",
+            "probe-upstage-embedding",
+        ),
+    )
     return parser
+
+
+async def probe_upstage_embedding() -> dict[str, object]:
+    settings = get_settings()
+    gate = AiCostGate(settings)
+    try:
+        result = await UpstageEmbeddingClient(settings, gate).embed_passages(
+            ["전기재해 예방 관제 근거 검색 연결 시험"],
+            feature_name="embedding-contract-probe",
+            privacy_verified=True,
+        )
+        return {
+            "status": "SUCCESS",
+            "model": settings.upstage_embed_passage_model,
+            "dimension": len(result.vectors[0]),
+            "embeddingTokens": result.embedding_tokens,
+            "reservationId": result.reservation_id,
+        }
+    finally:
+        await gate.close()
 
 
 def main(argv: Sequence[str] | None = None) -> None:
@@ -121,6 +152,12 @@ def main(argv: Sequence[str] | None = None) -> None:
         print(json.dumps(result, ensure_ascii=False, sort_keys=True))
     elif args.command == "repair-kma-source":
         result = asyncio.run(run_kma_source_repair(get_settings()))
+        print(json.dumps(result, ensure_ascii=False, sort_keys=True))
+    elif args.command == "init-ai-control":
+        asyncio.run(initialize_ai_control(get_settings()))
+        print(json.dumps({"status": "SUCCESS", "schemaVersion": 1}, sort_keys=True))
+    elif args.command == "probe-upstage-embedding":
+        result = asyncio.run(probe_upstage_embedding())
         print(json.dumps(result, ensure_ascii=False, sort_keys=True))
 
 
