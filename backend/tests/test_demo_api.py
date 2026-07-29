@@ -1,13 +1,15 @@
 from datetime import UTC, datetime, timedelta
+from typing import Any
 from unittest.mock import AsyncMock
 from uuid import uuid4
 
+import pytest
 from fastapi.testclient import TestClient
 
 from app.api.auth import require_session
 from app.auth import AuthenticatedSession
 from app.config import Settings
-from app.demo.playback import require_demo_profile
+from app.demo.playback import _reset_rows, require_demo_profile
 from app.main import app
 from app.security import token_hash
 from app.workflow import WorkflowContractError
@@ -95,3 +97,39 @@ def test_demo_catalog_live_error_contract(monkeypatch) -> None:
         assert response.json()["error"]["code"] == "DEMO_PROFILE_REQUIRED"
     finally:
         app.dependency_overrides.clear()
+
+
+class _ResetResult:
+    rowcount = 0
+
+    def scalars(self) -> "_ResetResult":
+        return self
+
+    def all(self) -> list[Any]:
+        return []
+
+
+@pytest.mark.asyncio
+async def test_demo_reset_deletes_recommendation_graph_before_case() -> None:
+    statements: list[str] = []
+
+    class Connection:
+        async def execute(self, statement: Any) -> _ResetResult:
+            statements.append(str(statement))
+            return _ResetResult()
+
+    counts, paths = await _reset_rows(Connection())  # type: ignore[arg-type]
+
+    recommendation = next(
+        i for i, value in enumerate(statements)
+        if value.startswith("DELETE FROM recommendation ")
+    )
+    evidence = next(
+        i for i, value in enumerate(statements)
+        if value.startswith("DELETE FROM evidence_bundle ")
+    )
+    case = statements.index("DELETE FROM case_record WHERE is_simulated")
+    assert recommendation < evidence < case
+    assert counts["recommendations"] == 0
+    assert counts["evidence_bundles"] == 0
+    assert paths == []

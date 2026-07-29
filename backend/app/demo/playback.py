@@ -566,6 +566,10 @@ async def _reset_rows(connection: AsyncConnection) -> tuple[dict[str, int], list
             "DELETE FROM approval_decision WHERE approval_request_id IN (SELECT r.approval_request_id FROM approval_request r JOIN case_record c ON c.case_id=r.case_id WHERE c.is_simulated)",
         ),
         (
+            "approval_requests",
+            "DELETE FROM approval_request WHERE case_id IN (SELECT case_id FROM case_record WHERE is_simulated)",
+        ),
+        (
             "document_deliveries",
             "DELETE FROM document_manual_delivery WHERE document_version_id IN (SELECT v.document_version_id FROM document_version v JOIN document_draft d ON d.document_draft_id=v.document_draft_id JOIN case_record c ON c.case_id=d.case_id WHERE c.is_simulated)",
         ),
@@ -584,6 +588,14 @@ async def _reset_rows(connection: AsyncConnection) -> tuple[dict[str, int], list
         (
             "case_closures",
             "DELETE FROM case_closure WHERE case_id IN (SELECT case_id FROM case_record WHERE is_simulated)",
+        ),
+        (
+            "recommendations",
+            "DELETE FROM recommendation WHERE case_id IN (SELECT case_id FROM case_record WHERE is_simulated)",
+        ),
+        (
+            "evidence_bundles",
+            "DELETE FROM evidence_bundle WHERE case_id IN (SELECT case_id FROM case_record WHERE is_simulated)",
         ),
         ("cases", "DELETE FROM case_record WHERE is_simulated"),
         ("signal_events", "DELETE FROM signal_event WHERE is_simulated"),
