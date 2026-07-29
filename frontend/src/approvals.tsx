@@ -388,7 +388,11 @@ function ApprovalDetail({
         <div>
           <p className="case-breadcrumb">공통 / 설명·승인 / COM-02</p>
           <h1>승인 전 설명 확인</h1>
-          <p>제안의 근거·영향·실행 범위를 확인한 뒤 사용자가 결정합니다.</p>
+          <p>
+            {isDocument
+              ? "문서 버전·근거·산출물과 승인 후 실행 범위를 확인합니다."
+              : "제안의 근거·영향·실행 범위를 확인한 뒤 사용자가 결정합니다."}
+          </p>
         </div>
         <span className={`approval-status ${statusClass(data.status)}`}>
           {approvalLabels[data.status]}
@@ -397,7 +401,7 @@ function ApprovalDetail({
       <div className="approval-layout">
         <div className="approval-explanation">
           <section className="panel approval-section">
-            <h2>1. 감지 사실</h2>
+            <h2>{isDocument ? "1. Case·문서 사실" : "1. 감지 사실"}</h2>
             <strong>{data.case?.title ?? data.document?.title ?? data.title}</strong>
             <dl className="approval-facts">
               <div>
@@ -585,7 +589,11 @@ function ApprovalDetail({
         <aside className="approval-decision-column">
           <section className="panel approval-impact">
             <h2>4. 승인 시 실행·영향</h2>
-            <p>내부 수행과업 {data.executionImpact.workItemCount}건 생성</p>
+            <p>
+              {isDocument
+                ? "FINAL HWPX·PDF 2건 생성 시작"
+                : `내부 수행과업 ${data.executionImpact.workItemCount}건 생성`}
+            </p>
             <p>외부 영향: 없음 · 외부 연락·문서 발송 자동 실행 안 함</p>
             <p>{data.executionImpact.summary}</p>
             <strong>APPROVAL BOUNDARY · 이 화면에서만 최종 결정</strong>

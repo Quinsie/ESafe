@@ -2,6 +2,10 @@
   padding-bottom: 64px;
 }
 
+.document-page .panel {
+  min-height: 0;
+}
+
 .document-heading {
   align-items: flex-start;
 }
