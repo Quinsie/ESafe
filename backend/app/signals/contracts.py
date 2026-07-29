@@ -1,3 +1,4 @@
+import unicodedata
 from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
@@ -63,3 +64,13 @@ def normalize_space(value: object | None) -> str:
     if value is None:
         return ""
     return " ".join(str(value).split())
+
+
+def normalize_address(value: object | None) -> str | None:
+    normalized = normalize_space(value)
+    if not normalized:
+        return None
+    normalized = unicodedata.normalize("NFKC", normalized)
+    for character in (" ", "\t", "\r", "\n", ",", "(", ")"):
+        normalized = normalized.replace(character, "")
+    return normalized or None

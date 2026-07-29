@@ -16,7 +16,12 @@ from app.signals.adapters import (
     fetch_kma_warnings,
     fetch_nfds,
 )
-from app.signals.contracts import CanonicalSignal, PayloadSchemaError, SignalSource
+from app.signals.contracts import (
+    CanonicalSignal,
+    PayloadSchemaError,
+    SignalSource,
+    normalize_address,
+)
 from app.signals.disaster_message import PARSER_VERSION as DISASTER_PARSER_VERSION
 from app.signals.fixtures import load_fixture_batch
 from app.signals.kma import PARSER_VERSION as KMA_PARSER_VERSION
@@ -303,14 +308,14 @@ async def _store_record(
                 INSERT INTO signal_event (
                     signal_event_id, source, external_id, event_type, event_subtype,
                     severity, source_status, title, summary, source_published_at,
-                    effective_at, expires_at, address, region_codes, region_names,
-                    location, location_precision, latest_raw_signal_id,
-                    is_relevant, relevance_reason, is_simulated, scenario_id
+                    effective_at, expires_at, address, normalized_address,
+                    region_codes, region_names, location, location_precision,
+                    latest_raw_signal_id, is_relevant, relevance_reason, is_simulated, scenario_id
                 )
                 VALUES (
                     :signal_id, :source, :external_id, :event_type, :event_subtype,
                     :severity, :source_status, :title, :summary, :source_published_at,
-                    :effective_at, :expires_at, :address,
+                    :effective_at, :expires_at, :address, :normalized_address,
                     CAST(:region_codes AS varchar(10)[]), CAST(:region_names AS text[]),
                     CASE WHEN CAST(:longitude AS double precision) IS NULL THEN NULL
                          ELSE ST_SetSRID(ST_MakePoint(:longitude, :latitude), 4326) END,
@@ -328,6 +333,7 @@ async def _store_record(
                     effective_at = EXCLUDED.effective_at,
                     expires_at = EXCLUDED.expires_at,
                     address = EXCLUDED.address,
+                    normalized_address = EXCLUDED.normalized_address,
                     region_codes = EXCLUDED.region_codes,
                     region_names = EXCLUDED.region_names,
                     location = EXCLUDED.location,
@@ -356,6 +362,7 @@ async def _store_record(
                 "effective_at": signal.effective_at,
                 "expires_at": signal.expires_at,
                 "address": signal.address,
+                "normalized_address": normalize_address(signal.address),
                 "region_codes": list(signal.region_codes),
                 "region_names": list(signal.region_names),
                 "longitude": signal.longitude,

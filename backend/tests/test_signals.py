@@ -16,6 +16,7 @@ from app.signals.adapters import (
     fetch_kma_warnings,
     fetch_nfds,
 )
+from app.signals.contracts import normalize_address
 from app.signals.reprocess import parse_stored_kma_payload
 
 
@@ -377,3 +378,10 @@ async def test_schema_error_keeps_the_received_document() -> None:
         with pytest.raises(SourcePayloadError) as captured:
             await fetch_disaster_messages(_settings(), client)
     assert len(captured.value.documents) == 1
+
+
+def test_address_normalization_is_conservative_and_deterministic() -> None:
+    assert normalize_address(" 광주광역시 동구 금남로 1 (충장동) ") == (
+        "광주광역시동구금남로1충장동"
+    )
+    assert normalize_address(None) is None
