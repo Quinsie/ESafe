@@ -15,7 +15,7 @@ from app.ai_control import AiCostGate
 from app.config import Settings
 from app.upstage import UpstageEmbeddingClient
 
-RETRIEVAL_VERSION = "rag-hybrid-rrf-v2"
+RETRIEVAL_VERSION = "rag-hybrid-rrf-v3"
 RRF_K = 60
 MAX_CANDIDATES_PER_CHANNEL = 40
 MAX_SELECTED = 12
@@ -146,7 +146,7 @@ def select_context(candidates: list[FusedCandidate]) -> list[FusedCandidate]:
             document_id = str(candidate.row["document_id"])
             if (
                 candidate.group != group
-                or per_document.get(document_id, 0) >= 2
+                or per_document.get(document_id, 0) >= 1
                 or sum(item.group == group for item in selected) >= cap
             ):
                 continue

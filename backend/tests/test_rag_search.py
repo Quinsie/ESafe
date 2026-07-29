@@ -8,6 +8,7 @@ from app.rag_search import RETRIEVAL_VERSION, _query_text, fuse_candidates, sele
 def candidate(
     chunk_id: str,
     *,
+    document_id: str | None = None,
     family: str = "AUTHORITATIVE_MANUAL",
     authority: int = 1,
     regions: list[str] | None = None,
@@ -15,7 +16,7 @@ def candidate(
 ) -> dict[str, object]:
     return {
         "chunk_id": chunk_id,
-        "document_id": f"document-{chunk_id}",
+        "document_id": document_id or f"document-{chunk_id}",
         "document_family": family,
         "authority_level": authority,
         "regions": regions or [],
@@ -68,6 +69,40 @@ def test_case_query_prefers_korean_signal_terms_without_priority_noise() -> None
         }
     )
 
-    assert RETRIEVAL_VERSION == "rag-hybrid-rrf-v2"
+    assert RETRIEVAL_VERSION == "rag-hybrid-rrf-v3"
     assert query == "전남 목포시 조선소 화재 발생 전라남도 화재 소방"
     assert "URGENT" not in query
+
+
+def test_context_selects_distinct_official_documents_before_second_chunks() -> None:
+    official = [
+        candidate("a-1", document_id="document-a"),
+        candidate("a-2", document_id="document-a"),
+        candidate("b-1", document_id="document-b"),
+        candidate("c-1", document_id="document-c"),
+        candidate("d-1", document_id="document-d"),
+        candidate("e-1", document_id="document-e"),
+        candidate("f-1", document_id="document-f"),
+    ]
+    incidents = [
+        candidate(f"incident-{index}", family="INCIDENT_CASE")
+        for index in range(4)
+    ]
+    other_regions = [
+        candidate(f"other-{index}", family="OTHER_REGION_REFERENCE")
+        for index in range(2)
+    ]
+    candidates = official + incidents + other_regions
+
+    selected = select_context(
+        fuse_candidates(
+            candidates,
+            candidates,
+            primary_region_code="29",
+            today=date(2026, 7, 29),
+        )
+    )
+
+    selected_chunk_ids = [item.row["chunk_id"] for item in selected]
+    assert "f-1" in selected_chunk_ids
+    assert "a-2" not in selected_chunk_ids
