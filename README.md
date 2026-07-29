@@ -64,6 +64,19 @@ docker compose restart api-live api-demo worker-live worker-demo
 
 일반 애플리케이션 재시작에서는 `cloudflared` 컨테이너를 재생성하지 않는다. 서버나 터널 컨테이너가 재생성되면 Quick Tunnel 주소가 바뀔 수 있으므로 현재 URL을 다시 검증한다.
 
+백업 스케줄러는 매일 03:30 KST에 LIVE·DEMO·내부 비용원장 DB, 생성 문서와 기준자산 메타데이터를 백업하고 최근 정상 7세대를 보관한다.
+
+```bash
+# 스케줄러 상태와 최근 결과
+docker compose ps backup-scheduler
+docker compose logs --tail=100 backup-scheduler
+
+# 즉시 백업과 최신 정상 세대의 격리 복원 시험
+docker compose run --rm --no-deps backup-scheduler \
+  sh /opt/esafe/scripts/backup-now.sh
+./scripts/test-restore.sh
+```
+
 ## 비개발자 사용자 안내
 
 1. 배포된 `/live/` 또는 `/demo/` 주소에서 공용 사용자 계정으로 로그인한다.
