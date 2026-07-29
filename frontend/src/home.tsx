@@ -1,6 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
 import { ApiError, apiRequest } from "./api";
-import { DemoScenarioPanel } from "./demo";
 import type { ProfileRuntime } from "./profile";
 import { AppLink } from "./router";
 
@@ -482,8 +481,6 @@ export function HomeDashboard({
           <span>2026-03 · 60일</span>
         </fieldset>
       </div>
-
-      <DemoScenarioPanel runtime={runtime} />
 
       {briefing.isLoading ? (
         <PanelMessage kind="loading" message="관제 요약을 불러오고 있습니다." />

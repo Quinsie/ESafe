@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { ApiError, apiRequest } from "./api";
 import type { ProfileRuntime } from "./profile";
+import { AppLink } from "./router";
 
 interface DemoStep {
   ordinal: number;
@@ -38,6 +39,8 @@ interface DemoCatalog {
 
 type Command = "start" | "pause" | "next" | "reset";
 
+const activeStatuses = new Set<DemoPlayback["status"]>(["READY", "RUNNING", "PAUSED"]);
+
 const statusNames: Record<DemoPlayback["status"], string> = {
   READY: "처음부터 시작 대기",
   RUNNING: "재생 중",
@@ -55,7 +58,20 @@ function commandKey(command: Command): string {
   return `demo-${command}-${crypto.randomUUID()}`;
 }
 
-export function DemoScenarioPanel({ runtime }: { runtime: ProfileRuntime }) {
+function formatSourceTime(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return new Intl.DateTimeFormat("ko-KR", {
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+    timeZone: "Asia/Seoul",
+  }).format(date);
+}
+
+function useDemoController(runtime: ProfileRuntime) {
   const queryClient = useQueryClient();
   const [selectedId, setSelectedId] = useState("");
   const catalog = useQuery({
@@ -65,15 +81,16 @@ export function DemoScenarioPanel({ runtime }: { runtime: ProfileRuntime }) {
     staleTime: 10_000,
   });
   const scenarios = catalog.data?.data.items ?? [];
-  const activeScenario = scenarios.find((item) =>
-    item.playback ? ["READY", "RUNNING", "PAUSED"].includes(item.playback.status) : false,
+  const activeScenario = scenarios.find(
+    (item) => item.playback && activeStatuses.has(item.playback.status),
   );
 
   useEffect(() => {
     if (scenarios.length === 0) return;
     const selectedExists = scenarios.some((item) => item.scenarioId === selectedId);
-    if (selectedExists) return;
-    setSelectedId((activeScenario ?? scenarios[0]).scenarioId);
+    if (!selectedExists) {
+      setSelectedId((activeScenario ?? scenarios[0]).scenarioId);
+    }
   }, [activeScenario, scenarios, selectedId]);
 
   const selected = scenarios.find((item) => item.scenarioId === selectedId) ?? scenarios[0];
@@ -84,7 +101,11 @@ export function DemoScenarioPanel({ runtime }: { runtime: ProfileRuntime }) {
         command === "start"
           ? { expectedVersion: playback?.version ?? null }
           : command === "reset"
-            ? { expectedVersion: playback?.version, confirmed: true }
+            ? {
+                expectedVersion: playback?.version ?? null,
+                activeExpectedVersion: activeScenario?.playback?.version ?? null,
+                confirmed: true,
+              }
             : { expectedVersion: playback?.version };
       return apiRequest(runtime, `/demo/scenarios/${scenario.scenarioId}/${command}`, {
         method: "POST",
@@ -103,124 +124,318 @@ export function DemoScenarioPanel({ runtime }: { runtime: ProfileRuntime }) {
     },
   });
 
+  const run = (command: Command) => {
+    if (!selected || mutation.isPending) return;
+    if (command === "reset") {
+      const replacement =
+        activeScenario && activeScenario.scenarioId !== selected.scenarioId
+          ? ` 현재 ${activeScenario.code} 체험 데이터는 정리됩니다.`
+          : "";
+      if (
+        !window.confirm(
+          `${selected.code}을(를) 처음부터 시작할 준비 상태로 만들까요?${replacement}`,
+        )
+      ) {
+        return;
+      }
+    }
+    mutation.mutate({ scenario: selected, command });
+  };
+
+  return {
+    activeScenario,
+    catalog,
+    mutation,
+    run,
+    scenarios,
+    selected,
+    selectedId,
+    setSelectedId,
+  };
+}
+
+function commandError(error: unknown, failed: boolean): string | null {
+  if (error instanceof ApiError) return error.message;
+  return failed ? "시나리오 명령을 처리하지 못했습니다." : null;
+}
+
+function ScenarioControls({
+  activeScenario,
+  busy,
+  compact = false,
+  run,
+  selected,
+}: {
+  activeScenario: DemoScenario | undefined;
+  busy: boolean;
+  compact?: boolean;
+  run: (command: Command) => void;
+  selected: DemoScenario;
+}) {
+  const playback = selected.playback;
+  const currentStep = playback?.currentStep ?? 0;
+  const nextStep = selected.steps[currentStep];
+  const anotherActive = Boolean(
+    activeScenario && activeScenario.scenarioId !== selected.scenarioId,
+  );
+  return (
+    <div className={`demo-controls${compact ? " compact" : ""}`}>
+      <button
+        disabled={
+          busy ||
+          anotherActive ||
+          playback?.status === "RUNNING" ||
+          playback?.status === "COMPLETED"
+        }
+        onClick={() => run("start")}
+        type="button"
+      >
+        {playback?.status === "PAUSED" ? "재개" : "시작"}
+      </button>
+      <button
+        disabled={busy || playback?.status !== "RUNNING"}
+        onClick={() => run("pause")}
+        type="button"
+      >
+        일시정지
+      </button>
+      <button
+        className="primary-action"
+        disabled={busy || playback?.status !== "RUNNING" || !nextStep}
+        onClick={() => run("next")}
+        type="button"
+      >
+        다음 단계
+      </button>
+      <button className="danger-action" disabled={busy} onClick={() => run("reset")} type="button">
+        초기화
+      </button>
+    </div>
+  );
+}
+
+export function DemoRemoteControl({
+  currentPath,
+  runtime,
+}: {
+  currentPath: string;
+  runtime: ProfileRuntime;
+}) {
+  const controller = useDemoController(runtime);
+  const [open, setOpen] = useState(false);
   if (runtime.profile !== "DEMO") return null;
+
+  const { activeScenario, catalog, mutation, run, scenarios, selected, setSelectedId } = controller;
   if (catalog.isLoading) {
-    return <section className="demo-scenario-panel">체험 시나리오를 불러오고 있습니다.</section>;
+    return <div className="demo-remote loading">체험 리모컨을 준비하고 있습니다.</div>;
+  }
+  if (!catalog.isSuccess || !selected) {
+    return <div className="demo-remote error">시나리오를 불러오지 못했습니다.</div>;
+  }
+  const playback = selected.playback;
+  const anotherActive =
+    activeScenario && activeScenario.scenarioId !== selected.scenarioId
+      ? activeScenario
+      : undefined;
+  const errorMessage = commandError(mutation.error, mutation.isError);
+
+  return (
+    <section className="demo-remote" aria-label="체험 시나리오 리모컨">
+      <div className="demo-remote-heading">
+        <span>체험 리모컨</span>
+        <strong>
+          {playback ? statusNames[playback.status] : "시작 전"} · {playback?.currentStep ?? 0}/
+          {selected.stepCount}
+        </strong>
+      </div>
+      <div className="demo-remote-select">
+        <button
+          aria-expanded={open}
+          className="demo-scenario-trigger"
+          onClick={() => setOpen((value) => !value)}
+          type="button"
+        >
+          <span>
+            {selected.code} · {selected.name}
+          </span>
+          <b aria-hidden="true">{open ? "▲" : "▼"}</b>
+        </button>
+        {open ? (
+          <div className="demo-scenario-options" role="listbox" aria-label="시나리오 선택">
+            {scenarios.map((scenario) => (
+              <button
+                aria-label={`${scenario.code} ${scenario.name}`}
+                aria-selected={scenario.scenarioId === selected.scenarioId}
+                key={scenario.scenarioId}
+                onClick={() => {
+                  setSelectedId(scenario.scenarioId);
+                  setOpen(false);
+                }}
+                role="option"
+                type="button"
+              >
+                <strong>{scenario.code}</strong>
+                <span>{scenario.name}</span>
+              </button>
+            ))}
+          </div>
+        ) : null}
+      </div>
+      {anotherActive ? (
+        <p className="demo-remote-notice">
+          {anotherActive.code} 진행 중 · 초기화하면 선택 시나리오로 전환합니다.
+        </p>
+      ) : null}
+      <ScenarioControls
+        activeScenario={activeScenario}
+        busy={mutation.isPending}
+        compact
+        run={run}
+        selected={selected}
+      />
+      {errorMessage ? (
+        <p className="demo-remote-error" role="alert">
+          {errorMessage}
+        </p>
+      ) : null}
+      <AppLink
+        className="demo-remote-detail"
+        currentPath={currentPath}
+        runtime={runtime}
+        to="/demo-scenarios"
+      >
+        시나리오 상세 보기
+      </AppLink>
+    </section>
+  );
+}
+
+export function DemoScenarioPage({ runtime }: { runtime: ProfileRuntime }) {
+  const controller = useDemoController(runtime);
+  const { activeScenario, catalog, mutation, run, scenarios, selected, setSelectedId } = controller;
+  if (catalog.isLoading) {
+    return (
+      <main className="page demo-scenario-page" id="main-content">
+        <div className="auth-loading" role="status">
+          체험 시나리오를 불러오고 있습니다.
+        </div>
+      </main>
+    );
   }
   if (!catalog.isSuccess || !selected) {
     return (
-      <section className="demo-scenario-panel error" role="alert">
-        체험 시나리오를 불러오지 못했습니다.
-      </section>
+      <main className="page demo-scenario-page" id="main-content">
+        <section className="panel demo-scenario-error" role="alert">
+          체험 시나리오를 불러오지 못했습니다.
+        </section>
+      </main>
     );
   }
 
   const playback = selected.playback;
   const currentStep = playback?.currentStep ?? 0;
-  const nextStep = selected.steps[currentStep];
-  const busy = mutation.isPending;
-  const errorMessage =
-    mutation.error instanceof ApiError
-      ? mutation.error.message
-      : mutation.isError
-        ? "시나리오 명령을 처리하지 못했습니다."
-        : null;
-
-  const run = (command: Command) => {
-    if (busy) return;
-    const target = command === "reset" && activeScenario ? activeScenario : selected;
-    if (
-      command === "reset" &&
-      !window.confirm(`${target.code} 체험 Case·업무·문서 초안을 지우고 처음부터 초기화할까요?`)
-    ) {
-      return;
-    }
-    mutation.mutate({ scenario: target, command });
-  };
+  const anotherActive =
+    activeScenario && activeScenario.scenarioId !== selected.scenarioId
+      ? activeScenario
+      : undefined;
+  const errorMessage = commandError(mutation.error, mutation.isError);
 
   return (
-    <section className="demo-scenario-panel" aria-label="체험 시나리오 제어">
-      <div className="demo-scenario-heading">
+    <main className="page demo-scenario-page" id="main-content">
+      <div className="page-heading">
         <div>
-          <span className="status-pill neutral">체험 데이터</span>
-          <h2>실시간 상황 시나리오</h2>
-          <p>외부 호출 없이 원천 응답부터 한 단계씩 실제 처리 경로를 재생합니다.</p>
+          <span className="status-pill neutral">체험 데이터 전용</span>
+          <h1>체험 시나리오</h1>
+          <p>통제 가능한 원천 신호를 실제 파싱·Case 처리 경로에 한 단계씩 재생합니다.</p>
         </div>
-        <label>
-          시나리오
-          <select
-            disabled={busy || playback?.status === "RUNNING"}
-            onChange={(event) => setSelectedId(event.target.value)}
-            value={selected.scenarioId}
-          >
+      </div>
+      <div className="demo-scenario-layout">
+        <aside className="panel demo-scenario-catalog" aria-label="체험 시나리오 목록">
+          <h2>시나리오 선택</h2>
+          <p>선택만으로 진행 중인 시나리오는 바뀌지 않습니다.</p>
+          <div>
             {scenarios.map((scenario) => (
-              <option key={scenario.scenarioId} value={scenario.scenarioId}>
-                {scenario.code} · {scenario.name}
-              </option>
+              <button
+                className={scenario.scenarioId === selected.scenarioId ? "is-selected" : ""}
+                key={scenario.scenarioId}
+                onClick={() => setSelectedId(scenario.scenarioId)}
+                type="button"
+              >
+                <span>{scenario.code}</span>
+                <strong>{scenario.name}</strong>
+                <small>
+                  {scenario.playback ? statusNames[scenario.playback.status] : "시작 전"}
+                </small>
+              </button>
             ))}
-          </select>
-        </label>
+          </div>
+        </aside>
+        <section className="panel demo-scenario-detail">
+          <div className="demo-scenario-detail-heading">
+            <div>
+              <span>{selected.code}</span>
+              <h2>{selected.name}</h2>
+              <p>{selected.description}</p>
+            </div>
+            <strong className={`demo-playback-status ${playback?.status.toLowerCase() ?? "new"}`}>
+              {playback ? statusNames[playback.status] : "시작 전"}
+            </strong>
+          </div>
+          {anotherActive ? (
+            <div className="demo-active-notice" role="status">
+              <strong>{anotherActive.code} 시나리오가 현재 활성 상태입니다.</strong>
+              <span>
+                선택한 {selected.code}의 초기화를 누르면 기존 체험 데이터를 정리하고 전환합니다.
+              </span>
+            </div>
+          ) : null}
+          <div className="demo-scenario-progress">
+            <span>
+              진행 단계 <strong>{currentStep}</strong> / {selected.stepCount}
+            </span>
+            <span>세대 {playback?.generation ?? 0}</span>
+          </div>
+          <ol className="demo-step-list">
+            {selected.steps.map((step) => {
+              const state =
+                step.ordinal <= currentStep
+                  ? "complete"
+                  : step.ordinal === currentStep + 1
+                    ? "next"
+                    : "waiting";
+              return (
+                <li className={state} key={step.ordinal}>
+                  <span>{step.ordinal}</span>
+                  <div>
+                    <strong>{step.label}</strong>
+                    <small>
+                      {sourceNames[step.source]} · 체험 시각 {formatSourceTime(step.sourceTime)}
+                    </small>
+                  </div>
+                  <b>{state === "complete" ? "완료" : state === "next" ? "다음" : "대기"}</b>
+                </li>
+              );
+            })}
+          </ol>
+          <div className="demo-scenario-action-bar">
+            <div>
+              <strong>재생 제어</strong>
+              <p>초기화는 언제든 선택 시나리오를 처음부터 시작할 준비 상태로 만듭니다.</p>
+            </div>
+            <ScenarioControls
+              activeScenario={activeScenario}
+              busy={mutation.isPending}
+              run={run}
+              selected={selected}
+            />
+          </div>
+          {errorMessage ? (
+            <div className="auth-error" role="alert">
+              {errorMessage}
+            </div>
+          ) : null}
+        </section>
       </div>
-      {activeScenario && activeScenario.scenarioId !== selected.scenarioId ? (
-        <div className="demo-active-notice" role="status">
-          <strong>{activeScenario.code} 시나리오가 초기화 대기 또는 실행 중입니다.</strong>
-          <span>아래 초기화 버튼은 현재 활성 시나리오를 정리합니다.</span>
-        </div>
-      ) : null}
-      <div className="demo-scenario-body">
-        <div>
-          <strong>{selected.name}</strong>
-          <p>{selected.description}</p>
-          <span>
-            {playback ? statusNames[playback.status] : "시작 전"} · 단계 {currentStep}/
-            {selected.stepCount} · 세대 {playback?.generation ?? 0}
-          </span>
-        </div>
-        <div className="demo-next-step">
-          <span>{nextStep ? "다음 단계" : "재생 결과"}</span>
-          <strong>{nextStep?.label ?? "모든 단계가 완료되었습니다."}</strong>
-          {nextStep ? <small>{sourceNames[nextStep.source]} 원천시각 보존</small> : null}
-        </div>
-        <div className="demo-controls">
-          <button
-            disabled={busy || playback?.status === "RUNNING" || playback?.status === "COMPLETED"}
-            onClick={() => run("start")}
-            type="button"
-          >
-            {playback?.status === "PAUSED" ? "재개" : "시작"}
-          </button>
-          <button
-            disabled={busy || playback?.status !== "RUNNING"}
-            onClick={() => run("pause")}
-            type="button"
-          >
-            일시정지
-          </button>
-          <button
-            className="primary-action"
-            disabled={busy || playback?.status !== "RUNNING" || !nextStep}
-            onClick={() => run("next")}
-            type="button"
-          >
-            다음 단계
-          </button>
-          <button
-            className="danger-action"
-            disabled={busy || (!activeScenario && !playback)}
-            onClick={() => run("reset")}
-            type="button"
-          >
-            {activeScenario && activeScenario.scenarioId !== selected.scenarioId
-              ? `${activeScenario.code} 처음부터 초기화`
-              : "처음부터 초기화"}
-          </button>
-        </div>
-      </div>
-      {errorMessage ? (
-        <div className="auth-error" role="alert">
-          {errorMessage}
-        </div>
-      ) : null}
-    </section>
+    </main>
   );
 }

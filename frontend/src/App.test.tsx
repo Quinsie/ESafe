@@ -377,16 +377,30 @@ describe("App authentication boundary", () => {
     expect(within(priorityPanel as HTMLElement).getByText("북구")).toBeVisible();
   });
 
-  it("shows controlled raw-signal scenario actions on DEMO home", async () => {
+  it("keeps the LIVE-shaped home and exposes DEMO controls in the sidebar", async () => {
     installAuthenticatedFetch();
     renderApp();
 
-    expect(await screen.findByRole("heading", { name: "실시간 상황 시나리오" })).toBeVisible();
-    expect(screen.getByText("DS-01 · 화재 전체 여정")).toBeVisible();
-    expect(screen.getByText("광주 건물화재 신규 감지")).toBeVisible();
+    expect(await screen.findByRole("heading", { name: "오늘의 상황 브리핑" })).toBeVisible();
+    expect(screen.queryByRole("heading", { name: "실시간 상황 시나리오" })).not.toBeInTheDocument();
+    expect(await screen.findByRole("region", { name: "체험 시나리오 리모컨" })).toBeVisible();
+    expect(screen.getByText("체험 리모컨")).toBeVisible();
+    expect(screen.getByRole("link", { name: "체험 시나리오" })).toBeVisible();
     expect(screen.getByRole("button", { name: "시작" })).toBeEnabled();
     expect(screen.getByRole("button", { name: "다음 단계" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "처음부터 초기화" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "초기화" })).toBeEnabled();
+  });
+
+  it("opens scenario descriptions in the dedicated DEMO route", async () => {
+    installAuthenticatedFetch();
+    const user = userEvent.setup();
+    renderApp();
+
+    await user.click(await screen.findByRole("link", { name: "체험 시나리오" }));
+
+    expect(await screen.findByRole("heading", { name: "체험 시나리오" })).toBeVisible();
+    expect(screen.getByRole("heading", { name: "화재 전체 여정" })).toBeVisible();
+    expect(screen.getByText("광주 건물화재 신규 감지")).toBeVisible();
   });
 
   it("keeps healthy panels visible when the task panel fails", async () => {

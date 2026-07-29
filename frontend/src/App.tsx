@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { type FormEvent, lazy, Suspense, useEffect, useState } from "react";
 import { type ApiEnvelope, ApiError, apiRequest } from "./api";
+import { DemoRemoteControl, DemoScenarioPage } from "./demo";
 import { formatKst, HomeDashboard, sourceSummaryLabel, useSourceHealth } from "./home";
 import type { ProfileRuntime } from "./profile";
 import {
@@ -84,6 +85,7 @@ const routeTitles: Record<string, string> = {
   "/similar/facilities": "유사 위험시설 탐색",
   "/similar/compare": "후보 시설 비교",
   "/notifications": "알림",
+  "/demo-scenarios": "체험 시나리오",
 };
 
 function routeTitle(path: string): string | undefined {
@@ -305,6 +307,19 @@ function Sidebar({ currentPath, runtime }: { currentPath: string; runtime: Profi
           </nav>
         </div>
       ))}
+      {runtime.profile === "DEMO" ? (
+        <div className="demo-sidebar-section">
+          <AppLink
+            className="nav-item demo-scenario-nav"
+            currentPath={currentPath}
+            runtime={runtime}
+            to="/demo-scenarios"
+          >
+            체험 시나리오
+          </AppLink>
+          <DemoRemoteControl currentPath={currentPath} runtime={runtime} />
+        </div>
+      ) : null}
     </aside>
   );
 }
@@ -512,6 +527,8 @@ function AuthenticatedShell({
         >
           <NotificationCenter currentPath={currentPath} runtime={runtime} />
         </Suspense>
+      ) : currentPath === "/demo-scenarios" && runtime.profile === "DEMO" ? (
+        <DemoScenarioPage runtime={runtime} />
       ) : title ? (
         <SectionPlaceholder title={title} />
       ) : (

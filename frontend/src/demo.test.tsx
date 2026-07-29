@@ -2,7 +2,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { DemoScenarioPanel } from "./demo";
+import { DemoRemoteControl, DemoScenarioPage } from "./demo";
 import { resolveProfile } from "./profile";
 
 function response(data: unknown): Response {
@@ -53,7 +53,7 @@ function catalog() {
       {
         scenarioId: "s5",
         code: "DS-05",
-        name: "문서 승인 여정",
+        name: "소스 장애·복구",
         description: "현재 초기화 대기 중인 시나리오",
         scenarioVersion: 1,
         stepCount: 1,
@@ -72,18 +72,23 @@ function catalog() {
   };
 }
 
+function renderWithClient(element: React.ReactNode) {
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return render(<QueryClientProvider client={queryClient}>{element}</QueryClientProvider>);
+}
+
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
 
-describe("DemoScenarioPanel", () => {
-  it("resets the globally active scenario even when another scenario is selected", async () => {
+describe("DEMO scenario controls", () => {
+  it("resets the selected scenario and supplies the active playback version", async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
       if (url.endsWith("/demo/scenarios")) return response(catalog());
-      if (url.endsWith("/demo/scenarios/s5/reset")) {
+      if (url.endsWith("/demo/scenarios/s1/reset")) {
         return response({ command: "RESET" });
       }
       throw new Error(`unexpected request: ${url}`);
@@ -94,26 +99,41 @@ describe("DemoScenarioPanel", () => {
       vi.fn(() => true),
     );
     window.history.replaceState({}, "", "/demo/home");
-    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const runtime = resolveProfile("/demo/home");
     const user = userEvent.setup();
-    render(
-      <QueryClientProvider client={queryClient}>
-        <DemoScenarioPanel runtime={resolveProfile("/demo/home")} />
-      </QueryClientProvider>,
-    );
+    renderWithClient(<DemoRemoteControl currentPath="/home" runtime={runtime} />);
 
-    const select = await screen.findByLabelText("시나리오");
-    await user.selectOptions(select, "s1");
-    await user.click(screen.getByRole("button", { name: "DS-05 처음부터 초기화" }));
+    await user.click(await screen.findByRole("button", { name: "DS-05 · 소스 장애·복구" }));
+    await user.click(screen.getByRole("option", { name: "DS-01 화재 전체 여정" }));
+    await user.click(screen.getByRole("button", { name: "초기화" }));
 
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith(
-        "/demo/api/v1/demo/scenarios/s5/reset",
+        "/demo/api/v1/demo/scenarios/s1/reset",
         expect.objectContaining({
           method: "POST",
-          body: JSON.stringify({ expectedVersion: 7, confirmed: true }),
+          body: JSON.stringify({
+            expectedVersion: 4,
+            activeExpectedVersion: 7,
+            confirmed: true,
+          }),
         }),
       );
     });
+  });
+
+  it("shows scenario descriptions and step details on the dedicated page", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => response(catalog())),
+    );
+    const runtime = resolveProfile("/demo/demo-scenarios");
+
+    renderWithClient(<DemoScenarioPage runtime={runtime} />);
+
+    expect(await screen.findByRole("heading", { name: "체험 시나리오" })).toBeVisible();
+    expect(screen.getByText("화재 전체 여정")).toBeVisible();
+    expect(screen.getByText("원천 신호 재생")).toBeVisible();
+    expect(screen.getByText("선택만으로 진행 중인 시나리오는 바뀌지 않습니다.")).toBeVisible();
   });
 });
