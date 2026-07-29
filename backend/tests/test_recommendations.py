@@ -54,6 +54,8 @@ def proposal(
 ) -> dict[str, object]:
     return {
         "situationSummary": "광주 지역 화재 신호의 전기안전 확인이 필요합니다.",
+        "answerEvidenceStatus": evidence_status,
+        "answerWarning": None,
         "requiredChecks": ["전원 차단 여부"],
         "uncertainties": [],
         "conflicts": [],
@@ -146,6 +148,18 @@ def test_invalid_shape_is_rejected_before_persistence() -> None:
         match="OUTPUT_SCHEMA_INVALID",
     ):
         validate_recommendation_payload({"actions": []}, evidence_rows())
+
+
+def test_insufficient_core_answer_cannot_be_upgraded_by_generic_action() -> None:
+    value = proposal(evidence_status="SUFFICIENT")
+    value["answerEvidenceStatus"] = "INSUFFICIENT"
+    value["answerWarning"] = "질문의 핵심 의무를 뒷받침하는 근거가 없습니다."
+
+    result = validate_recommendation_payload(value, evidence_rows())
+
+    assert result.actions[0].evidence_status == "SUFFICIENT"
+    assert result.evidence_status == "INSUFFICIENT"
+    assert result.warning == value["answerWarning"]
 
 
 def test_generation_input_includes_case_title_and_retrieval_query() -> None:

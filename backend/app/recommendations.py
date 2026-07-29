@@ -15,8 +15,8 @@ from app.ai_control import AiCostGate
 from app.config import Settings
 from app.upstage import UpstageChatClient
 
-PROMPT_VERSION = "case-recommendation-ko-v2"
-GENERATION_VERSION = "recommendation-generator-v2"
+PROMPT_VERSION = "case-recommendation-ko-v3"
+GENERATION_VERSION = "recommendation-generator-v3"
 ALLOWED_PRIVACY_STATUSES = frozenset(("PUBLIC_SAFE", "MASKED_VERIFIED"))
 
 SYSTEM_PROMPT = """
@@ -31,6 +31,8 @@ quote는 해당 evidence의 excerpt에서 글자 그대로 연속 복사해야 �
 응답은 설명이나 마크다운 없이 다음 구조의 JSON 객체 하나만 반환하라.
 {
   "situationSummary": "문자열",
+  "answerEvidenceStatus": "SUFFICIENT | INSUFFICIENT | CONFLICT",
+  "answerWarning": "문자열 또는 null",
   "requiredChecks": ["문자열"],
   "uncertainties": ["문자열"],
   "conflicts": ["문자열"],
@@ -53,6 +55,12 @@ quote는 해당 evidence의 excerpt에서 글자 그대로 연속 복사해야 �
   ]
 }
 actions는 가장 중요한 1~4개만, 각 checklist는 1~5개로 제한하라.
+answerEvidenceStatus는 질문 또는 사건의 핵심 판단 전체에 대한 근거 상태다.
+핵심 질문에 직접 답하는 공식 근거가 없으면 일반적인 다른 행동에 근거가 있더라도
+INSUFFICIENT로 판정하라.
+서로 다른 공식 현행 문서가 핵심 질문에 상충하면 CONFLICT로 판정하고
+두 문서를 같은 행동에서 직접 인용하라.
+INSUFFICIENT 또는 CONFLICT이면 answerWarning을 반드시 작성하라.
 모든 문장은 한국어로 간결하게 작성하라.
 """.strip()
 
@@ -90,6 +98,14 @@ class RecommendationProposal(BaseModel):
 
     situation_summary: str = Field(
         alias="situationSummary", min_length=1, max_length=1000
+    )
+    answer_evidence_status: Literal["SUFFICIENT", "INSUFFICIENT", "CONFLICT"] = Field(
+        alias="answerEvidenceStatus"
+    )
+    answer_warning: str | None = Field(
+        default=None,
+        alias="answerWarning",
+        max_length=600,
     )
     required_checks: list[str] = Field(
         alias="requiredChecks", default_factory=list, max_length=8
@@ -285,19 +301,42 @@ def validate_recommendation_payload(
                 checklist=checklist,
             )
         )
-    if any(action.evidence_status == "CONFLICT" for action in validated_actions):
-        overall_status: Literal["SUFFICIENT", "INSUFFICIENT", "CONFLICT"] = "CONFLICT"
-        overall_warning = "상충하는 공식 근거가 있어 사용자 확인과 사유 기록이 필요합니다."
+    direct_official_documents = {
+        str(evidence[citation.evidence_item_id]["document_id"])
+        for action in validated_actions
+        for citation in action.citations
+        if citation.support_type == "DIRECT"
+    }
+    overall_status: Literal["SUFFICIENT", "INSUFFICIENT", "CONFLICT"]
+    overall_warning: str | None
+    if (
+        proposal.answer_evidence_status == "CONFLICT"
+        and len(direct_official_documents) >= 2
+        and any(
+            action.evidence_status == "CONFLICT" for action in validated_actions
+        )
+    ):
+        overall_status = "CONFLICT"
+        overall_warning = (
+            proposal.answer_warning
+            or "상충하는 공식 근거가 있어 사용자 확인과 사유 기록이 필요합니다."
+        )
         conflicts = _clean_texts(proposal.conflicts, maximum=500)
-    elif all(
-        action.evidence_status == "SUFFICIENT" for action in validated_actions
+    elif (
+        proposal.answer_evidence_status == "SUFFICIENT"
+        and all(
+            action.evidence_status == "SUFFICIENT" for action in validated_actions
+        )
     ):
         overall_status = "SUFFICIENT"
-        overall_warning = None
+        overall_warning = proposal.answer_warning
         conflicts = ()
     else:
         overall_status = "INSUFFICIENT"
-        overall_warning = "일부 제안 행동의 직접 공식 근거가 부족합니다."
+        overall_warning = (
+            proposal.answer_warning
+            or "핵심 판단 또는 일부 제안 행동의 직접 공식 근거가 부족합니다."
+        )
         conflicts = ()
     return ValidatedRecommendation(
         situation_summary=" ".join(proposal.situation_summary.split()),
