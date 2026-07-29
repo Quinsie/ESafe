@@ -17,8 +17,25 @@ from app.config import Settings
 from app.upstage import UpstageChatClient
 
 PROMPT_VERSION = "case-recommendation-ko-v4"
-GENERATION_VERSION = "recommendation-generator-v5"
+GENERATION_VERSION = "recommendation-generator-v6"
 ALLOWED_PRIVACY_STATUSES = frozenset(("PUBLIC_SAFE", "MASKED_VERIFIED"))
+QUOTE_TOKEN_PATTERN = re.compile(r"[가-힣A-Za-z0-9]{2,}")
+QUOTE_STOP_WORDS = frozenset(
+    {
+        "관련",
+        "근거",
+        "공식",
+        "현행",
+        "확인",
+        "필요",
+        "문서",
+        "매뉴얼",
+        "행동",
+        "조치",
+        "내용",
+        "적용",
+    }
+)
 
 SYSTEM_PROMPT = """
 당신은 대한민국 공공기관의 전기재해 예방 관제 의사결정 보조자다.
@@ -187,6 +204,21 @@ def _recover_whitespace_exact_quote(quote: str, excerpt: str) -> str | None:
     return match.group(0) if match is not None else None
 
 
+def _quote_has_grounded_token_alignment(quote: str, excerpt: str) -> bool:
+    quote_tokens = {
+        token.lower()
+        for token in QUOTE_TOKEN_PATTERN.findall(quote)
+        if token.lower() not in QUOTE_STOP_WORDS
+    }
+    if len(quote_tokens) < 2:
+        return False
+    excerpt_tokens = {
+        token.lower() for token in QUOTE_TOKEN_PATTERN.findall(excerpt)
+    }
+    matched = quote_tokens & excerpt_tokens
+    return len(matched) >= 2 and len(matched) / len(quote_tokens) >= 0.5
+
+
 def recommendation_response_schema(
     evidence_rows: list[dict[str, Any]],
 ) -> dict[str, Any]:
@@ -235,12 +267,18 @@ def validate_recommendation_payload(
                 continue
             excerpt = str(item["excerpt"])
             quote_is_exact = bool(quote and quote in excerpt)
+            quote_is_grounded = quote_is_exact
             if not quote_is_exact:
                 recovered_quote = _recover_whitespace_exact_quote(quote, excerpt)
                 if recovered_quote is not None:
                     quote = recovered_quote
                     quote_is_exact = True
+                    quote_is_grounded = True
             if not quote_is_exact:
+                quote_is_grounded = _quote_has_grounded_token_alignment(
+                    quote,
+                    excerpt,
+                )
                 quote = excerpt[:1200].strip()
                 if not quote:
                     continue
@@ -249,7 +287,7 @@ def validate_recommendation_payload(
             support_type = citation.support_type
             if group == "PAST_INCIDENT":
                 support_type = "CASE_EXAMPLE"
-            elif not quote_is_exact or (
+            elif (not quote_is_exact and not quote_is_grounded) or (
                 support_type == "DIRECT"
                 and (
                     group != "OFFICIAL"

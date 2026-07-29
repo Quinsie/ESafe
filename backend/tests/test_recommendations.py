@@ -21,7 +21,7 @@ PAST = UUID("00000000-0000-4000-8000-000000000103")
 
 def test_prompt_treats_unapplied_official_amendment_as_conflict() -> None:
     assert PROMPT_VERSION == "case-recommendation-ko-v4"
-    assert GENERATION_VERSION == "recommendation-generator-v5"
+    assert GENERATION_VERSION == "recommendation-generator-v6"
     assert "변경 전 용어나 내용이 그대로 남아 있으면" in SYSTEM_PROMPT
     assert "하나의 CONFLICT 행동" in SYSTEM_PROMPT
 
@@ -121,6 +121,17 @@ def test_hallucinated_quote_is_removed_and_warned() -> None:
     assert result.actions[0].citations[0].support_type == "CONTEXT"
     assert result.actions[0].citations[0].quote == evidence_rows()[0]["excerpt"]
     assert result.actions[0].warning is not None
+
+
+def test_grounded_paraphrase_recovers_exact_source_excerpt() -> None:
+    result = validate_recommendation_payload(
+        proposal(quote="현장에서 전원 차단을 확인한다."),
+        evidence_rows(),
+    )
+
+    assert result.evidence_status == "SUFFICIENT"
+    assert result.actions[0].citations[0].support_type == "DIRECT"
+    assert result.actions[0].citations[0].quote == evidence_rows()[0]["excerpt"]
 
 
 def test_response_schema_only_allows_supplied_evidence_ids() -> None:
