@@ -51,6 +51,12 @@ class Settings(BaseSettings):
         alias="UPSTAGE_BASE_URL",
     )
     upstage_chat_model: str = Field(default="solar-pro3", alias="UPSTAGE_CHAT_MODEL")
+    upstage_chat_timeout_seconds: float = Field(
+        default=180.0,
+        ge=30.0,
+        le=300.0,
+        alias="UPSTAGE_CHAT_TIMEOUT_SECONDS",
+    )
     upstage_embed_query_model: str = Field(
         default="solar-embedding-2-query",
         alias="UPSTAGE_EMBED_QUERY_MODEL",

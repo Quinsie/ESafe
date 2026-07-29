@@ -57,6 +57,7 @@ docker compose config --quiet
 - `DATA_GO_KR_SERVICE_KEY`: 기상특보·재난문자 공공 API 인증키
 - `NFDS_ENABLED`: `false`이면 다음 관련 서비스 재시작부터 NFDS 외부 호출만 중단
 - `UPSTAGE_COST_HARD_STOP_USD`: 내부 누적 추정비용 하드 중단선, 기본 450 USD
+- `UPSTAGE_CHAT_TIMEOUT_SECONDS`: 비동기 대응안 생성의 provider 응답 제한시간, 기본 180초
 
 키와 비용값은 브라우저나 로그에 노출하지 않는다. 개인정보가 포함된 자료는 서버 내부 비식별 검증을 통과한 사본만 Upstage에 전송한다.
 

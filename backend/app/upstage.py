@@ -21,9 +21,7 @@ MAX_EMBEDDING_BATCH_ITEMS = 100
 MAX_EMBEDDING_BATCH_TOKENS = 204_800
 EMBEDDING_USD_PER_MILLION_WITH_VAT = Decimal("0.022")
 EMBEDDING_MAX_BATCH_COST_USD = (
-    Decimal(MAX_EMBEDDING_BATCH_TOKENS)
-    / Decimal(1_000_000)
-    * EMBEDDING_USD_PER_MILLION_WITH_VAT
+    Decimal(MAX_EMBEDDING_BATCH_TOKENS) / Decimal(1_000_000) * EMBEDDING_USD_PER_MILLION_WITH_VAT
 )
 CHAT_MAX_INPUT_TOKENS = 120_000
 CHAT_MAX_OUTPUT_TOKENS = 8_192
@@ -31,12 +29,8 @@ CHAT_INPUT_USD_PER_MILLION_WITH_VAT = Decimal("0.165")
 CHAT_CACHED_INPUT_USD_PER_MILLION_WITH_VAT = Decimal("0.0165")
 CHAT_OUTPUT_USD_PER_MILLION_WITH_VAT = Decimal("0.66")
 CHAT_MAX_REQUEST_COST_USD = (
-    Decimal(CHAT_MAX_INPUT_TOKENS)
-    / Decimal(1_000_000)
-    * CHAT_INPUT_USD_PER_MILLION_WITH_VAT
-    + Decimal(CHAT_MAX_OUTPUT_TOKENS)
-    / Decimal(1_000_000)
-    * CHAT_OUTPUT_USD_PER_MILLION_WITH_VAT
+    Decimal(CHAT_MAX_INPUT_TOKENS) / Decimal(1_000_000) * CHAT_INPUT_USD_PER_MILLION_WITH_VAT
+    + Decimal(CHAT_MAX_OUTPUT_TOKENS) / Decimal(1_000_000) * CHAT_OUTPUT_USD_PER_MILLION_WITH_VAT
 ).quantize(Decimal("0.00000001"))
 
 
@@ -70,11 +64,9 @@ def embedding_request_hash(model: str, texts: Sequence[str]) -> str:
 def embedding_cost(tokens: int) -> Decimal:
     if tokens < 0:
         raise ValueError("embedding tokens cannot be negative")
-    return (
-        Decimal(tokens)
-        / Decimal(1_000_000)
-        * EMBEDDING_USD_PER_MILLION_WITH_VAT
-    ).quantize(Decimal("0.00000001"))
+    return (Decimal(tokens) / Decimal(1_000_000) * EMBEDDING_USD_PER_MILLION_WITH_VAT).quantize(
+        Decimal("0.00000001")
+    )
 
 
 def chat_response_format(
@@ -132,15 +124,11 @@ def chat_cost(
         raise ValueError("chat usage cannot be negative or inconsistent")
     uncached_input_tokens = input_tokens - cached_input_tokens
     return (
-        Decimal(uncached_input_tokens)
-        / Decimal(1_000_000)
-        * CHAT_INPUT_USD_PER_MILLION_WITH_VAT
+        Decimal(uncached_input_tokens) / Decimal(1_000_000) * CHAT_INPUT_USD_PER_MILLION_WITH_VAT
         + Decimal(cached_input_tokens)
         / Decimal(1_000_000)
         * CHAT_CACHED_INPUT_USD_PER_MILLION_WITH_VAT
-        + Decimal(output_tokens)
-        / Decimal(1_000_000)
-        * CHAT_OUTPUT_USD_PER_MILLION_WITH_VAT
+        + Decimal(output_tokens) / Decimal(1_000_000) * CHAT_OUTPUT_USD_PER_MILLION_WITH_VAT
     ).quantize(Decimal("0.00000001"))
 
 
@@ -170,8 +158,7 @@ def unpack_embedding_vectors(
     if not all(math.isfinite(value) for value in values):
         raise ValueError("UPSTAGE_EMBEDDING_CACHE_INVALID")
     return [
-        list(values[offset : offset + dimension])
-        for offset in range(0, len(values), dimension)
+        list(values[offset : offset + dimension]) for offset in range(0, len(values), dimension)
     ]
 
 
@@ -240,9 +227,7 @@ def parse_chat_response(
     output_tokens = usage.get("completion_tokens")
     prompt_details = usage.get("prompt_tokens_details") or {}
     cached_input_tokens = (
-        prompt_details.get("cached_tokens", 0)
-        if isinstance(prompt_details, dict)
-        else 0
+        prompt_details.get("cached_tokens", 0) if isinstance(prompt_details, dict) else 0
     )
     if (
         not isinstance(input_tokens, int)
@@ -449,9 +434,7 @@ class UpstageChatClient:
             unit_price_snapshot={
                 "currency": "USD",
                 "input_per_million": str(CHAT_INPUT_USD_PER_MILLION_WITH_VAT),
-                "cached_input_per_million": str(
-                    CHAT_CACHED_INPUT_USD_PER_MILLION_WITH_VAT
-                ),
+                "cached_input_per_million": str(CHAT_CACHED_INPUT_USD_PER_MILLION_WITH_VAT),
                 "output_per_million": str(CHAT_OUTPUT_USD_PER_MILLION_WITH_VAT),
                 "vat_included": True,
                 "price_version": "2026-07-29",
@@ -466,7 +449,7 @@ class UpstageChatClient:
                     "Authorization": f"Bearer {api_key.get_secret_value()}",
                     "Content-Type": "application/json",
                 },
-                timeout=httpx.Timeout(90.0),
+                timeout=httpx.Timeout(self._settings.upstage_chat_timeout_seconds),
             ) as client:
                 response = await client.post(
                     "/chat/completions",
@@ -485,8 +468,8 @@ class UpstageChatClient:
                 response_payload = response.json()
             if not isinstance(response_payload, dict):
                 raise ValueError("UPSTAGE_CHAT_RESPONSE_INVALID")
-            parsed, input_tokens, cached_input_tokens, output_tokens = (
-                parse_chat_response(response_payload)
+            parsed, input_tokens, cached_input_tokens, output_tokens = parse_chat_response(
+                response_payload
             )
             await self._cost_gate.settle(
                 reservation,

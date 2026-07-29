@@ -3,8 +3,10 @@ from __future__ import annotations
 from decimal import Decimal
 
 import pytest
+from pydantic import ValidationError
 
 from app.ai_control import CostLimitReached, check_cost_headroom
+from app.config import Settings
 from app.upstage import (
     EMBEDDING_DIMENSION,
     chat_cost,
@@ -17,6 +19,13 @@ from app.upstage import (
     parse_embedding_response,
     unpack_embedding_vectors,
 )
+
+
+def test_chat_timeout_is_bounded_for_async_generation() -> None:
+    assert Settings().upstage_chat_timeout_seconds == 180.0
+    assert Settings(UPSTAGE_CHAT_TIMEOUT_SECONDS=30).upstage_chat_timeout_seconds == 30.0
+    with pytest.raises(ValidationError):
+        Settings(UPSTAGE_CHAT_TIMEOUT_SECONDS=301)
 
 
 def test_cost_headroom_blocks_before_hard_stop_is_crossed() -> None:
@@ -131,27 +140,21 @@ def test_chat_response_requires_json_stop_and_consistent_usage() -> None:
     [
         (
             {
-                "choices": [
-                    {"finish_reason": "length", "message": {"content": '{"ok":true}'}}
-                ],
+                "choices": [{"finish_reason": "length", "message": {"content": '{"ok":true}'}}],
                 "usage": {"prompt_tokens": 1, "completion_tokens": 1},
             },
             "FINISH_INVALID",
         ),
         (
             {
-                "choices": [
-                    {"finish_reason": "stop", "message": {"content": "not json"}}
-                ],
+                "choices": [{"finish_reason": "stop", "message": {"content": "not json"}}],
                 "usage": {"prompt_tokens": 1, "completion_tokens": 1},
             },
             "JSON_INVALID",
         ),
         (
             {
-                "choices": [
-                    {"finish_reason": "stop", "message": {"content": '{"ok":true}'}}
-                ],
+                "choices": [{"finish_reason": "stop", "message": {"content": '{"ok":true}'}}],
                 "usage": {
                     "prompt_tokens": 1,
                     "completion_tokens": 1,
