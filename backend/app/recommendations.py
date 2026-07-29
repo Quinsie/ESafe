@@ -15,8 +15,8 @@ from app.ai_control import AiCostGate
 from app.config import Settings
 from app.upstage import UpstageChatClient
 
-PROMPT_VERSION = "case-recommendation-ko-v3"
-GENERATION_VERSION = "recommendation-generator-v3"
+PROMPT_VERSION = "case-recommendation-ko-v4"
+GENERATION_VERSION = "recommendation-generator-v4"
 ALLOWED_PRIVACY_STATUSES = frozenset(("PUBLIC_SAFE", "MASKED_VERIFIED"))
 
 SYSTEM_PROMPT = """
@@ -60,6 +60,10 @@ answerEvidenceStatus는 질문 또는 사건의 핵심 판단 전체에 대한 �
 INSUFFICIENT로 판정하라.
 서로 다른 공식 현행 문서가 핵심 질문에 상충하면 CONFLICT로 판정하고
 두 문서를 같은 행동에서 직접 인용하라.
+한 공식 현행 문서가 용어나 내용을 변경하라고 명시하고 다른 공식 현행 문서의
+해당 본문에 변경 전 용어나 내용이 그대로 남아 있으면 확인 가능성이 아니라
+확인된 CONFLICT다. 이 경우 하나의 CONFLICT 행동에 두 문서의 정확한 excerpt를
+각각 DIRECT로 인용하고 어느 한쪽을 임의로 적용하지 마라.
 INSUFFICIENT 또는 CONFLICT이면 answerWarning을 반드시 작성하라.
 모든 문장은 한국어로 간결하게 작성하라.
 """.strip()
