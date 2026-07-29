@@ -258,6 +258,45 @@ function buildingDetailEnvelope() {
   });
 }
 
+function demoScenariosEnvelope() {
+  return envelope({
+    items: [
+      {
+        scenarioId: "89ec1b9e-6dc2-5f49-95bf-971098c85101",
+        code: "DS-01",
+        name: "화재 전체 여정",
+        description: "원천 화재부터 종료까지 재현합니다.",
+        scenarioVersion: 1,
+        stepCount: 3,
+        steps: [
+          {
+            ordinal: 1,
+            label: "광주 건물화재 신규 감지",
+            source: "NFDS",
+            sourceTime: "2026-07-29T10:00:00+09:00",
+            kind: "FIXTURE",
+          },
+          {
+            ordinal: 2,
+            label: "동일 화재 대응상태 갱신",
+            source: "NFDS",
+            sourceTime: "2026-07-29T10:12:00+09:00",
+            kind: "FIXTURE",
+          },
+          {
+            ordinal: 3,
+            label: "화재 원천 종료",
+            source: "NFDS",
+            sourceTime: "2026-07-29T11:05:00+09:00",
+            kind: "FIXTURE",
+          },
+        ],
+        playback: null,
+      },
+    ],
+  });
+}
+
 function installAuthenticatedFetch(failedEndpoint?: string) {
   vi.stubGlobal(
     "fetch",
@@ -274,6 +313,9 @@ function installAuthenticatedFetch(failedEndpoint?: string) {
       }
       if (url.endsWith("/briefing")) {
         return response(briefingEnvelope());
+      }
+      if (url.endsWith("/demo/scenarios")) {
+        return response(demoScenariosEnvelope());
       }
       if (url.endsWith("/tasks/summary")) {
         return response(tasksEnvelope());
@@ -325,7 +367,7 @@ describe("App authentication boundary", () => {
 
     expect(screen.getByText("세션을 확인하고 있습니다.")).toBeVisible();
     expect(await screen.findByRole("heading", { name: "오늘의 상황 브리핑" })).toBeVisible();
-    expect(screen.getByText("체험 데이터")).toBeVisible();
+    expect(screen.getAllByText("체험 데이터").length).toBeGreaterThan(0);
     expect(await screen.findByText("데이터 정상")).toBeVisible();
     expect(screen.getByText("217,238개", { exact: false })).toBeVisible();
     const priorityPanel = screen
@@ -333,6 +375,18 @@ describe("App authentication boundary", () => {
       .closest("section");
     expect(priorityPanel).not.toBeNull();
     expect(within(priorityPanel as HTMLElement).getByText("북구")).toBeVisible();
+  });
+
+  it("shows controlled raw-signal scenario actions on DEMO home", async () => {
+    installAuthenticatedFetch();
+    renderApp();
+
+    expect(await screen.findByRole("heading", { name: "실시간 상황 시나리오" })).toBeVisible();
+    expect(screen.getByText("DS-01 · 화재 전체 여정")).toBeVisible();
+    expect(screen.getByText("광주 건물화재 신규 감지")).toBeVisible();
+    expect(screen.getByRole("button", { name: "시작" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "다음 단계" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "처음부터 초기화" })).toBeDisabled();
   });
 
   it("keeps healthy panels visible when the task panel fails", async () => {

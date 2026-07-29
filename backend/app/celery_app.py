@@ -22,9 +22,7 @@ def create_celery_app(settings: Settings) -> Celery:
     application.conf.update(
         task_default_queue=settings.celery_queue,
         task_routes={
-            "esafe.generate_document_artifact": {
-                "queue": f"{settings.celery_queue}-documents"
-            },
+            "esafe.generate_document_artifact": {"queue": f"{settings.celery_queue}-documents"},
             "esafe.*": {"queue": settings.celery_queue},
         },
         task_serializer="json",
@@ -41,10 +39,16 @@ def create_celery_app(settings: Settings) -> Celery:
                 "task": "esafe.runtime_heartbeat",
                 "schedule": 30.0,
             },
-            "signal-dispatch": {
-                "task": "esafe.signal_dispatch",
-                "schedule": 600.0,
-            },
+            **(
+                {
+                    "signal-dispatch": {
+                        "task": "esafe.signal_dispatch",
+                        "schedule": 600.0,
+                    }
+                }
+                if settings.profile == "LIVE"
+                else {}
+            ),
         },
     )
 
@@ -59,6 +63,13 @@ def create_celery_app(settings: Settings) -> Celery:
 
     @application.task(name="esafe.signal_dispatch", shared=False, lazy=False)
     def signal_dispatch() -> dict[str, Any]:
+        if settings.profile == "DEMO":
+            return {
+                "profile": settings.profile,
+                "scheduled": [],
+                "status": "SCENARIO_CONTROLLED",
+                "timestamp": datetime.now(UTC).isoformat(),
+            }
         sources = ["KMA_WARNING", "DISASTER_MESSAGE"]
         if settings.profile == "DEMO" or settings.nfds_enabled:
             sources.insert(0, "NFDS")
@@ -80,6 +91,8 @@ def create_celery_app(settings: Settings) -> Celery:
 
     @application.task(name="esafe.poll_signal", shared=False, lazy=False)
     def poll_signal(source_name: str) -> dict[str, object]:
+        if settings.profile == "DEMO":
+            raise RuntimeError("DEMO signals are available only through scenario controls")
         from app.signals.contracts import SignalSource
         from app.signals.ingestion import run_signal_poll
 
@@ -119,9 +132,7 @@ def create_celery_app(settings: Settings) -> Celery:
             finally:
                 redis = Redis.from_url(settings.redis_url, decode_responses=True)
                 try:
-                    await redis.delete(
-                        f"recommendation:active:{settings.profile}:{case_id}"
-                    )
+                    await redis.delete(f"recommendation:active:{settings.profile}:{case_id}")
                 finally:
                     await redis.aclose()
 
@@ -137,9 +148,7 @@ def create_celery_app(settings: Settings) -> Celery:
 
         from app.documents import generate_document_artifact
 
-        return asyncio.run(
-            generate_document_artifact(settings, UUID(artifact_id))
-        )
+        return asyncio.run(generate_document_artifact(settings, UUID(artifact_id)))
 
     return application
 

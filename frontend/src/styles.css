@@ -5154,3 +5154,137 @@ input:focus-visible {
     grid-template-columns: 140px minmax(0, 1fr) auto;
   }
 }
+
+/* DEMO raw-signal scenario controller */
+.demo-scenario-panel {
+  margin-bottom: 20px;
+  padding: 20px 22px;
+  border: 1px solid #bfd8d4;
+  border-radius: 14px;
+  background: linear-gradient(135deg, #f5fbfa 0%, #eef7f6 100%);
+  box-shadow: 0 8px 24px rgb(27 73 68 / 8%);
+}
+
+.demo-scenario-panel.error {
+  border-color: #e2b9b9;
+  background: #fff7f7;
+  color: #9d2a2a;
+}
+
+.demo-scenario-heading,
+.demo-scenario-body,
+.demo-controls {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.demo-scenario-heading {
+  justify-content: space-between;
+  padding-bottom: 16px;
+  border-bottom: 1px solid #d7e6e4;
+}
+
+.demo-scenario-heading h2 {
+  display: inline-block;
+  margin: 0 0 4px 10px;
+  font-size: 20px;
+}
+
+.demo-scenario-heading p,
+.demo-scenario-body p {
+  margin: 3px 0;
+  color: #5c6f6c;
+}
+
+.demo-scenario-heading label {
+  display: grid;
+  min-width: 330px;
+  gap: 6px;
+  color: #425b57;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.demo-scenario-heading select {
+  min-height: 40px;
+  padding: 0 12px;
+  border: 1px solid #b8ceca;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.demo-scenario-body {
+  justify-content: space-between;
+  padding-top: 16px;
+}
+
+.demo-scenario-body > div:first-child {
+  flex: 1 1 32%;
+}
+
+.demo-scenario-body > div:first-child > span {
+  color: #34655e;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.demo-next-step {
+  display: grid;
+  flex: 1 1 26%;
+  gap: 2px;
+  padding: 10px 14px;
+  border-radius: 8px;
+  background: rgb(255 255 255 / 72%);
+}
+
+.demo-next-step span,
+.demo-next-step small {
+  color: #657b78;
+  font-size: 12px;
+}
+
+.demo-controls {
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.demo-controls button {
+  min-height: 38px;
+  padding: 0 14px;
+  border: 1px solid #abc3bf;
+  border-radius: 8px;
+  background: #fff;
+  color: #244b46;
+  cursor: pointer;
+  font-weight: 700;
+}
+
+.demo-controls button.primary-action {
+  border-color: #176f63;
+  background: #176f63;
+  color: #fff;
+}
+
+.demo-controls button.danger-action {
+  border-color: #d4a5a5;
+  color: #9d2a2a;
+}
+
+.demo-controls button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+@media (max-width: 1500px) {
+  .demo-scenario-body {
+    align-items: stretch;
+    flex-wrap: wrap;
+  }
+
+  .demo-controls {
+    flex-basis: 100%;
+    justify-content: flex-start;
+  }
+}

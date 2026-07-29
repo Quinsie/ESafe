@@ -53,8 +53,11 @@ def test_rag_retrieval_task_is_registered_per_profile() -> None:
     assert "esafe.generate_document_artifact" in application.tasks
 
 
-def test_signal_dispatch_is_ten_minutes_with_bounded_jitter(monkeypatch) -> None:
-    application = create_celery_app(demo_settings())
+def test_live_signal_dispatch_is_ten_minutes_with_bounded_jitter(monkeypatch) -> None:
+    settings = demo_settings().model_copy(
+        update={"profile": "LIVE", "celery_queue": "live"}
+    )
+    application = create_celery_app(settings)
     sender = Mock()
     monkeypatch.setattr(application, "send_task", sender)
     monkeypatch.setattr("app.celery_app.secrets.randbelow", lambda _: 17)
@@ -69,7 +72,20 @@ def test_signal_dispatch_is_ten_minutes_with_bounded_jitter(monkeypatch) -> None
     ]
     assert all(item["countdownSeconds"] == 17 for item in result["scheduled"])
     assert sender.call_count == 3
-    assert all(call.kwargs["queue"] == "demo" for call in sender.call_args_list)
+    assert all(call.kwargs["queue"] == "live" for call in sender.call_args_list)
+
+
+def test_demo_dispatch_is_not_scheduled_and_never_injects_fixtures(monkeypatch) -> None:
+    application = create_celery_app(demo_settings())
+    sender = Mock()
+    monkeypatch.setattr(application, "send_task", sender)
+
+    result = application.tasks["esafe.signal_dispatch"].apply().get()
+
+    assert "signal-dispatch" not in application.conf.beat_schedule
+    assert result["status"] == "SCENARIO_CONTROLLED"
+    assert result["scheduled"] == []
+    sender.assert_not_called()
 
 
 def test_live_dispatch_omits_nfds_when_disabled(monkeypatch) -> None:

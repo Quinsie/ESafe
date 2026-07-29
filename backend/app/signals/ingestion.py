@@ -24,7 +24,7 @@ from app.signals.contracts import (
     normalize_address,
 )
 from app.signals.disaster_message import PARSER_VERSION as DISASTER_PARSER_VERSION
-from app.signals.fixtures import load_fixture_batch
+from app.signals.fixtures import load_fixture_batch, load_named_fixture_batch
 from app.signals.kma import PARSER_VERSION as KMA_PARSER_VERSION
 from app.signals.nfds import PARSER_VERSION as NFDS_PARSER_VERSION
 
@@ -77,6 +77,8 @@ async def _begin_poll(
     settings: Settings,
     source: SignalSource,
     idempotency_key_override: str | None = None,
+    *,
+    bypass_health_gate: bool = False,
 ) -> tuple[UUID, frozenset[str]] | None:
     now = datetime.now(UTC)
     bucket = int(now.timestamp()) // 600
@@ -102,9 +104,13 @@ async def _begin_poll(
         )
         if health is None:
             raise RuntimeError(f"source_health is not seeded for {source.value}")
-        if not bool(health["enabled"]):
+        if not bypass_health_gate and not bool(health["enabled"]):
             return None
-        if health["backoff_until"] is not None and health["backoff_until"] > now:
+        if (
+            not bypass_health_gate
+            and health["backoff_until"] is not None
+            and health["backoff_until"] > now
+        ):
             return None
         inserted = (
             await connection.execute(
@@ -303,9 +309,10 @@ async def _store_record(
         ).scalar_one()
     signal_id = uuid4()
     changed = (
-        await connection.execute(
-            text(
-                """
+        (
+            await connection.execute(
+                text(
+                    """
                 INSERT INTO signal_event (
                     signal_event_id, source, external_id, event_type, event_subtype,
                     severity, source_status, title, summary, source_published_at,
@@ -348,35 +355,38 @@ async def _store_record(
                   IS DISTINCT FROM EXCLUDED.latest_raw_signal_id
                 RETURNING signal_event_id, (xmax = 0) AS inserted
                 """
-            ),
-            {
-                "signal_id": signal_id,
-                "source": signal.source.value,
-                "external_id": signal.external_id,
-                "event_type": signal.event_type.value,
-                "event_subtype": signal.event_subtype,
-                "severity": signal.severity,
-                "source_status": signal.source_status.value,
-                "title": signal.title,
-                "summary": signal.summary,
-                "source_published_at": signal.source_published_at,
-                "effective_at": signal.effective_at,
-                "expires_at": signal.expires_at,
-                "address": signal.address,
-                "normalized_address": normalize_address(signal.address),
-                "region_codes": list(signal.region_codes),
-                "region_names": list(signal.region_names),
-                "longitude": signal.longitude,
-                "latitude": signal.latitude,
-                "location_precision": signal.location_precision,
-                "raw_id": raw_id,
-                "is_relevant": signal.is_relevant,
-                "relevance_reason": _json({"reasons": signal.relevance_reasons}),
-                "is_simulated": scenario_id is not None,
-                "scenario_id": scenario_id,
-            },
+                ),
+                {
+                    "signal_id": signal_id,
+                    "source": signal.source.value,
+                    "external_id": signal.external_id,
+                    "event_type": signal.event_type.value,
+                    "event_subtype": signal.event_subtype,
+                    "severity": signal.severity,
+                    "source_status": signal.source_status.value,
+                    "title": signal.title,
+                    "summary": signal.summary,
+                    "source_published_at": signal.source_published_at,
+                    "effective_at": signal.effective_at,
+                    "expires_at": signal.expires_at,
+                    "address": signal.address,
+                    "normalized_address": normalize_address(signal.address),
+                    "region_codes": list(signal.region_codes),
+                    "region_names": list(signal.region_names),
+                    "longitude": signal.longitude,
+                    "latitude": signal.latitude,
+                    "location_precision": signal.location_precision,
+                    "raw_id": raw_id,
+                    "is_relevant": signal.is_relevant,
+                    "relevance_reason": _json({"reasons": signal.relevance_reasons}),
+                    "is_simulated": scenario_id is not None,
+                    "scenario_id": scenario_id,
+                },
+            )
         )
-    ).mappings().one_or_none()
+        .mappings()
+        .one_or_none()
+    )
     if changed is None:
         existing_id = (
             await connection.execute(
@@ -732,6 +742,202 @@ async def _store_failure(
         "errorClass": error_class,
         "httpStatus": status_code,
         "blocked": blocked,
+    }
+
+
+async def run_demo_fixture_step(
+    engine: AsyncEngine,
+    settings: Settings,
+    *,
+    source: SignalSource,
+    fixture_name: str,
+    scenario_id: UUID,
+    generation: int,
+    step_ordinal: int,
+    source_time: datetime,
+) -> dict[str, object]:
+    if settings.profile != "DEMO":
+        raise RuntimeError("DEMO fixture replay is available only in DEMO")
+    started = await _begin_poll(
+        engine,
+        settings,
+        source,
+        idempotency_key_override=(f"DEMO:{scenario_id}:{generation}:{step_ordinal}:{source.value}"),
+        bypass_health_gate=True,
+    )
+    if started is None:
+        return {"status": "SKIPPED", "source": source.value, "reused": True}
+    poll_id, _ = started
+    batch = load_named_fixture_batch(
+        source,
+        fixture_name,
+        scenario_id,
+        source_time,
+    )
+    result = await _store_success(
+        engine,
+        settings,
+        poll_id,
+        batch,
+        scenario_id,
+        run_type="DEMO_SCENARIO_STEP",
+        trigger_type="USER",
+        audit_action="DEMO_FIXTURE_REPLAYED",
+        reason_code=f"GENERATION_{generation}_STEP_{step_ordinal}",
+    )
+    return {**result, "pollId": str(poll_id), "reused": False}
+
+
+async def run_demo_source_state_step(
+    engine: AsyncEngine,
+    settings: Settings,
+    *,
+    source: SignalSource,
+    state: str,
+    scenario_id: UUID,
+    generation: int,
+    step_ordinal: int,
+    source_time: datetime,
+) -> dict[str, object]:
+    if settings.profile != "DEMO":
+        raise RuntimeError("DEMO source-state replay is available only in DEMO")
+    if state not in {"DELAYED", "OUTAGE", "BACKOFF"}:
+        raise ValueError(f"unsupported DEMO source state: {state}")
+    started = await _begin_poll(
+        engine,
+        settings,
+        source,
+        idempotency_key_override=(
+            f"DEMO:{scenario_id}:{generation}:{step_ordinal}:{source.value}:{state}"
+        ),
+        bypass_health_gate=True,
+    )
+    if started is None:
+        return {"status": "SKIPPED", "source": source.value, "reused": True}
+    poll_id, _ = started
+    now = datetime.now(UTC)
+    poll_result = "FAILED" if state == "OUTAGE" else "DELAYED"
+    health_status = "DELAYED" if state == "DELAYED" else "OUTAGE"
+    error_class = {
+        "DELAYED": "RESPONSE_DELAYED",
+        "OUTAGE": "HTTP_503",
+        "BACKOFF": "BACKOFF_ACTIVE",
+    }[state]
+    next_allowed_at = now + timedelta(minutes=30 if state == "DELAYED" else 20)
+    metadata = {
+        "scenarioId": str(scenario_id),
+        "generation": generation,
+        "stepOrdinal": step_ordinal,
+        "sourceTime": source_time.isoformat(),
+        "replayedAt": now.isoformat(),
+        "sourceState": state,
+    }
+    async with engine.begin() as connection:
+        await connection.execute(
+            text(
+                """
+                UPDATE source_poll
+                SET result = :result, finished_at = :now,
+                    http_status = :http_status, error_class = :error_class,
+                    next_allowed_at = :next_allowed_at
+                WHERE poll_id = :poll_id
+                """
+            ),
+            {
+                "result": poll_result,
+                "now": now,
+                "http_status": 503 if state == "OUTAGE" else None,
+                "error_class": error_class,
+                "next_allowed_at": next_allowed_at,
+                "poll_id": poll_id,
+            },
+        )
+        await connection.execute(
+            text(
+                """
+                UPDATE source_health
+                SET status = :status, last_failure_at = :now,
+                    consecutive_failures = CASE
+                        WHEN :state = 'OUTAGE' THEN consecutive_failures + 1
+                        ELSE consecutive_failures
+                    END,
+                    next_poll_at = :next_allowed_at,
+                    backoff_until = CASE
+                        WHEN :state IN ('OUTAGE', 'BACKOFF')
+                        THEN CAST(:next_allowed_at AS timestamptz)
+                        ELSE NULL
+                    END,
+                    last_http_status = :http_status,
+                    last_error_code = :error_class,
+                    updated_at = :now
+                WHERE source = :source
+                """
+            ),
+            {
+                "status": health_status,
+                "state": state,
+                "now": now,
+                "next_allowed_at": next_allowed_at,
+                "http_status": 503 if state == "OUTAGE" else None,
+                "error_class": error_class,
+                "source": source.value,
+            },
+        )
+        await connection.execute(
+            text(
+                """
+                INSERT INTO automation_run (
+                    automation_run_id, profile, run_type, trigger_type, status,
+                    source, rule_version, error_class, idempotency_key,
+                    started_at, finished_at, metadata
+                )
+                VALUES (
+                    :run_id, 'DEMO', 'DEMO_SCENARIO_STEP', 'USER', :run_status,
+                    :source, :rule_version, :error_class, 'poll:' || CAST(:poll_id AS text),
+                    :now, :now, CAST(:metadata AS jsonb)
+                )
+                """
+            ),
+            {
+                "run_id": uuid4(),
+                "run_status": "FAILED" if state == "OUTAGE" else "SKIPPED",
+                "source": source.value,
+                "rule_version": CONTRACT_VERSION,
+                "error_class": error_class,
+                "poll_id": str(poll_id),
+                "now": now,
+                "metadata": _json(metadata),
+            },
+        )
+        await connection.execute(
+            text(
+                """
+                INSERT INTO audit_event (
+                    audit_event_id, profile, actor_type, action, target_type,
+                    target_id, reason, correlation_id, idempotency_key, metadata
+                )
+                VALUES (
+                    :audit_id, 'DEMO', 'SYSTEM', 'DEMO_SOURCE_STATE_REPLAYED',
+                    'source_poll', :target_id, CAST(:reason AS jsonb),
+                    :correlation_id, :idempotency_key, CAST(:metadata AS jsonb)
+                )
+                """
+            ),
+            {
+                "audit_id": uuid4(),
+                "target_id": str(poll_id),
+                "reason": _json({"source": source.value, "state": state}),
+                "correlation_id": poll_id,
+                "idempotency_key": f"audit:demo-state:{poll_id}",
+                "metadata": _json(metadata),
+            },
+        )
+    return {
+        "status": poll_result,
+        "source": source.value,
+        "sourceState": state,
+        "pollId": str(poll_id),
+        "reused": False,
     }
 
 
