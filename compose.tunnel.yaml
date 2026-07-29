@@ -1,0 +1,45 @@
+name: esafe-tunnel
+
+services:
+  cloudflared:
+    image: cloudflare/cloudflared@sha256:e39ee8da81ad5e05d77f38d2f51c60ca51bf2a8450ac3abab50c17fdb91d91bf
+    restart: unless-stopped
+    init: true
+    command:
+      - tunnel
+      - --metrics
+      - 0.0.0.0:20241
+      - --loglevel
+      - info
+      - --protocol
+      - http2
+      - --url
+      - http://gateway:8080
+    environment:
+      HOME: /tmp
+    networks:
+      - esafe-edge
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=16m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    healthcheck:
+      test:
+        - CMD
+        - cloudflared
+        - tunnel
+        - --metrics
+        - 127.0.0.1:20241
+        - ready
+      interval: 15s
+      timeout: 5s
+      start_period: 20s
+      retries: 5
+
+networks:
+  esafe-edge:
+    external: true
+    name: esafe_edge

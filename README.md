@@ -38,7 +38,21 @@ docker compose up -d
 - LIVE: `http://127.0.0.1:8080/live/`
 - DEMO: `http://127.0.0.1:8080/demo/`
 
-외부 접속은 Cloudflare Quick Tunnel이 기록한 `storage/runtime/public-url.txt`의 한 호스트에서 `/live/`, `/demo/`로 제공한다.
+외부 접속은 무료 Cloudflare Quick Tunnel 한 호스트의 `/live/`, `/demo/`로 제공한다.
+
+```bash
+# 기본 앱 stack이 healthy인 상태에서 별도 tunnel project를 시작
+./scripts/start-tunnel.sh
+
+# 현재 주소와 외부 LIVE·DEMO 응답 확인
+cat storage/runtime/public-url.txt
+./scripts/verify-tunnel.sh
+
+# 필요할 때만 명시적으로 중지
+./scripts/stop-tunnel.sh
+```
+
+현재 주소는 `storage/runtime/public-url.txt`에 기록된다. Quick Tunnel은 별도 계정 없이 사용하는 체험·제출용 경로이며 컨테이너를 재생성하면 주소가 바뀔 수 있다.
 
 ## 운영 명령
 
