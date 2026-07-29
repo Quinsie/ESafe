@@ -368,6 +368,7 @@ async def run_case_retrieval(settings: Settings, case_id: UUID) -> dict[str, Any
             selected = select_context(candidates)
             official_count = sum(item.group == "OFFICIAL" for item in selected)
             status = "SUFFICIENT" if official_count > 0 else "INSUFFICIENT"
+            search_status = "SUCCESS" if status == "SUFFICIENT" else "INSUFFICIENT"
             warning = (
                 None
                 if status == "SUFFICIENT"
@@ -411,7 +412,7 @@ async def run_case_retrieval(settings: Settings, case_id: UUID) -> dict[str, Any
                     "selected_count": len(selected),
                     "retrieval_version": RETRIEVAL_VERSION,
                     "elapsed_ms": int((time.monotonic() - started) * 1000),
-                    "status": status,
+                    "status": search_status,
                 },
             )
             version = int(
