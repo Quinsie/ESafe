@@ -14,6 +14,8 @@ HORIZON_DAYS = 60
 LINEAGE_VERSION = "v27.1-focus-2026-03-60d"
 MIN_BUILDING_ZOOM = 14
 MAX_BUILDING_ZOOM = 20
+MIN_NEIGHBORHOOD_ZOOM = 11.5
+MAX_NEIGHBORHOOD_SPAN = 1.5
 _MAX_VIEWPORT_SPAN = 0.35
 _RISK_BANDS = frozenset({"TOP_1", "HIGH_1_10", "WATCH_10_25", "GENERAL"})
 
@@ -33,7 +35,7 @@ class BoundingBox:
     north: float
 
 
-def parse_bbox(value: str, zoom: float) -> BoundingBox:
+def _parse_bbox_coordinates(value: str) -> BoundingBox:
     try:
         values = [float(item.strip()) for item in value.split(",")]
     except ValueError as exc:
@@ -43,19 +45,31 @@ def parse_bbox(value: str, zoom: float) -> BoundingBox:
     west, south, east, north = values
     if west >= east or south >= north or not (-180 <= west <= 180 and -90 <= south <= 90):
         raise SpatialContractError(422, "INVALID_BBOX", "지도 범위의 좌표 순서를 확인해 주세요.")
+    return BoundingBox(west, south, east, north)
+
+
+def parse_region_bbox(value: str) -> BoundingBox:
+    parsed = _parse_bbox_coordinates(value)
+    if parsed.east - parsed.west > MAX_NEIGHBORHOOD_SPAN or parsed.north - parsed.south > MAX_NEIGHBORHOOD_SPAN:
+        raise SpatialContractError(422, "VIEWPORT_TOO_LARGE", "읍·면·동 조회 범위가 너무 큽니다. 지도를 더 확대해 주세요.")
+    return parsed
+
+
+def parse_bbox(value: str, zoom: float) -> BoundingBox:
+    parsed = _parse_bbox_coordinates(value)
     if zoom < MIN_BUILDING_ZOOM:
         raise SpatialContractError(
             422,
             "BUILDING_ZOOM_REQUIRED",
             f"건물 조회는 확대수준 {MIN_BUILDING_ZOOM} 이상에서 사용할 수 있습니다.",
         )
-    if east - west > _MAX_VIEWPORT_SPAN or north - south > _MAX_VIEWPORT_SPAN:
+    if parsed.east - parsed.west > _MAX_VIEWPORT_SPAN or parsed.north - parsed.south > _MAX_VIEWPORT_SPAN:
         raise SpatialContractError(
             422,
             "VIEWPORT_TOO_LARGE",
             "건물 조회 범위가 너무 큽니다. 지도를 더 확대해 주세요.",
         )
-    return BoundingBox(west, south, east, north)
+    return parsed
 
 
 def _geojson(value: str) -> dict[str, Any]:
@@ -80,9 +94,10 @@ def _risk(row: Any) -> dict[str, Any]:
 
 async def region_features(
     engine: AsyncEngine,
-    level: Literal["SIDO", "SIGUNGU"],
+    level: Literal["SIDO", "SIGUNGU", "EUPMYEONDONG"],
     parent_code: str | None,
     timeout_seconds: float,
+    bbox: BoundingBox | None = None,
 ) -> dict[str, Any]:
     async def query() -> dict[str, Any]:
         async with engine.connect() as connection:
@@ -92,7 +107,7 @@ async def region_features(
                         """
                         SELECT a.region_code, a.level, a.name, a.full_name, a.parent_code,
                                ST_AsGeoJSON(ST_SimplifyPreserveTopology(
-                                   a.geometry, CASE WHEN a.level = 'SIDO' THEN 0.001 ELSE 0.00025 END
+                                   a.geometry, CASE a.level WHEN 'SIDO' THEN 0.001 WHEN 'SIGUNGU' THEN 0.00025 ELSE 0.00004 END
                                ), 6) AS geometry,
                                ARRAY[ST_XMin(Box3D(a.geometry)), ST_YMin(Box3D(a.geometry)), ST_XMax(Box3D(a.geometry)), ST_YMax(Box3D(a.geometry))] AS bounds,
                                ST_X(a.centroid) AS center_lng, ST_Y(a.centroid) AS center_lat,
@@ -111,17 +126,28 @@ async def region_features(
                         LEFT JOIN LATERAL (
                             SELECT count(*) AS active_case_count,
                                    count(*) FILTER (WHERE monitoring_priority = 'URGENT') AS urgent_case_count
-                            FROM case_record
-                            WHERE primary_region_code = a.region_code
+                            FROM case_record c
+                            WHERE (
+                                (a.level = 'EUPMYEONDONG' AND c.location IS NOT NULL AND ST_Covers(a.geometry, c.location))
+                                OR (a.level <> 'EUPMYEONDONG' AND c.primary_region_code = a.region_code)
+                              )
                               AND status IN ('DETECTED', 'ACTIVE', 'ON_HOLD', 'SOURCE_RESOLVED_REVIEW')
                         ) c ON true
                         WHERE a.level = :level
                           AND (CAST(:parent_code AS varchar) IS NULL OR a.parent_code = CAST(:parent_code AS varchar))
+                          AND (CAST(:west AS double precision) IS NULL OR a.geometry && ST_MakeEnvelope(:west, :south, :east, :north, 4326))
                           AND EXISTS (SELECT 1 FROM reference_dataset_state WHERE state_id = true)
                         ORDER BY a.region_code
                         """
                     ),
-                    {"level": level, "parent_code": parent_code},
+                    {
+                        "level": level,
+                        "parent_code": parent_code,
+                        "west": bbox.west if bbox else None,
+                        "south": bbox.south if bbox else None,
+                        "east": bbox.east if bbox else None,
+                        "north": bbox.north if bbox else None,
+                    },
                 )
             ).mappings().all()
         features = []

@@ -31,11 +31,12 @@ interface MapConfigData {
   fallbackActive: boolean;
   fallbackReason: "VWORLD_NOT_CONFIGURED" | null;
   buildingZoom: { minimum: number; maximum: number };
+  neighborhoodZoom: { minimum: number; maximum: number };
 }
 
 interface RegionProperties {
   regionCode: string;
-  level: "SIDO" | "SIGUNGU";
+  level: "SIDO" | "SIGUNGU" | "EUPMYEONDONG";
   name: string;
   fullName: string;
   parentCode: string | null;
@@ -122,6 +123,10 @@ const riskNames: Record<string, string> = {
 
 const emptyCollection: FeatureCollection = { type: "FeatureCollection", features: [] };
 
+const DISTRICT_ZOOM = 8.5;
+const NEIGHBORHOOD_ZOOM = 11.5;
+const BUILDING_ZOOM = 14;
+
 setWorkerUrl(mapWorkerUrl);
 
 function initialNumber(name: string, fallback: number): number {
@@ -158,6 +163,7 @@ function rasterStyle(provider: MapProvider, runtime: ProfileRuntime): StyleSpeci
         id: "admin-fill",
         type: "fill",
         source: "admin",
+        maxzoom: BUILDING_ZOOM,
         paint: {
           "fill-color": [
             "interpolate",
@@ -177,6 +183,7 @@ function rasterStyle(provider: MapProvider, runtime: ProfileRuntime): StyleSpeci
         id: "admin-line",
         type: "line",
         source: "admin",
+        maxzoom: BUILDING_ZOOM,
         paint: { "line-color": "#264b73", "line-width": 1.8 },
       },
       {
@@ -219,7 +226,14 @@ function updateMapUrl(
   buildingId: string | null,
 ): void {
   const params = new URLSearchParams(window.location.search);
-  const level = viewport.zoom >= 14 ? "building" : viewport.zoom >= 8.5 ? "district" : "province";
+  const level =
+    viewport.zoom >= BUILDING_ZOOM
+      ? "building"
+      : viewport.zoom >= NEIGHBORHOOD_ZOOM
+        ? "neighborhood"
+        : viewport.zoom >= DISTRICT_ZOOM
+          ? "district"
+          : "province";
   params.set("level", level);
   params.set("lng", viewport.lng.toFixed(5));
   params.set("lat", viewport.lat.toFixed(5));
@@ -242,7 +256,7 @@ function supportsWebGl(): boolean {
   return typeof navigator !== "undefined" && !navigator.userAgent.toLowerCase().includes("jsdom");
 }
 
-function useSpatialData(runtime: ProfileRuntime) {
+function useSpatialData(runtime: ProfileRuntime, bbox: string | null, zoom: number) {
   const config = useQuery({
     queryKey: ["map-config", runtime.profile],
     queryFn: () => apiRequest<MapConfigData>(runtime, "/map/config").then((result) => result.data),
@@ -268,7 +282,17 @@ function useSpatialData(runtime: ProfileRuntime) {
     },
     staleTime: 5 * 60_000,
   });
-  return { config, provinces, districts };
+  const neighborhoods = useQuery({
+    queryKey: ["map-neighborhoods", runtime.profile, bbox],
+    queryFn: () =>
+      apiRequest<RegionCollection>(
+        runtime,
+        `/map/neighborhoods?bbox=${encodeURIComponent(bbox ?? "")}`,
+      ).then((result) => result.data),
+    enabled: Boolean(bbox) && zoom >= NEIGHBORHOOD_ZOOM && zoom < BUILDING_ZOOM,
+    staleTime: 5 * 60_000,
+  });
+  return { config, provinces, districts, neighborhoods };
 }
 
 function withShares(collection: RegionCollection | undefined): RegionCollection | undefined {
@@ -321,10 +345,22 @@ export function RiskMap({
   const [backgroundFallback, setBackgroundFallback] = useState(false);
   const [overlayError, setOverlayError] = useState<string | null>(null);
   const [webGlReady] = useState(supportsWebGl);
-  const { config, provinces, districts } = useSpatialData(runtime);
+  const { config, provinces, districts, neighborhoods } = useSpatialData(
+    runtime,
+    viewport.bbox,
+    viewport.zoom,
+  );
   const provinceData = useMemo(() => withShares(provinces.data), [provinces.data]);
   const districtData = useMemo(() => withShares(districts.data), [districts.data]);
-  const overlay = viewport.zoom < 8.5 ? provinceData : districtData;
+  const neighborhoodData = useMemo(() => withShares(neighborhoods.data), [neighborhoods.data]);
+  const overlay =
+    viewport.zoom < DISTRICT_ZOOM
+      ? provinceData
+      : viewport.zoom < NEIGHBORHOOD_ZOOM
+        ? districtData
+        : viewport.zoom < BUILDING_ZOOM
+          ? neighborhoodData
+          : undefined;
   overlayRef.current = overlay;
 
   selectionRef.current = { region: selectedRegion, building: selectedBuilding };
@@ -389,9 +425,15 @@ export function RiskMap({
       setSelectedRegion(code);
       setSelectedBuilding(null);
       if (parsedCenter) {
+        const level = feature?.properties?.level;
         map.flyTo({
           center: parsedCenter,
-          zoom: feature?.properties?.level === "SIDO" ? 9 : 12.5,
+          zoom:
+            level === "SIDO"
+              ? 9
+              : level === "SIGUNGU"
+                ? NEIGHBORHOOD_ZOOM + 0.7
+                : BUILDING_ZOOM + 0.5,
           duration: 600,
         });
       }
@@ -453,11 +495,11 @@ export function RiskMap({
 
   useEffect(() => {
     const map = mapRef.current;
-    if (!map?.isStyleLoaded() || !overlay) {
+    if (!map?.isStyleLoaded()) {
       return;
     }
     const source = map.getSource("admin") as GeoJSONSource | undefined;
-    source?.setData(overlay);
+    source?.setData(overlay ?? emptyCollection);
   }, [overlay]);
 
   useEffect(() => {
@@ -476,7 +518,7 @@ export function RiskMap({
         runtime,
         `/map/buildings?bbox=${encodeURIComponent(viewport.bbox ?? "")}&zoom=${viewport.zoom.toFixed(2)}&pageSize=50&sort=rank`,
       ).then((result) => result.data),
-    enabled: Boolean(viewport.bbox) && viewport.zoom >= 14,
+    enabled: Boolean(viewport.bbox) && viewport.zoom >= BUILDING_ZOOM,
     placeholderData: (previous) => previous,
     staleTime: 60_000,
   });
@@ -504,6 +546,7 @@ export function RiskMap({
   const selectedRegionFeature = [
     ...(provinceData?.features ?? []),
     ...(districtData?.features ?? []),
+    ...(neighborhoodData?.features ?? []),
   ].find((feature) => feature.properties.regionCode === selectedRegion);
   const provinceTotal = provinceData?.features.reduce(
     (total, feature) => total + feature.properties.buildingCount,
@@ -513,7 +556,14 @@ export function RiskMap({
     (total, feature) => total + feature.properties.top1Count,
     0,
   );
-  const levelLabel = viewport.zoom >= 14 ? "건물" : viewport.zoom >= 8.5 ? "시·군·구" : "광역시·도";
+  const levelLabel =
+    viewport.zoom >= BUILDING_ZOOM
+      ? "건물"
+      : viewport.zoom >= NEIGHBORHOOD_ZOOM
+        ? "읍·면·동"
+        : viewport.zoom >= DISTRICT_ZOOM
+          ? "시·군·구"
+          : "광역시·도";
   const returnToMap = encodeURIComponent(currentInternalLocation(runtime));
 
   const chooseRegionFromList = (feature: RegionFeature) => {
@@ -521,7 +571,12 @@ export function RiskMap({
     setSelectedBuilding(null);
     mapRef.current?.flyTo({
       center: feature.properties.center,
-      zoom: feature.properties.level === "SIDO" ? 9 : 12.5,
+      zoom:
+        feature.properties.level === "SIDO"
+          ? 9
+          : feature.properties.level === "SIGUNGU"
+            ? NEIGHBORHOOD_ZOOM + 0.7
+            : BUILDING_ZOOM + 0.5,
       duration: 600,
     });
   };
@@ -539,6 +594,8 @@ export function RiskMap({
     setOverlayError(null);
     void provinces.refetch();
     void districts.refetch();
+    if (viewport.bbox && viewport.zoom >= NEIGHBORHOOD_ZOOM && viewport.zoom < BUILDING_ZOOM)
+      void neighborhoods.refetch();
     void buildingList.refetch();
   };
 
@@ -547,7 +604,7 @@ export function RiskMap({
       <div className="page-heading map-heading">
         <div>
           <h1>통합 위험지도</h1>
-          <p>실제 광주·전남 경계와 현재 뷰포트의 건물 폴리곤을 조회합니다.</p>
+          <p>실제 광역·시군구·읍면동 경계와 현재 뷰포트의 건물 폴리곤을 조회합니다.</p>
         </div>
         <fieldset className="map-basis">
           <legend className="sr-only">지도 기준</legend>
@@ -607,7 +664,12 @@ export function RiskMap({
               </button>
             </div>
           ) : null}
-          {provinces.isError || districts.isError || overlayError ? (
+          {provinces.isError ||
+          districts.isError ||
+          (neighborhoods.isError &&
+            viewport.zoom >= NEIGHBORHOOD_ZOOM &&
+            viewport.zoom < BUILDING_ZOOM) ||
+          overlayError ? (
             <div className="map-layer-error overlay" role="alert">
               {overlayError ?? "업무 위험 레이어를 불러오지 못했습니다."}
               <button onClick={retryOverlay} type="button">
@@ -634,7 +696,7 @@ export function RiskMap({
               <h2>{levelLabel} 선택</h2>
             </div>
             <span className="map-count">
-              {viewport.zoom >= 14
+              {viewport.zoom >= BUILDING_ZOOM
                 ? `${buildingList.data?.pagination.total.toLocaleString("ko-KR") ?? 0}개`
                 : `${visibleRegions.length}개 지역`}
             </span>
@@ -649,27 +711,34 @@ export function RiskMap({
                 상위 10% {selectedRegionFeature.properties.top10Count.toLocaleString("ko-KR")}개
               </p>
               <div>
-                <AppLink
-                  className="outline-action"
-                  currentPath={currentPath}
-                  runtime={runtime}
-                  to={`/regions/${selectedRegionFeature.properties.regionCode}?returnTo=${returnToMap}`}
-                >
-                  지역 분석 보기
-                </AppLink>
-                {selectedRegionFeature.properties.level === "SIGUNGU" ? (
+                {selectedRegionFeature.properties.level !== "EUPMYEONDONG" ? (
+                  <AppLink
+                    className="outline-action"
+                    currentPath={currentPath}
+                    runtime={runtime}
+                    to={`/regions/${selectedRegionFeature.properties.regionCode}?returnTo=${returnToMap}`}
+                  >
+                    지역 분석 보기
+                  </AppLink>
+                ) : null}
+                {selectedRegionFeature.properties.level !== "SIDO" ? (
                   <button
                     className="primary-map-action"
                     onClick={() =>
                       mapRef.current?.flyTo({
                         center: selectedRegionFeature.properties.center,
-                        zoom: 15,
+                        zoom:
+                          selectedRegionFeature.properties.level === "SIGUNGU"
+                            ? NEIGHBORHOOD_ZOOM + 0.7
+                            : BUILDING_ZOOM + 0.5,
                         duration: 600,
                       })
                     }
                     type="button"
                   >
-                    건물 단계로 확대
+                    {selectedRegionFeature.properties.level === "SIGUNGU"
+                      ? "읍·면·동 단계로 확대"
+                      : "건물 단계로 확대"}
                   </button>
                 ) : null}
               </div>
@@ -707,7 +776,7 @@ export function RiskMap({
           ) : null}
 
           <div className="map-list" aria-live="polite">
-            {viewport.zoom < 14 ? (
+            {viewport.zoom < BUILDING_ZOOM ? (
               <ol>
                 {visibleRegions.map((feature, index) => (
                   <li key={feature.properties.regionCode}>

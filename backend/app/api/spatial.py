@@ -10,10 +10,12 @@ from app.auth import AuthenticatedSession
 from app.spatial import (
     MAX_BUILDING_ZOOM,
     MIN_BUILDING_ZOOM,
+    MIN_NEIGHBORHOOD_ZOOM,
     SpatialContractError,
     building_detail,
     building_tile,
     parse_bbox,
+    parse_region_bbox,
     region_detail,
     region_features,
     viewport_buildings,
@@ -62,6 +64,7 @@ async def map_config(request: Request, _: Session) -> dict[str, object]:
             "fallbackActive": not bool(vworld_url),
             "fallbackReason": None if vworld_url else "VWORLD_NOT_CONFIGURED",
             "buildingZoom": {"minimum": MIN_BUILDING_ZOOM, "maximum": MAX_BUILDING_ZOOM},
+            "neighborhoodZoom": {"minimum": MIN_NEIGHBORHOOD_ZOOM, "maximum": MIN_BUILDING_ZOOM},
         },
     )
 
@@ -88,6 +91,27 @@ async def map_districts(
         parent_code,
         settings.health_timeout_seconds,
     )
+    return envelope(request, data)
+
+
+@router.get("/map/neighborhoods")
+async def map_neighborhoods(
+    request: Request,
+    _: Session,
+    bbox: str,
+) -> Any:
+    settings = request.app.state.settings
+    try:
+        parsed = parse_region_bbox(bbox)
+        data = await region_features(
+            request.app.state.db_engine,
+            "EUPMYEONDONG",
+            None,
+            settings.health_timeout_seconds,
+            parsed,
+        )
+    except SpatialContractError as error:
+        return _spatial_error(request, error)
     return envelope(request, data)
 
 

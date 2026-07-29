@@ -411,6 +411,17 @@ class ReferenceDatabaseImporter:
                   AND r.reference_month = DATE '2026-03-01'
                   AND r.horizon_days = 60
                   AND r.lineage_version = 'v27.1-focus-2026-03-60d'
+                UNION ALL
+                SELECT emd.region_code, r.final_score, r.risk_band
+                FROM building b
+                JOIN admin_region emd
+                  ON emd.level = 'EUPMYEONDONG'
+                 AND emd.geometry && b.centroid
+                 AND ST_Covers(emd.geometry, b.centroid)
+                JOIN building_risk_snapshot r USING (building_id)
+                WHERE r.reference_month = DATE '2026-03-01'
+                  AND r.horizon_days = 60
+                  AND r.lineage_version = 'v27.1-focus-2026-03-60d'
             )
             INSERT INTO region_risk_summary (
                 region_code, reference_month, horizon_days, lineage_version, building_count,

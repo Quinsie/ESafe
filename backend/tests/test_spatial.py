@@ -8,7 +8,7 @@ from app.api.auth import require_session
 from app.auth import AuthenticatedSession
 from app.main import app
 from app.security import token_hash
-from app.spatial import SpatialContractError, parse_bbox
+from app.spatial import SpatialContractError, parse_bbox, parse_region_bbox
 
 
 def _session() -> AuthenticatedSession:
@@ -28,6 +28,7 @@ def test_spatial_endpoints_require_authentication() -> None:
             "/api/v1/map/config",
             "/api/v1/map/regions",
             "/api/v1/map/districts?parentCode=29",
+            "/api/v1/map/neighborhoods?bbox=126.8,35.1,126.9,35.2",
             "/api/v1/map/buildings/14/13964/6488.mvt",
             "/api/v1/map/buildings?bbox=126.8,35.1,126.9,35.2&zoom=14",
             "/api/v1/regions/29170",
@@ -53,6 +54,17 @@ def test_bbox_requires_building_zoom_and_bounded_viewport() -> None:
             assert error.code == expected
         else:
             raise AssertionError("SpatialContractError expected")
+
+
+def test_neighborhood_bbox_allows_only_a_bounded_viewport() -> None:
+    parsed = parse_region_bbox("126.80,35.10,126.90,35.20")
+    assert parsed.north == 35.2
+    try:
+        parse_region_bbox("125.0,33.0,128.0,36.0")
+    except SpatialContractError as error:
+        assert error.code == "VIEWPORT_TOO_LARGE"
+    else:
+        raise AssertionError("SpatialContractError expected")
 
 
 def test_spatial_contracts_are_independent(monkeypatch) -> None:

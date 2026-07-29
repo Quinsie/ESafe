@@ -121,12 +121,17 @@ class ReferenceSource:
                 raise ValueError(f"duplicate admin region: {region_code}")
             seen.add(region_code)
             geometry, _ = normalize_multipolygon(shape(feature["geometry"]))
-            metadata = {
-                "osm_type": properties.get("osm_type"),
-                "osm_id": properties.get("osm_id"),
-                "display_name": properties.get("display_name"),
-                "licence": properties.get("licence"),
-            }
+            supplied_metadata = properties.get("source_metadata")
+            metadata = (
+                supplied_metadata
+                if isinstance(supplied_metadata, dict)
+                else {
+                    "osm_type": properties.get("osm_type"),
+                    "osm_id": properties.get("osm_id"),
+                    "display_name": properties.get("display_name"),
+                    "licence": properties.get("licence"),
+                }
+            )
             yield (
                 region_code,
                 str(properties["level"]),
