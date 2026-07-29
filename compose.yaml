@@ -154,6 +154,7 @@ services:
     cap_drop:
       - ALL
     cap_add:
+      - DAC_OVERRIDE
       - CHOWN
       - SETGID
       - SETUID
@@ -179,6 +180,7 @@ services:
     cap_drop:
       - ALL
     cap_add:
+      - DAC_OVERRIDE
       - CHOWN
       - SETGID
       - SETUID
