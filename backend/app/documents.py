@@ -804,8 +804,14 @@ async def document_library(
                              AND version.version = draft.current_version
                             LEFT JOIN case_record
                               ON case_record.case_id = draft.case_id
-                            WHERE (:status IS NULL OR draft.status = :status)
-                              AND (:family IS NULL OR draft.family = :family)
+                            WHERE (
+                              CAST(:status AS varchar) IS NULL
+                              OR draft.status = CAST(:status AS varchar)
+                            )
+                              AND (
+                                CAST(:family AS varchar) IS NULL
+                                OR draft.family = CAST(:family AS varchar)
+                              )
                             ORDER BY draft.updated_at DESC,
                                      draft.document_draft_id
                             LIMIT :limit OFFSET :offset
