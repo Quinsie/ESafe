@@ -4,6 +4,7 @@ import { ApiError, apiRequest } from "./api";
 import { formatKst } from "./home";
 import type { ProfileRuntime } from "./profile";
 import { AppLink } from "./router";
+import "./documents.css";
 
 type EvidenceStatus = "SUFFICIENT" | "INSUFFICIENT" | "CONFLICT";
 type ApprovalStatus = "APPROVAL_PENDING" | "APPROVED" | "ON_HOLD" | "DISCARDED" | "SUPERSEDED";
@@ -57,6 +58,45 @@ interface ApprovalAction {
   workItemStatus: string | null;
 }
 
+interface ApprovalDocumentArtifact {
+  documentArtifactId: string;
+  format: "HWPX" | "PDF";
+  stage: "REVIEW" | "FINAL";
+  status: "QUEUED" | "RUNNING" | "SUCCEEDED" | "FAILED";
+  attemptCount: number;
+  fileName: string | null;
+  mimeType: string | null;
+  sizeBytes: number | null;
+  sha256: string | null;
+  errorCode: string | null;
+  errorMessage: string | null;
+}
+
+interface ApprovalDocument {
+  documentDraftId: string;
+  documentVersionId: string;
+  caseId: string | null;
+  family: string;
+  variant: string;
+  title: string;
+  draftStatus: string;
+  currentVersion: number;
+  draftLockVersion: number;
+  version: number;
+  versionStatus: string;
+  payload: {
+    document?: { title?: string; date?: string; number?: string };
+    incident?: { occurredAt?: string; location?: string; summary?: string; detail?: string };
+    analysis?: { result?: string };
+    response?: { summary?: string; actions?: string[] };
+  };
+  evidenceStatus: EvidenceStatus;
+  warning: string | null;
+  contentSha256: string;
+  approvedAt: string | null;
+  artifacts: ApprovalDocumentArtifact[];
+}
+
 interface ApprovalDetailData {
   approvalRequestId: string;
   caseId: string | null;
@@ -82,7 +122,7 @@ interface ApprovalDetailData {
     monitoringPriority: string;
     regionCode: string | null;
     regionName: string | null;
-  };
+  } | null;
   recommendation: {
     recommendationId: string;
     version: number;
@@ -95,7 +135,8 @@ interface ApprovalDetailData {
     evidenceStatus: EvidenceStatus;
     evidenceWarning: string | null;
     actions: ApprovalAction[];
-  };
+  } | null;
+  document: ApprovalDocument | null;
   executionImpact: {
     workItemCount: number;
     externalEffect: boolean;
@@ -130,6 +171,19 @@ const evidenceLabels: Record<EvidenceStatus, string> = {
   SUFFICIENT: "근거 충분",
   INSUFFICIENT: "근거 부족",
   CONFLICT: "근거 충돌",
+};
+
+const documentFamilyLabels: Record<string, string> = {
+  SITUATION_REPORT: "보고서",
+  OFFICIAL_NOTICE: "공문",
+  RESPONSE_PLAN: "계획서",
+};
+
+const documentVariantLabels: Record<string, string> = {
+  INCIDENT_REPORT: "사고·상황 보고서",
+  CRISIS_ASSESSMENT: "위기상황판단",
+  BASIC_NOTICE: "한국전기안전공사 공문",
+  BASIC_PLAN: "대응 계획서",
 };
 
 function statusClass(status: string): string {
@@ -257,6 +311,8 @@ function ApprovalDetail({
   const queryClient = useQueryClient();
   const [reason, setReason] = useState("");
   const [warningAcknowledged, setWarningAcknowledged] = useState(false);
+  const [discardReason, setDiscardReason] = useState("");
+  const [discardReasonDetail, setDiscardReasonDetail] = useState("");
   const approval = useQuery({
     queryKey: ["approval", runtime.profile, approvalId],
     queryFn: () =>
@@ -275,6 +331,9 @@ function ApprovalDetail({
           decision,
           reason,
           warningAcknowledged,
+          discardReason: decision === "DISCARDED" ? discardReason : undefined,
+          discardReasonDetail:
+            decision === "DISCARDED" && discardReason === "OTHER" ? discardReasonDetail : undefined,
         }),
       }).then((result) => result.data),
     onSuccess: (result) => {
@@ -298,10 +357,19 @@ function ApprovalDetail({
   const data = approval.data;
   const warningRequired =
     data.evidenceStatus === "INSUFFICIENT" || data.evidenceStatus === "CONFLICT";
+  const isDocument = data.targetType === "DOCUMENT_DRAFT" && data.document !== null;
   const canDecide =
     data.status === "APPROVAL_PENDING" && data.contentMatches && reason.trim().length > 0;
+  const canDiscard =
+    canDecide &&
+    (!isDocument ||
+      (discardReason.length > 0 &&
+        (discardReason !== "OTHER" || discardReasonDetail.trim().length > 0)));
   const submit = (decision: Decision) => {
-    if (decision === "DISCARDED" && !window.confirm("이 대응안 버전을 폐기하시겠습니까?")) {
+    const discardMessage = isDocument
+      ? "이 문서 버전을 폐기하시겠습니까?"
+      : "이 대응안 버전을 폐기하시겠습니까?";
+    if (decision === "DISCARDED" && !window.confirm(discardMessage)) {
       return;
     }
     decide.mutate({ decision, expectedVersion: data.version });
@@ -330,19 +398,19 @@ function ApprovalDetail({
         <div className="approval-explanation">
           <section className="panel approval-section">
             <h2>1. 감지 사실</h2>
-            <strong>{data.case.title}</strong>
+            <strong>{data.case?.title ?? data.document?.title ?? data.title}</strong>
             <dl className="approval-facts">
               <div>
                 <dt>Case</dt>
-                <dd>{data.case.caseNumber}</dd>
+                <dd>{data.case?.caseNumber ?? "연결 Case 없음"}</dd>
               </div>
               <div>
                 <dt>지역</dt>
-                <dd>{data.case.regionName ?? "지역 확인 필요"}</dd>
+                <dd>{data.case?.regionName ?? "지역 확인 필요"}</dd>
               </div>
               <div>
                 <dt>관제 우선상태</dt>
-                <dd>{data.case.monitoringPriority}</dd>
+                <dd>{data.case?.monitoringPriority ?? "해당 없음"}</dd>
               </div>
               <div>
                 <dt>요청 시각</dt>
@@ -360,11 +428,16 @@ function ApprovalDetail({
               </span>
               <small>내용 해시 {data.contentSha256.slice(0, 12)}…</small>
             </div>
-            <p>{data.recommendation.situationSummary}</p>
-            {(data.warning ?? data.recommendation.warning) ? (
+            <p>
+              {data.recommendation?.situationSummary ??
+                "현재 문서 버전의 내용, 근거 상태와 생성 산출물을 검토합니다."}
+            </p>
+            {(data.warning ?? data.recommendation?.warning ?? data.document?.warning) ? (
               <div className="evidence-warning insufficient" role="status">
                 <strong>확인 필요</strong>
-                <span>{data.warning ?? data.recommendation.warning}</span>
+                <span>
+                  {data.warning ?? data.recommendation?.warning ?? data.document?.warning}
+                </span>
               </div>
             ) : null}
             {!data.contentMatches ? (
@@ -372,7 +445,7 @@ function ApprovalDetail({
                 요청 당시 내용과 현재 내용이 다릅니다. 이 버전은 결정할 수 없습니다.
               </div>
             ) : null}
-            {data.recommendation.requiredChecks.length ? (
+            {data.recommendation?.requiredChecks.length ? (
               <ul className="approval-checks">
                 {data.recommendation.requiredChecks.map((check) => (
                   <li key={check}>{check}</li>
@@ -381,36 +454,109 @@ function ApprovalDetail({
             ) : null}
           </section>
           <section className="panel approval-section">
-            <h2>3. 시스템이 준비한 작업</h2>
-            <ol className="approval-actions">
-              {data.recommendation.actions.map((action) => (
-                <li key={action.recommendationActionId}>
-                  <span>{action.ordinal}</span>
-                  <div>
-                    <strong>{action.title}</strong>
-                    <p>{action.description}</p>
-                    <ul>
-                      {action.checklist.map((item) => (
-                        <li key={item}>{item}</li>
-                      ))}
-                    </ul>
-                    <div className="approval-citations">
-                      {action.citations.map((citation) => (
-                        <details key={citation.citationId}>
-                          <summary>
-                            {citation.supportType === "DIRECT" ? "직접" : "참고"} ·{" "}
-                            {citation.documentTitle} · {citation.locator}
-                          </summary>
-                          <blockquote>{citation.quote}</blockquote>
-                        </details>
-                      ))}
+            <h2>{isDocument ? "3. 승인 대상 문서" : "3. 시스템이 준비한 작업"}</h2>
+            {data.recommendation ? (
+              <ol className="approval-actions">
+                {data.recommendation.actions.map((action) => (
+                  <li key={action.recommendationActionId}>
+                    <span>{action.ordinal}</span>
+                    <div>
+                      <strong>{action.title}</strong>
+                      <p>{action.description}</p>
+                      <ul>
+                        {action.checklist.map((item) => (
+                          <li key={item}>{item}</li>
+                        ))}
+                      </ul>
+                      <div className="approval-citations">
+                        {action.citations.map((citation) => (
+                          <details key={citation.citationId}>
+                            <summary>
+                              {citation.supportType === "DIRECT" ? "직접" : "참고"} ·{" "}
+                              {citation.documentTitle} · {citation.locator}
+                            </summary>
+                            <blockquote>{citation.quote}</blockquote>
+                          </details>
+                        ))}
+                      </div>
                     </div>
+                  </li>
+                ))}
+              </ol>
+            ) : data.document ? (
+              <div className="approval-document-review">
+                <dl className="approval-facts">
+                  <div>
+                    <dt>문서 계열</dt>
+                    <dd>{documentFamilyLabels[data.document.family] ?? data.document.family}</dd>
                   </div>
-                </li>
-              ))}
-            </ol>
+                  <div>
+                    <dt>문서 형식</dt>
+                    <dd>{documentVariantLabels[data.document.variant] ?? data.document.variant}</dd>
+                  </div>
+                  <div>
+                    <dt>고정 버전</dt>
+                    <dd>v{data.document.version}</dd>
+                  </div>
+                  <div>
+                    <dt>검토 산출물</dt>
+                    <dd>
+                      {
+                        data.document.artifacts.filter((artifact) => artifact.stage === "REVIEW")
+                          .length
+                      }
+                      건
+                    </dd>
+                  </div>
+                </dl>
+                <div className="approval-document-payload">
+                  <div>
+                    <strong>문서 제목</strong>
+                    <span>{data.document.payload.document?.title ?? data.document.title}</span>
+                  </div>
+                  <div>
+                    <strong>발생·기준시각</strong>
+                    <span>{data.document.payload.incident?.occurredAt || "미입력"}</span>
+                  </div>
+                  <div>
+                    <strong>위치</strong>
+                    <span>{data.document.payload.incident?.location || "미입력"}</span>
+                  </div>
+                  <div>
+                    <strong>상황 요약</strong>
+                    <span>{data.document.payload.incident?.summary || "미입력"}</span>
+                  </div>
+                  <div>
+                    <strong>분석 결과</strong>
+                    <span>{data.document.payload.analysis?.result || "미입력"}</span>
+                  </div>
+                  <div>
+                    <strong>대응 내용</strong>
+                    <span>
+                      {data.document.payload.response?.actions?.join(", ") ||
+                        data.document.payload.response?.summary ||
+                        "미입력"}
+                    </span>
+                  </div>
+                </div>
+                <div className="approval-document-files">
+                  {data.document.artifacts
+                    .filter((artifact) => artifact.stage === "REVIEW")
+                    .map((artifact) => (
+                      <a
+                        href={`${runtime.apiBase}/document-artifacts/${artifact.documentArtifactId}/download`}
+                        key={artifact.documentArtifactId}
+                      >
+                        {artifact.format} 검토본 · {artifact.status}
+                      </a>
+                    ))}
+                </div>
+              </div>
+            ) : null}
             <strong className="approval-boundary">
-              준비 단계이며 승인 전에는 과업·외부 연락·발송·상태 변경을 실행하지 않습니다.
+              {isDocument
+                ? "승인 전에는 최종본을 생성하지 않으며 외부 전송은 승인 후에도 자동 실행하지 않습니다."
+                : "준비 단계이며 승인 전에는 과업·외부 연락·발송·상태 변경을 실행하지 않습니다."}
             </strong>
           </section>
           <section className="panel approval-section">
@@ -468,6 +614,38 @@ function ApprovalDetail({
                   rows={5}
                   value={reason}
                 />
+                {isDocument ? (
+                  <>
+                    <label htmlFor="document-discard-reason">문서 폐기 사유</label>
+                    <select
+                      id="document-discard-reason"
+                      onChange={(event) => {
+                        setDiscardReason(event.target.value);
+                        if (event.target.value !== "OTHER") {
+                          setDiscardReasonDetail("");
+                        }
+                      }}
+                      value={discardReason}
+                    >
+                      <option value="">폐기할 때 선택</option>
+                      <option value="FALSE_ALARM">오경보</option>
+                      <option value="DUPLICATE">중복 문서</option>
+                      <option value="NO_ACTION_REQUIRED">조치 불필요</option>
+                      <option value="EVIDENCE_INAPPROPRIATE">근거 부적절</option>
+                      <option value="OTHER">기타</option>
+                    </select>
+                    {discardReason === "OTHER" ? (
+                      <textarea
+                        aria-label="기타 폐기 사유"
+                        maxLength={500}
+                        onChange={(event) => setDiscardReasonDetail(event.target.value)}
+                        placeholder="기타 폐기 사유를 입력하세요."
+                        rows={3}
+                        value={discardReasonDetail}
+                      />
+                    ) : null}
+                  </>
+                ) : null}
                 {decide.isError ? (
                   <div className="workflow-inline-error" role="alert">
                     {errorMessage(decide.error, "결정을 저장하지 못했습니다.")}
@@ -483,7 +661,7 @@ function ApprovalDetail({
                   </button>
                   <button
                     className="discard"
-                    disabled={!canDecide || decide.isPending}
+                    disabled={!canDiscard || decide.isPending}
                     onClick={() => submit("DISCARDED")}
                     type="button"
                   >
@@ -497,7 +675,7 @@ function ApprovalDetail({
                     onClick={() => submit("APPROVED")}
                     type="button"
                   >
-                    승인하고 과업 생성
+                    {isDocument ? "승인하고 최종본 생성" : "승인하고 과업 생성"}
                   </button>
                 </div>
               </>
@@ -505,7 +683,16 @@ function ApprovalDetail({
               <div className={`approval-result ${statusClass(data.status)}`}>
                 <strong>{approvalLabels[data.status]} 결정 완료</strong>
                 <span>{data.decision?.reason ?? "결정 사유가 기록되었습니다."}</span>
-                {data.status === "APPROVED" && data.caseId ? (
+                {data.status === "APPROVED" && isDocument ? (
+                  <AppLink
+                    className="workflow-action-link"
+                    currentPath={currentPath}
+                    runtime={runtime}
+                    to={`/documents/${data.targetId}/result`}
+                  >
+                    최종 문서·전달 기록 열기
+                  </AppLink>
+                ) : data.status === "APPROVED" && data.caseId ? (
                   <AppLink
                     className="workflow-action-link"
                     currentPath={currentPath}

@@ -986,6 +986,14 @@ function CaseDetail({
             className="case-workflow-link"
             currentPath={currentPath}
             runtime={runtime}
+            to={`/cases/${caseId}/documents/new`}
+          >
+            문서 초안 작성
+          </AppLink>
+          <AppLink
+            className="case-workflow-link"
+            currentPath={currentPath}
+            runtime={runtime}
             to={`/cases/${caseId}/close`}
           >
             상황 종료 검토

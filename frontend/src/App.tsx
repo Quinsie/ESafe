@@ -36,6 +36,11 @@ const ApprovalManagement = lazy(() =>
     default: module.ApprovalManagement,
   })),
 );
+const DocumentManagement = lazy(() =>
+  import("./documents").then((module) => ({
+    default: module.DocumentManagement,
+  })),
+);
 
 interface SessionData {
   user: {
@@ -92,6 +97,13 @@ function routeTitle(path: string): string | undefined {
   }
   if (/^\/approvals\/[0-9a-f-]+$/i.test(path)) {
     return "검토·승인";
+  }
+  if (
+    path === "/artifacts" ||
+    /^\/cases\/[0-9a-f-]+\/documents\/new$/i.test(path) ||
+    /^\/documents\/[0-9a-f-]+\/(?:edit|result)$/i.test(path)
+  ) {
+    return "문서·산출물";
   }
   return undefined;
 }
@@ -412,6 +424,20 @@ function AuthenticatedShell({
           }
         >
           <ApprovalManagement currentPath={currentPath} runtime={runtime} />
+        </Suspense>
+      ) : currentPath === "/artifacts" ||
+        /^\/cases\/[0-9a-f-]+\/documents\/new$/i.test(currentPath) ||
+        /^\/documents\/[0-9a-f-]+\/(?:edit|result)$/i.test(currentPath) ? (
+        <Suspense
+          fallback={
+            <main className="page" id="main-content">
+              <div className="auth-loading" role="status">
+                문서 화면을 준비하고 있습니다.
+              </div>
+            </main>
+          }
+        >
+          <DocumentManagement currentPath={currentPath} runtime={runtime} />
         </Suspense>
       ) : title ? (
         <SectionPlaceholder title={title} />
