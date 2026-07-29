@@ -6,6 +6,7 @@ import type { ProfileRuntime } from "./profile";
 import { AppLink, navigateInternal } from "./router";
 
 type EvidenceStatus = "SUFFICIENT" | "INSUFFICIENT" | "CONFLICT";
+type CloseReason = "RESOLVED" | "FALSE_ALARM" | "DUPLICATE" | "OTHER";
 type WorkStatus =
   | "QUEUED"
   | "RUNNING"
@@ -163,6 +164,7 @@ interface ClosureReviewData {
   caseNumber: string;
   title: string;
   status: string;
+  version: number;
   sourceStatus: string;
   openedAt: string;
   updatedAt: string;
@@ -175,8 +177,17 @@ interface ClosureReviewData {
     incomplete: number;
     completed: number;
     discarded: number;
+    unreasonedDiscarded: number;
   };
   incompleteWorkItems: Array<{
+    workItemId: string;
+    title: string;
+    status: WorkStatus;
+    priority: "NORMAL" | "HIGH" | "URGENT";
+    progress: number;
+    updatedAt: string;
+  }>;
+  unreasonedDiscardedWorkItems: Array<{
     workItemId: string;
     title: string;
     status: WorkStatus;
@@ -188,9 +199,13 @@ interface ClosureReviewData {
     caseClosureId: string;
     version: number;
     summary: string;
+    closeReason: CloseReason;
+    warningAcknowledged: boolean;
     createdAt: string;
   } | null;
-  closurePolicy: "PENDING_USER_DECISION";
+  canClose: boolean;
+  blockingReasons: string[];
+  closurePolicy: "ALL_WORK_TERMINAL";
 }
 
 interface TimelineData {
@@ -225,6 +240,13 @@ const priorityLabels = {
   HIGH: "높음",
   URGENT: "긴급",
 } as const;
+
+const closeReasonLabels: Record<CloseReason, string> = {
+  RESOLVED: "상황 해소",
+  FALSE_ALARM: "오탐",
+  DUPLICATE: "중복 Case",
+  OTHER: "기타",
+};
 
 const transitions: Record<
   WorkStatus,
@@ -1138,6 +1160,10 @@ function CaseClosure({
   currentPath: string;
   runtime: ProfileRuntime;
 }) {
+  const queryClient = useQueryClient();
+  const [closeReason, setCloseReason] = useState<CloseReason>("RESOLVED");
+  const [closureSummary, setClosureSummary] = useState("");
+  const [warningAcknowledged, setWarningAcknowledged] = useState(false);
   const review = useQuery({
     queryKey: ["case-closure-review", runtime.profile, caseId],
     queryFn: () =>
@@ -1154,6 +1180,27 @@ function CaseClosure({
       ),
     staleTime: 15_000,
   });
+  const closeMutation = useMutation({
+    mutationFn: (input: { expectedVersion: number }) =>
+      apiRequest<ClosureReviewData>(runtime, `/cases/${caseId}/close`, {
+        method: "POST",
+        headers: { "Idempotency-Key": idempotencyKey("case-close") },
+        body: JSON.stringify({
+          expectedVersion: input.expectedVersion,
+          closeReason,
+          summary: closureSummary.trim(),
+          warningAcknowledged,
+        }),
+      }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({
+        queryKey: ["case-closure-review", runtime.profile, caseId],
+      });
+      void queryClient.invalidateQueries({ queryKey: ["case", runtime.profile, caseId] });
+      void queryClient.invalidateQueries({ queryKey: ["cases", runtime.profile] });
+      void queryClient.invalidateQueries({ queryKey: ["home", runtime.profile] });
+    },
+  });
   if (review.isLoading) return <WorkflowState message="상황 종료 조건을 검토하고 있습니다." />;
   if (review.isError || !review.data) {
     return (
@@ -1165,10 +1212,17 @@ function CaseClosure({
   }
   const data = review.data;
   const isClosed = data.status === "CLOSED";
+  const sourceResolved = Boolean(data.sourceResolvedAt) || data.sourceStatus === "RESOLVED";
+  const evidenceAcknowledgementRequired = data.evidenceStatus !== "SUFFICIENT";
+  const closeReady =
+    data.canClose &&
+    closureSummary.trim().length > 0 &&
+    (!evidenceAcknowledgementRequired || warningAcknowledged) &&
+    (closeReason !== "RESOLVED" || sourceResolved);
   const checks = [
     {
       label: "원천 종료·해제 확인",
-      done: Boolean(data.sourceResolvedAt) || data.sourceStatus === "RESOLVED",
+      done: sourceResolved,
       detail: data.sourceResolvedAt
         ? `원천 종료 ${formatKst(data.sourceResolvedAt)}`
         : `현재 원천 상태 ${data.sourceStatus}`,
@@ -1310,19 +1364,92 @@ function CaseClosure({
               ))}
             </div>
           ) : null}
+          {data.unreasonedDiscardedWorkItems.length ? (
+            <div className="closure-incomplete">
+              <strong>폐기 사유 확인 필요</strong>
+              {data.unreasonedDiscardedWorkItems.map((item) => (
+                <AppLink
+                  className="workflow-action-link"
+                  currentPath={currentPath}
+                  key={item.workItemId}
+                  runtime={runtime}
+                  to={`/cases/${caseId}/tasks/${item.workItemId}`}
+                >
+                  {item.title} · 폐기 사유 없음
+                </AppLink>
+              ))}
+            </div>
+          ) : null}
           {isClosed && data.completedClosure ? (
             <div className="closure-complete">
-              <strong>종료 결과</strong>
+              <strong>종료 결과 · {closeReasonLabels[data.completedClosure.closeReason]}</strong>
               <span>{data.completedClosure.summary}</span>
               <small>{formatKst(data.completedClosure.createdAt)}</small>
             </div>
           ) : (
-            <div className="closure-policy-note">
-              <strong>종료 실행 기준 확정 대기</strong>
-              <span>
-                미완료 과업이 남은 경우의 허용 여부를 확정한 뒤 실제 종료 버튼을 연결합니다.
-                조회·검토·미완료 과업 이동은 현재 사용할 수 있습니다.
-              </span>
+            <div className="closure-form">
+              <div>
+                <strong>최종 종료 기록</strong>
+                <span>완료 또는 사유 있는 폐기 업무만 남았을 때 종료할 수 있습니다.</span>
+              </div>
+              <label>
+                종료 사유
+                <select
+                  onChange={(event) => setCloseReason(event.target.value as CloseReason)}
+                  value={closeReason}
+                >
+                  {Object.entries(closeReasonLabels).map(([value, label]) => (
+                    <option key={value} value={value}>
+                      {label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                종료 결과 요약
+                <textarea
+                  maxLength={4000}
+                  onChange={(event) => setClosureSummary(event.target.value)}
+                  placeholder="확인한 상황, 완료·폐기 업무와 종료 판단을 기록해 주세요."
+                  rows={4}
+                  value={closureSummary}
+                />
+              </label>
+              {closeReason === "RESOLVED" && !sourceResolved ? (
+                <div className="workflow-inline-error" role="alert">
+                  상황 해소로 종료하려면 원천 종료·해제가 먼저 확인되어야 합니다.
+                </div>
+              ) : null}
+              {evidenceAcknowledgementRequired ? (
+                <label className="closure-warning-check">
+                  <input
+                    checked={warningAcknowledged}
+                    onChange={(event) => setWarningAcknowledged(event.target.checked)}
+                    type="checkbox"
+                  />
+                  근거 {data.evidenceStatus === "CONFLICT" ? "충돌" : "부족"} 경고를 확인했으며 이
+                  경고를 종료 기록에 유지합니다.
+                </label>
+              ) : null}
+              {data.blockingReasons.length ? (
+                <div className="closure-policy-note">
+                  <strong>종료 조건 미충족</strong>
+                  <span>위에 표시된 미완료 업무 또는 폐기 사유를 먼저 처리해 주세요.</span>
+                </div>
+              ) : null}
+              {closeMutation.isError ? (
+                <div className="workflow-inline-error" role="alert">
+                  {queryMessage(closeMutation.error, "Case를 종료하지 못했습니다.")}
+                </div>
+              ) : null}
+              <button
+                className="workflow-primary-action closure-submit"
+                disabled={!closeReady || closeMutation.isPending}
+                onClick={() => closeMutation.mutate({ expectedVersion: data.version })}
+                type="button"
+              >
+                {closeMutation.isPending ? "종료 기록 중…" : "Case 최종 종료"}
+              </button>
             </div>
           )}
         </aside>

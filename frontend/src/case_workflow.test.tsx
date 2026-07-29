@@ -161,10 +161,13 @@ const workItem = {
 
 function installFetch({
   recommendationInitiallyMissing = false,
+  closureReady = false,
 }: {
   recommendationInitiallyMissing?: boolean;
+  closureReady?: boolean;
 } = {}) {
   let evidenceReads = 0;
+  let caseClosed = false;
   vi.stubGlobal(
     "fetch",
     vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -247,34 +250,65 @@ function installFetch({
           }),
         );
       }
+      if (url.endsWith(`/cases/${caseId}/close`) && init?.method === "POST") {
+        caseClosed = true;
+        return response(
+          envelope({
+            caseId,
+            status: "CLOSED",
+            closeReason: "RESOLVED",
+            reused: false,
+          }),
+        );
+      }
       if (url.endsWith(`/cases/${caseId}/closure-review`)) {
         return response(
           envelope({
             caseId,
             caseNumber: "ES-20260729-000001",
             title: "광주 북구 공장 화재 출동",
-            status: "SOURCE_RESOLVED_REVIEW",
+            status: caseClosed ? "CLOSED" : "SOURCE_RESOLVED_REVIEW",
+            version: caseClosed ? 3 : 2,
             sourceStatus: "RESOLVED",
             openedAt: "2026-07-29T04:00:00Z",
             updatedAt: "2026-07-29T05:00:00Z",
             sourceResolvedAt: "2026-07-29T04:58:00Z",
-            closedAt: null,
-            closeReason: null,
+            closedAt: caseClosed ? "2026-07-29T05:10:00Z" : null,
+            closeReason: caseClosed ? "RESOLVED" : null,
             evidenceStatus: "SUFFICIENT",
             evidenceWarning: null,
-            workSummary: { incomplete: 1, completed: 2, discarded: 0 },
-            incompleteWorkItems: [
-              {
-                workItemId,
-                title: "전원 차단 상태 확인",
-                status: "RUNNING",
-                priority: "URGENT",
-                progress: 50,
-                updatedAt: "2026-07-29T04:54:00Z",
-              },
-            ],
-            completedClosure: null,
-            closurePolicy: "PENDING_USER_DECISION",
+            workSummary: {
+              incomplete: closureReady ? 0 : 1,
+              completed: closureReady ? 3 : 2,
+              discarded: 0,
+              unreasonedDiscarded: 0,
+            },
+            incompleteWorkItems: closureReady
+              ? []
+              : [
+                  {
+                    workItemId,
+                    title: "전원 차단 상태 확인",
+                    status: "RUNNING",
+                    priority: "URGENT",
+                    progress: 50,
+                    updatedAt: "2026-07-29T04:54:00Z",
+                  },
+                ],
+            unreasonedDiscardedWorkItems: [],
+            completedClosure: caseClosed
+              ? {
+                  caseClosureId: "00000000-0000-4000-8000-000000000931",
+                  version: 1,
+                  summary: "원천 종료와 모든 대응 업무 완료를 확인했습니다.",
+                  closeReason: "RESOLVED",
+                  warningAcknowledged: false,
+                  createdAt: "2026-07-29T05:10:00Z",
+                }
+              : null,
+            canClose: closureReady && !caseClosed,
+            blockingReasons: closureReady ? [] : ["CASE_WORK_INCOMPLETE"],
+            closurePolicy: "ALL_WORK_TERMINAL",
           }),
         );
       }
@@ -389,17 +423,34 @@ describe("case workflow screens", () => {
     expect(await screen.findByText("완료")).toBeVisible();
   });
 
-  it("renders INC-05B with real incomplete work and no premature close action", async () => {
+  it("renders INC-05B with real incomplete work and blocks final closure", async () => {
     installFetch();
     renderApp(`/demo/cases/${caseId}/close`);
 
     expect(await screen.findByRole("heading", { name: "상황 종료·결과 요약" })).toBeVisible();
     expect(screen.getByText("원천 응답 수신")).toBeVisible();
-    expect(screen.getByText("종료 실행 기준 확정 대기")).toBeVisible();
+    expect(screen.getByText("종료 조건 미충족")).toBeVisible();
     expect(screen.getByRole("link", { name: /전원 차단 상태 확인/ })).toHaveAttribute(
       "href",
       `/demo/cases/${caseId}/tasks/${workItemId}`,
     );
-    expect(screen.queryByRole("button", { name: /종료/ })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Case 최종 종료" })).toBeDisabled();
+  });
+
+  it("closes INC-05B after terminal work and records the summary", async () => {
+    installFetch({ closureReady: true });
+    renderApp(`/demo/cases/${caseId}/close`);
+
+    const summary = await screen.findByLabelText("종료 결과 요약");
+    await userEvent.type(summary, "원천 종료와 모든 대응 업무 완료를 확인했습니다.");
+    const closeButton = screen.getByRole("button", { name: "Case 최종 종료" });
+    expect(closeButton).toBeEnabled();
+    await userEvent.click(closeButton);
+
+    expect(await screen.findByText("종료 결과 · 상황 해소")).toBeVisible();
+    expect(fetch).toHaveBeenCalledWith(
+      expect.stringContaining(`/cases/${caseId}/close`),
+      expect.objectContaining({ method: "POST" }),
+    );
   });
 });

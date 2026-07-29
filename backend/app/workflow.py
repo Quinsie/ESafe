@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 EVIDENCE_STATUSES: Final = frozenset(("SUFFICIENT", "INSUFFICIENT", "CONFLICT"))
 WORK_PRIORITIES: Final = frozenset(("NORMAL", "HIGH", "URGENT"))
 CHECKLIST_STATUSES: Final = frozenset(("PENDING", "DONE", "SKIPPED"))
+CLOSE_REASONS: Final = frozenset(("RESOLVED", "FALSE_ALARM", "DUPLICATE", "OTHER"))
 WORK_TRANSITIONS: Final = {
     "QUEUED": frozenset(("RUNNING", "ON_HOLD", "DISCARDED")),
     "RUNNING": frozenset(("WAITING_APPROVAL", "FAILED", "ON_HOLD")),
@@ -29,6 +30,7 @@ class WorkflowContractError(Exception):
     status_code: int
     code: str
     message: str
+    details: dict[str, Any] | None = None
 
 
 def _iso(value: datetime | None) -> str | None:
@@ -553,8 +555,6 @@ async def create_case_work_item(
             if existing_item is None:
                 raise RuntimeError("Idempotent work item disappeared")
             return existing_item
-        if not await _case_exists(connection, case_id):
-            raise WorkflowContractError(404, "CASE_NOT_FOUND", "Case를 찾을 수 없습니다.")
         if recommendation_action_id is not None:
             action = (
                 (
@@ -589,6 +589,27 @@ async def create_case_work_item(
                     "RECOMMENDATION_ACTION_DISCARDED",
                     "폐기한 제안 행동에서는 업무를 만들 수 없습니다.",
                 )
+        case_status = (
+            await connection.execute(
+                text(
+                    """
+                    SELECT status
+                    FROM case_record
+                    WHERE case_id = :case_id
+                    FOR UPDATE
+                    """
+                ),
+                {"case_id": case_id},
+            )
+        ).scalar_one_or_none()
+        if case_status is None:
+            raise WorkflowContractError(404, "CASE_NOT_FOUND", "Case를 찾을 수 없습니다.")
+        if case_status in ("CLOSED", "MERGED"):
+            raise WorkflowContractError(
+                409,
+                "CASE_WORK_ITEM_LOCKED",
+                "종료되거나 병합된 Case에는 새 업무를 만들 수 없습니다.",
+            )
         work_item_id = uuid4()
         await connection.execute(
             text(
@@ -953,15 +974,20 @@ async def case_closure_review(
                         text(
                             """
                             SELECT c.case_id, c.case_number, c.title, c.status,
+                                   c.version AS case_version,
                                    c.source_status, c.opened_at, c.updated_at,
                                    c.source_resolved_at, c.closed_at, c.close_reason,
                                    coalesce(work.incomplete_count, 0) AS incomplete_count,
                                    coalesce(work.completed_count, 0) AS completed_count,
                                    coalesce(work.discarded_count, 0) AS discarded_count,
+                                   coalesce(work.unreasoned_discarded_count, 0)
+                                       AS unreasoned_discarded_count,
                                    coalesce(bundle.status, 'INSUFFICIENT') AS evidence_status,
                                    bundle.warning AS evidence_warning,
                                    closure.case_closure_id, closure.version AS closure_version,
                                    closure.summary AS closure_summary,
+                                   closure.close_reason AS closure_close_reason,
+                                   closure.warning_acknowledged AS closure_warning_acknowledged,
                                    closure.created_at AS closure_created_at
                             FROM case_record c
                             LEFT JOIN LATERAL (
@@ -971,10 +997,26 @@ async def case_closure_review(
                                                'ON_HOLD', 'FAILED'
                                            )
                                        ) AS incomplete_count,
-                                       count(1) FILTER (WHERE status = 'COMPLETED') AS completed_count,
-                                       count(1) FILTER (WHERE status = 'DISCARDED') AS discarded_count
-                                FROM work_item
-                                WHERE case_id = c.case_id
+                                       count(1) FILTER (WHERE item.status = 'COMPLETED')
+                                           AS completed_count,
+                                       count(1) FILTER (WHERE item.status = 'DISCARDED')
+                                           AS discarded_count,
+                                       count(1) FILTER (
+                                           WHERE item.status = 'DISCARDED'
+                                             AND NOT EXISTS (
+                                                 SELECT 1
+                                                 FROM audit_event audit
+                                                 WHERE audit.target_type = 'work_item'
+                                                   AND audit.target_id = item.work_item_id::text
+                                                   AND audit.action = 'WORK_ITEM_STATUS_CHANGED'
+                                                   AND audit.after_state ->> 'status' = 'DISCARDED'
+                                                   AND length(trim(coalesce(
+                                                       audit.reason ->> 'userReason', ''
+                                                   ))) > 0
+                                             )
+                                       ) AS unreasoned_discarded_count
+                                FROM work_item item
+                                WHERE item.case_id = c.case_id
                             ) work ON true
                             LEFT JOIN evidence_bundle bundle
                               ON bundle.case_id = c.case_id AND bundle.is_current
@@ -1015,11 +1057,49 @@ async def case_closure_review(
                 .mappings()
                 .all()
             )
+            unreasoned_discarded_rows = (
+                (
+                    await connection.execute(
+                        text(
+                            """
+                            SELECT item.work_item_id, item.title, item.status,
+                                   item.priority, item.progress, item.updated_at
+                            FROM work_item item
+                            WHERE item.case_id = :case_id
+                              AND item.status = 'DISCARDED'
+                              AND NOT EXISTS (
+                                  SELECT 1
+                                  FROM audit_event audit
+                                  WHERE audit.target_type = 'work_item'
+                                    AND audit.target_id = item.work_item_id::text
+                                    AND audit.action = 'WORK_ITEM_STATUS_CHANGED'
+                                    AND audit.after_state ->> 'status' = 'DISCARDED'
+                                    AND length(trim(coalesce(
+                                        audit.reason ->> 'userReason', ''
+                                    ))) > 0
+                              )
+                            ORDER BY item.updated_at DESC
+                            """
+                        ),
+                        {"case_id": case_id},
+                    )
+                )
+                .mappings()
+                .all()
+            )
+        blocking_reasons: list[str] = []
+        if row["status"] in ("CLOSED", "MERGED"):
+            blocking_reasons.append("CASE_ALREADY_TERMINAL")
+        if int(row["incomplete_count"]) > 0:
+            blocking_reasons.append("CASE_WORK_INCOMPLETE")
+        if int(row["unreasoned_discarded_count"]) > 0:
+            blocking_reasons.append("DISCARD_REASON_REQUIRED")
         return {
             "caseId": str(row["case_id"]),
             "caseNumber": row["case_number"],
             "title": row["title"],
             "status": row["status"],
+            "version": int(row["case_version"]),
             "sourceStatus": row["source_status"],
             "openedAt": _iso(row["opened_at"]),
             "updatedAt": _iso(row["updated_at"]),
@@ -1039,6 +1119,7 @@ async def case_closure_review(
                 "incomplete": int(row["incomplete_count"]),
                 "completed": int(row["completed_count"]),
                 "discarded": int(row["discarded_count"]),
+                "unreasonedDiscarded": int(row["unreasoned_discarded_count"]),
             },
             "incompleteWorkItems": [
                 {
@@ -1051,17 +1132,32 @@ async def case_closure_review(
                 }
                 for item in incomplete_rows
             ],
+            "unreasonedDiscardedWorkItems": [
+                {
+                    "workItemId": str(item["work_item_id"]),
+                    "title": item["title"],
+                    "status": item["status"],
+                    "priority": item["priority"],
+                    "progress": int(item["progress"]),
+                    "updatedAt": _iso(item["updated_at"]),
+                }
+                for item in unreasoned_discarded_rows
+            ],
             "completedClosure": (
                 {
                     "caseClosureId": str(row["case_closure_id"]),
                     "version": int(row["closure_version"]),
                     "summary": row["closure_summary"],
+                    "closeReason": row["closure_close_reason"],
+                    "warningAcknowledged": bool(row["closure_warning_acknowledged"]),
                     "createdAt": _iso(row["closure_created_at"]),
                 }
                 if row["case_closure_id"] is not None
                 else None
             ),
-            "closurePolicy": "PENDING_USER_DECISION",
+            "canClose": not blocking_reasons,
+            "blockingReasons": blocking_reasons,
+            "closurePolicy": "ALL_WORK_TERMINAL",
         }
 
     return await asyncio.wait_for(query(), timeout=max(timeout_seconds, 1.0))
@@ -1080,6 +1176,7 @@ async def _insert_audit(
     before_state: dict[str, Any] | None,
     after_state: dict[str, Any],
     reason: dict[str, Any],
+    target_type: str = "work_item",
 ) -> None:
     await connection.execute(
         text(
@@ -1092,7 +1189,7 @@ async def _insert_audit(
             )
             VALUES (
                 :audit_event_id, :profile, 'USER', :user_id,
-                :action, 'work_item', :target_id, :target_version,
+                :action, :target_type, :target_id, :target_version,
                 CAST(:before_state AS jsonb), CAST(:after_state AS jsonb),
                 CAST(:reason AS jsonb), :correlation_id,
                 :idempotency_key, :output_sha256
@@ -1104,6 +1201,7 @@ async def _insert_audit(
             "profile": profile,
             "user_id": user_id,
             "action": action,
+            "target_type": target_type,
             "target_id": str(target_id),
             "target_version": target_version,
             "before_state": json.dumps(before_state) if before_state is not None else None,
@@ -1116,3 +1214,337 @@ async def _insert_audit(
             ).hexdigest(),
         },
     )
+
+
+
+async def close_case(
+    engine: AsyncEngine,
+    *,
+    profile: str,
+    case_id: UUID,
+    user_id: UUID,
+    request_id: UUID,
+    idempotency_key: str | None,
+    expected_version: int,
+    close_reason: str,
+    summary: str,
+    warning_acknowledged: bool,
+) -> dict[str, Any]:
+    key = _validate_idempotency_key(idempotency_key)
+    normalized_reason = close_reason.strip().upper()
+    normalized_summary = summary.strip()
+    if normalized_reason not in CLOSE_REASONS:
+        raise WorkflowContractError(
+            422,
+            "INVALID_CLOSE_REASON",
+            "종료 사유는 해소·오탐·중복·기타 중 하나여야 합니다.",
+        )
+    if not normalized_summary or len(normalized_summary) > 4000:
+        raise WorkflowContractError(
+            422,
+            "CLOSURE_SUMMARY_REQUIRED",
+            "종료 결과 요약을 1~4000자로 입력해 주세요.",
+        )
+
+    reused = False
+    async with engine.begin() as connection:
+        duplicate = (
+            (
+                await connection.execute(
+                    text(
+                        """
+                        SELECT case_id
+                        FROM case_closure
+                        WHERE idempotency_key = :idempotency_key
+                        """
+                    ),
+                    {"idempotency_key": key},
+                )
+            )
+            .mappings()
+            .one_or_none()
+        )
+        if duplicate is not None:
+            if UUID(str(duplicate["case_id"])) != case_id:
+                raise WorkflowContractError(
+                    409,
+                    "IDEMPOTENCY_KEY_CONFLICT",
+                    "다른 Case 종료에 사용된 Idempotency-Key입니다.",
+                )
+            reused = True
+        else:
+            case_row = (
+                (
+                    await connection.execute(
+                        text(
+                            """
+                            SELECT case_id, case_number, status, source_status,
+                                   source_resolved_at, version
+                            FROM case_record
+                            WHERE case_id = :case_id
+                            FOR UPDATE
+                            """
+                        ),
+                        {"case_id": case_id},
+                    )
+                )
+                .mappings()
+                .one_or_none()
+            )
+            if case_row is None:
+                raise WorkflowContractError(
+                    404,
+                    "CASE_NOT_FOUND",
+                    "Case를 찾을 수 없습니다.",
+                )
+            if case_row["status"] == "CLOSED":
+                raise WorkflowContractError(
+                    409,
+                    "CASE_ALREADY_CLOSED",
+                    "이미 종료된 Case입니다.",
+                )
+            if case_row["status"] == "MERGED":
+                raise WorkflowContractError(
+                    409,
+                    "CASE_MERGED",
+                    "병합된 Case는 별도로 종료할 수 없습니다.",
+                )
+            if int(case_row["version"]) != expected_version:
+                raise WorkflowContractError(
+                    409,
+                    "CASE_VERSION_CONFLICT",
+                    "다른 변경이 먼저 반영되었습니다. 최신 종료 조건을 다시 확인해 주세요.",
+                )
+            if (
+                normalized_reason == "RESOLVED"
+                and case_row["source_status"] != "RESOLVED"
+                and case_row["status"] != "SOURCE_RESOLVED_REVIEW"
+            ):
+                raise WorkflowContractError(
+                    409,
+                    "SOURCE_NOT_RESOLVED",
+                    "해소 사유로 종료하려면 원천 종료·해제가 먼저 확인되어야 합니다.",
+                )
+
+            work_rows = (
+                (
+                    await connection.execute(
+                        text(
+                            """
+                            SELECT item.work_item_id, item.title, item.status,
+                                   item.priority, item.progress, item.updated_at,
+                                   CASE
+                                     WHEN item.status <> 'DISCARDED' THEN true
+                                     ELSE EXISTS (
+                                       SELECT 1
+                                       FROM audit_event audit
+                                       WHERE audit.target_type = 'work_item'
+                                         AND audit.target_id = item.work_item_id::text
+                                         AND audit.action = 'WORK_ITEM_STATUS_CHANGED'
+                                         AND audit.after_state ->> 'status' = 'DISCARDED'
+                                         AND length(trim(coalesce(
+                                           audit.reason ->> 'userReason', ''
+                                         ))) > 0
+                                     )
+                                   END AS discard_reasoned
+                            FROM work_item item
+                            WHERE item.case_id = :case_id
+                            ORDER BY item.updated_at DESC
+                            FOR UPDATE OF item
+                            """
+                        ),
+                        {"case_id": case_id},
+                    )
+                )
+                .mappings()
+                .all()
+            )
+            incomplete = [
+                row
+                for row in work_rows
+                if row["status"] not in ("COMPLETED", "DISCARDED")
+            ]
+            if incomplete:
+                raise WorkflowContractError(
+                    409,
+                    "CASE_WORK_INCOMPLETE",
+                    "미완료·보류·실패·승인대기 업무를 모두 처리해야 Case를 종료할 수 있습니다.",
+                    {
+                        "caseId": str(case_id),
+                        "caseStatus": case_row["status"],
+                        "incompleteWorkItems": [
+                            {
+                                "workItemId": str(row["work_item_id"]),
+                                "title": row["title"],
+                                "status": row["status"],
+                                "priority": row["priority"],
+                                "progress": int(row["progress"]),
+                                "updatedAt": _iso(row["updated_at"]),
+                            }
+                            for row in incomplete
+                        ],
+                    },
+                )
+            unreasoned = [
+                row
+                for row in work_rows
+                if row["status"] == "DISCARDED" and not bool(row["discard_reasoned"])
+            ]
+            if unreasoned:
+                raise WorkflowContractError(
+                    409,
+                    "DISCARD_REASON_REQUIRED",
+                    "폐기 사유 기록이 없는 업무를 확인해야 Case를 종료할 수 있습니다.",
+                    {
+                        "caseId": str(case_id),
+                        "unreasonedDiscardedWorkItems": [
+                            {
+                                "workItemId": str(row["work_item_id"]),
+                                "title": row["title"],
+                                "status": row["status"],
+                            }
+                            for row in unreasoned
+                        ],
+                    },
+                )
+
+            evidence_row = (
+                (
+                    await connection.execute(
+                        text(
+                            """
+                            SELECT status, warning
+                            FROM evidence_bundle
+                            WHERE case_id = :case_id AND is_current
+                            """
+                        ),
+                        {"case_id": case_id},
+                    )
+                )
+                .mappings()
+                .one_or_none()
+            )
+            evidence_status = (
+                str(evidence_row["status"])
+                if evidence_row is not None
+                else "INSUFFICIENT"
+            )
+            evidence_warning = (
+                evidence_row["warning"] if evidence_row is not None else None
+            )
+            if evidence_status != "SUFFICIENT" and not warning_acknowledged:
+                raise WorkflowContractError(
+                    409,
+                    "EVIDENCE_WARNING_ACK_REQUIRED",
+                    "근거 부족·충돌 경고를 확인하면 종료 결과를 기록할 수 있습니다.",
+                )
+
+            closure_version = int(
+                (
+                    await connection.execute(
+                        text(
+                            """
+                            SELECT coalesce(max(version), 0) + 1
+                            FROM case_closure
+                            WHERE case_id = :case_id
+                            """
+                        ),
+                        {"case_id": case_id},
+                    )
+                ).scalar_one()
+            )
+            snapshot = {
+                "caseNumber": case_row["case_number"],
+                "caseVersion": int(case_row["version"]),
+                "caseStatus": case_row["status"],
+                "sourceStatus": case_row["source_status"],
+                "sourceResolvedAt": _iso(case_row["source_resolved_at"]),
+                "completedWorkItemCount": sum(
+                    row["status"] == "COMPLETED" for row in work_rows
+                ),
+                "discardedWorkItemCount": sum(
+                    row["status"] == "DISCARDED" for row in work_rows
+                ),
+                "evidenceStatus": evidence_status,
+                "evidenceWarning": evidence_warning,
+            }
+            closure_id = uuid4()
+            await connection.execute(
+                text(
+                    """
+                    INSERT INTO case_closure (
+                        case_closure_id, case_id, version, status,
+                        close_reason, summary, incomplete_work_item_count,
+                        evidence_status, warning_acknowledged, snapshot,
+                        requested_by, idempotency_key, completed_at
+                    )
+                    VALUES (
+                        :closure_id, :case_id, :version, 'COMPLETED',
+                        :close_reason, :summary, 0,
+                        :evidence_status, :warning_acknowledged,
+                        CAST(:snapshot AS jsonb), :requested_by,
+                        :idempotency_key, CURRENT_TIMESTAMP
+                    )
+                    """
+                ),
+                {
+                    "closure_id": closure_id,
+                    "case_id": case_id,
+                    "version": closure_version,
+                    "close_reason": normalized_reason,
+                    "summary": normalized_summary,
+                    "evidence_status": evidence_status,
+                    "warning_acknowledged": warning_acknowledged,
+                    "snapshot": json.dumps(snapshot, ensure_ascii=False),
+                    "requested_by": user_id,
+                    "idempotency_key": key,
+                },
+            )
+            next_version = int(case_row["version"]) + 1
+            await connection.execute(
+                text(
+                    """
+                    UPDATE case_record
+                    SET status = 'CLOSED', close_reason = :close_reason,
+                        closed_at = CURRENT_TIMESTAMP,
+                        updated_at = CURRENT_TIMESTAMP,
+                        version = :next_version
+                    WHERE case_id = :case_id
+                    """
+                ),
+                {
+                    "case_id": case_id,
+                    "close_reason": normalized_reason,
+                    "next_version": next_version,
+                },
+            )
+            await _insert_audit(
+                connection,
+                profile=profile,
+                user_id=user_id,
+                request_id=request_id,
+                idempotency_key=_audit_key(f"case-close:{key}"),
+                action="CASE_CLOSED",
+                target_id=case_id,
+                target_version=next_version,
+                before_state={
+                    "status": case_row["status"],
+                    "version": int(case_row["version"]),
+                },
+                after_state={
+                    "status": "CLOSED",
+                    "version": next_version,
+                    "closeReason": normalized_reason,
+                    "caseClosureId": str(closure_id),
+                },
+                reason={
+                    "summary": normalized_summary,
+                    "warningAcknowledged": warning_acknowledged,
+                },
+                target_type="case_record",
+            )
+
+    result = await case_closure_review(engine, case_id, 2.0)
+    if result is None:
+        raise RuntimeError("Closed Case disappeared")
+    return {**result, "reused": reused}

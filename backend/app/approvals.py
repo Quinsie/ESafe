@@ -1135,6 +1135,29 @@ async def decide_approval(
                 int(request["target_version"]),
                 lock=True,
             )
+            if (
+                request["target_type"] == "RECOMMENDATION"
+                and normalized_decision == "APPROVED"
+            ):
+                case_status = (
+                    await connection.execute(
+                        text(
+                            """
+                            SELECT status
+                            FROM case_record
+                            WHERE case_id = :case_id
+                            FOR UPDATE
+                            """
+                        ),
+                        {"case_id": UUID(target["case"]["caseId"])},
+                    )
+                ).scalar_one()
+                if case_status in ("CLOSED", "MERGED"):
+                    raise WorkflowContractError(
+                        409,
+                        "CASE_WORK_ITEM_LOCKED",
+                        "종료되거나 병합된 Case의 대응안을 승인해 새 업무를 만들 수 없습니다.",
+                    )
             if target["contentSha256"] != request["content_sha256"]:
                 raise WorkflowContractError(
                     409,

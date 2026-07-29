@@ -4607,6 +4607,77 @@ input:focus-visible {
   color: #24384f;
 }
 
+.closure-form {
+  border-top: 1px solid #d9e2ec;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 16px;
+  padding-top: 16px;
+}
+
+.closure-form > div:first-child {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.closure-form > div:first-child > strong {
+  color: #24384f;
+}
+
+.closure-form > div:first-child > span {
+  color: #6b7b8f;
+  font-size: 12px;
+}
+
+.closure-form > label:not(.closure-warning-check) {
+  color: #31475f;
+  display: flex;
+  flex-direction: column;
+  font-size: 12px;
+  font-weight: 800;
+  gap: 7px;
+}
+
+.closure-form select,
+.closure-form textarea {
+  background: #ffffff;
+  border: 1px solid #c8d5e3;
+  border-radius: 7px;
+  color: #21364d;
+  font: inherit;
+  font-weight: 500;
+  padding: 10px 11px;
+}
+
+.closure-form textarea {
+  min-height: 92px;
+  resize: vertical;
+}
+
+.closure-warning-check {
+  align-items: flex-start;
+  background: #fff4df;
+  border-radius: 7px;
+  color: #8a4d00;
+  display: flex;
+  font-size: 12px;
+  font-weight: 700;
+  gap: 8px;
+  line-height: 1.5;
+  padding: 10px;
+}
+
+.closure-warning-check input {
+  margin-top: 2px;
+}
+
+.closure-submit {
+  align-self: stretch;
+  justify-content: center;
+}
+
 .closure-complete {
   background: #e5f5eb;
   color: #087b43;

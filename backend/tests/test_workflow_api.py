@@ -55,7 +55,7 @@ def test_workflow_read_contracts(monkeypatch) -> None:
     }
     tasks = {"summary": {"total": 1}, "items": [{"workItemId": str(work_item_id)}]}
     task = {"workItemId": str(work_item_id), "version": 1}
-    closure = {"caseId": str(case_id), "closurePolicy": "PENDING_USER_DECISION"}
+    closure = {"caseId": str(case_id), "closurePolicy": "ALL_WORK_TERMINAL"}
     monkeypatch.setattr(
         "app.api.workflow.case_evidence", AsyncMock(return_value=evidence)
     )
@@ -99,12 +99,15 @@ def test_workflow_mutations_pass_session_version_and_idempotency(monkeypatch) ->
     created = {"workItemId": str(work_item_id), "version": 1}
     transitioned = {"workItemId": str(work_item_id), "version": 2}
     checked = {"workItemId": str(work_item_id), "version": 3}
+    closed = {"caseId": str(case_id), "status": "CLOSED", "reused": False}
     create_mock = AsyncMock(return_value=created)
     transition_mock = AsyncMock(return_value=transitioned)
     checklist_mock = AsyncMock(return_value=checked)
+    close_mock = AsyncMock(return_value=closed)
     monkeypatch.setattr("app.api.workflow.create_case_work_item", create_mock)
     monkeypatch.setattr("app.api.workflow.transition_work_item", transition_mock)
     monkeypatch.setattr("app.api.workflow.update_checklist_item", checklist_mock)
+    monkeypatch.setattr("app.api.workflow.close_case", close_mock)
     try:
         with TestClient(app) as client:
             create_response = client.post(
@@ -135,14 +138,28 @@ def test_workflow_mutations_pass_session_version_and_idempotency(monkeypatch) ->
                     "note": "확인함",
                 },
             )
+            close_response = client.post(
+                f"/api/v1/cases/{case_id}/close",
+                headers={"Idempotency-Key": "close-1"},
+                json={
+                    "expectedVersion": 4,
+                    "closeReason": "RESOLVED",
+                    "summary": "원천 종료와 연결 업무 완료를 확인함",
+                    "warningAcknowledged": False,
+                },
+            )
         assert create_response.status_code == 201
         assert create_response.json()["data"] == created
         assert transition_response.json()["data"] == transitioned
         assert checklist_response.json()["data"] == checked
+        assert close_response.json()["data"] == closed
         assert create_mock.await_args.kwargs["idempotency_key"] == "create-1"
         assert create_mock.await_args.kwargs["user_id"] == session.user_id
         assert transition_mock.await_args.kwargs["expected_version"] == 1
         assert checklist_mock.await_args.kwargs["expected_work_version"] == 2
+        assert close_mock.await_args.kwargs["expected_version"] == 4
+        assert close_mock.await_args.kwargs["close_reason"] == "RESOLVED"
+        assert close_mock.await_args.kwargs["user_id"] == session.user_id
     finally:
         app.dependency_overrides.clear()
 
@@ -173,6 +190,44 @@ def test_workflow_contract_errors_keep_public_shape(monkeypatch) -> None:
         assert response.json()["error"] == {
             "code": "INVALID_WORK_TRANSITION",
             "message": "현재 상태에서는 변경할 수 없습니다.",
+        }
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_case_close_error_returns_blocking_work_details(monkeypatch) -> None:
+    app.dependency_overrides[require_csrf] = _session
+    case_id = uuid4()
+    work_item_id = uuid4()
+    error = WorkflowContractError(
+        409,
+        "CASE_WORK_INCOMPLETE",
+        "미완료 업무를 처리해야 합니다.",
+        {
+            "caseId": str(case_id),
+            "incompleteWorkItems": [
+                {"workItemId": str(work_item_id), "status": "RUNNING"}
+            ],
+        },
+    )
+    monkeypatch.setattr("app.api.workflow.close_case", AsyncMock(side_effect=error))
+    try:
+        with TestClient(app) as client:
+            response = client.post(
+                f"/api/v1/cases/{case_id}/close",
+                headers={"Idempotency-Key": "close-blocked"},
+                json={
+                    "expectedVersion": 2,
+                    "closeReason": "RESOLVED",
+                    "summary": "종료 검토",
+                    "warningAcknowledged": False,
+                },
+            )
+        assert response.status_code == 409
+        assert response.json()["error"]["code"] == "CASE_WORK_INCOMPLETE"
+        assert response.json()["data"]["incompleteWorkItems"][0] == {
+            "workItemId": str(work_item_id),
+            "status": "RUNNING",
         }
     finally:
         app.dependency_overrides.clear()

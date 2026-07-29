@@ -18,6 +18,7 @@ from app.workflow import (
     case_closure_review,
     case_evidence,
     case_work_items,
+    close_case,
     create_case_work_item,
     transition_work_item,
     update_checklist_item,
@@ -63,12 +64,24 @@ class ChecklistUpdateBody(BaseModel):
     note: str | None = Field(default=None, max_length=2000)
 
 
+class CloseCaseBody(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    expected_version: int = Field(alias="expectedVersion", ge=1)
+    close_reason: str = Field(alias="closeReason", min_length=1, max_length=32)
+    summary: str = Field(min_length=1, max_length=4000)
+    warning_acknowledged: bool = Field(
+        default=False,
+        alias="warningAcknowledged",
+    )
+
+
 def _error(request: Request, error: WorkflowContractError) -> JSONResponse:
     return JSONResponse(
         status_code=error.status_code,
         content=envelope(
             request,
-            None,
+            error.details,
             error={"code": error.code, "message": error.message},
         ),
     )
@@ -316,6 +329,35 @@ async def get_case_closure_review(
     )
     if data is None:
         return _not_found(request, "CASE_NOT_FOUND", "Case를 찾을 수 없습니다.")
+    return envelope(request, data)
+
+
+@router.post("/cases/{case_id}/close")
+async def post_case_close(
+    request: Request,
+    session: WriteSession,
+    case_id: UUID,
+    body: CloseCaseBody,
+    idempotency_key: Annotated[
+        str | None, Header(alias="Idempotency-Key")
+    ] = None,
+) -> Any:
+    settings = request.app.state.settings
+    try:
+        data = await close_case(
+            request.app.state.db_engine,
+            profile=settings.profile,
+            case_id=case_id,
+            user_id=session.user_id,
+            request_id=UUID(request.state.request_id),
+            idempotency_key=idempotency_key,
+            expected_version=body.expected_version,
+            close_reason=body.close_reason,
+            summary=body.summary,
+            warning_acknowledged=body.warning_acknowledged,
+        )
+    except WorkflowContractError as error:
+        return _error(request, error)
     return envelope(request, data)
 
 
