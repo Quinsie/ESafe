@@ -12,7 +12,7 @@ from app.security import hash_password
 
 async def rotate() -> None:
     password = sys.stdin.read()
-    if len(password) < 12 or "\n" in password or "\r" in password:
+    if len(password) < 10 or "\n" in password or "\r" in password:
         raise RuntimeError("PUBLIC_PASSWORD_INPUT_INVALID")
 
     password_hash = await asyncio.to_thread(hash_password, password)

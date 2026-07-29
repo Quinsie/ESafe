@@ -24,8 +24,8 @@ if [ -n "${ESAFE_PUBLIC_PASSWORD_FILE:-}" ]; then
   test -f "$ESAFE_PUBLIC_PASSWORD_FILE"
   test "$(wc -l < "$ESAFE_PUBLIC_PASSWORD_FILE")" -le 1
   new_password=$(cat -- "$ESAFE_PUBLIC_PASSWORD_FILE")
-  if [ "${#new_password}" -lt 12 ] || [ "${#new_password}" -gt 256 ]; then
-    printf '%s\n' "Password length must be between 12 and 256 characters." >&2
+  if [ "${#new_password}" -lt 10 ] || [ "${#new_password}" -gt 256 ]; then
+    printf '%s\n' "Password length must be between 10 and 256 characters." >&2
     exit 1
   fi
 else
