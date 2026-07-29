@@ -45,6 +45,7 @@ def test_rag_retrieval_task_is_registered_per_profile() -> None:
     application = create_celery_app(demo_settings())
 
     assert "esafe.retrieve_case_evidence" in application.tasks
+    assert "esafe.generate_case_recommendation" in application.tasks
 
 
 def test_signal_dispatch_is_ten_minutes_with_bounded_jitter(monkeypatch) -> None:

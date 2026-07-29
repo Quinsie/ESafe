@@ -36,6 +36,12 @@ def test_workflow_read_endpoints_require_authentication() -> None:
             response = client.get(path)
             assert response.status_code == 401
             assert response.json()["error"]["code"] == "AUTH_REQUIRED"
+        mutation = client.post(
+            f"/api/v1/cases/{case_id}/recommendations/generate",
+            headers={"Idempotency-Key": "recommendation-auth-check"},
+        )
+        assert mutation.status_code == 401
+        assert mutation.json()["error"]["code"] == "AUTH_REQUIRED"
 
 
 def test_workflow_read_contracts(monkeypatch) -> None:

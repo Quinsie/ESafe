@@ -18,6 +18,10 @@ def test_mutating_commands_are_explicit() -> None:
         == "probe-upstage-embedding"
     )
     assert (
+        build_parser().parse_args(["probe-upstage-chat"]).command
+        == "probe-upstage-chat"
+    )
+    assert (
         build_parser().parse_args(["build-rag-embeddings"]).command
         == "build-rag-embeddings"
     )

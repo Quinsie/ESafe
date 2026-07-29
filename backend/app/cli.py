@@ -13,7 +13,7 @@ from app.rag_embeddings import build_embedding_bundle
 from app.security import hash_password
 from app.signals.ingestion import run_kma_source_repair
 from app.signals.reprocess import reprocess_kma_events
-from app.upstage import UpstageEmbeddingClient
+from app.upstage import UpstageChatClient, UpstageEmbeddingClient
 
 
 async def seed_system_metadata() -> None:
@@ -119,6 +119,7 @@ def build_parser() -> argparse.ArgumentParser:
             "repair-kma-source",
             "init-ai-control",
             "probe-upstage-embedding",
+            "probe-upstage-chat",
             "build-rag-embeddings",
         ),
     )
@@ -145,6 +146,32 @@ async def probe_upstage_embedding() -> dict[str, object]:
         await gate.close()
 
 
+async def probe_upstage_chat() -> dict[str, object]:
+    settings = get_settings()
+    gate = AiCostGate(settings)
+    try:
+        result = await UpstageChatClient(settings, gate).complete_json(
+            system_prompt=(
+                "개인정보가 없는 API 연결 검증입니다. JSON 객체만 반환하세요. "
+                '정확히 {"status":"ok","language":"ko"} 형식을 사용하세요.'
+            ),
+            user_prompt="전기재해 예방 관제 추천 생성 연결을 검증합니다.",
+            feature_name="chat-contract-probe-v1",
+            privacy_verified=True,
+        )
+        return {
+            "status": "SUCCESS",
+            "model": settings.upstage_chat_model,
+            "responseKeys": sorted(result.payload),
+            "inputTokens": result.input_tokens,
+            "cachedInputTokens": result.cached_input_tokens,
+            "outputTokens": result.output_tokens,
+            "reservationId": result.reservation_id,
+        }
+    finally:
+        await gate.close()
+
+
 def main(argv: Sequence[str] | None = None) -> None:
     args = build_parser().parse_args(argv)
     if args.command == "seed":
@@ -165,6 +192,9 @@ def main(argv: Sequence[str] | None = None) -> None:
         )
     elif args.command == "probe-upstage-embedding":
         result = asyncio.run(probe_upstage_embedding())
+        print(json.dumps(result, ensure_ascii=False, sort_keys=True))
+    elif args.command == "probe-upstage-chat":
+        result = asyncio.run(probe_upstage_chat())
         print(json.dumps(result, ensure_ascii=False, sort_keys=True))
     elif args.command == "build-rag-embeddings":
         result = asyncio.run(build_embedding_bundle(get_settings()))

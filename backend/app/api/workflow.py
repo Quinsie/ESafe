@@ -170,6 +170,104 @@ async def get_case_evidence(
     return envelope(request, data)
 
 
+@router.post("/cases/{case_id}/recommendations/generate", status_code=202)
+async def post_case_recommendation_generation(
+    request: Request,
+    _: WriteSession,
+    case_id: UUID,
+    idempotency_key: Annotated[
+        str | None, Header(alias="Idempotency-Key")
+    ] = None,
+) -> Any:
+    if idempotency_key is None or not 8 <= len(idempotency_key) <= 200:
+        return JSONResponse(
+            status_code=400,
+            content=envelope(
+                request,
+                None,
+                error={
+                    "code": "IDEMPOTENCY_KEY_REQUIRED",
+                    "message": "8~200자의 Idempotency-Key가 필요합니다.",
+                },
+            ),
+        )
+    async with request.app.state.db_engine.connect() as connection:
+        row = (
+            (
+                await connection.execute(
+                    text(
+                        """
+                        SELECT c.case_id, bundle.evidence_bundle_id
+                        FROM case_record c
+                        LEFT JOIN evidence_bundle bundle
+                          ON bundle.case_id = c.case_id AND bundle.is_current
+                        WHERE c.case_id = :case_id
+                        """
+                    ),
+                    {"case_id": case_id},
+                )
+            )
+            .mappings()
+            .one_or_none()
+        )
+    if row is None:
+        return _not_found(request, "CASE_NOT_FOUND", "Case를 찾을 수 없습니다.")
+    if row["evidence_bundle_id"] is None:
+        return JSONResponse(
+            status_code=409,
+            content=envelope(
+                request,
+                None,
+                error={
+                    "code": "EVIDENCE_BUNDLE_REQUIRED",
+                    "message": "대응안을 만들기 전에 Case 근거 검색을 실행해야 합니다.",
+                },
+            ),
+        )
+    settings = request.app.state.settings
+    digest = hashlib.sha256(
+        f"{settings.profile}:{case_id}:recommendation:{idempotency_key}".encode()
+    ).hexdigest()
+    idempotency_redis_key = f"recommendation:idempotency:{digest}"
+    active_redis_key = f"recommendation:active:{settings.profile}:{case_id}"
+    task_id = str(uuid5(case_id, digest))
+    redis = Redis.from_url(settings.redis_url, decode_responses=True)
+    try:
+        existing_task_id = await redis.get(idempotency_redis_key)
+        if existing_task_id:
+            task_id = str(existing_task_id)
+            reused = True
+        else:
+            acquired = bool(await redis.set(active_redis_key, task_id, ex=900, nx=True))
+            if not acquired:
+                task_id = str(await redis.get(active_redis_key))
+                reused = True
+            else:
+                reused = False
+                await redis.set(idempotency_redis_key, task_id, ex=24 * 60 * 60)
+                try:
+                    celery_app.send_task(
+                        "esafe.generate_case_recommendation",
+                        args=[str(case_id)],
+                        task_id=task_id,
+                        queue=settings.celery_queue,
+                    )
+                except Exception:
+                    await redis.delete(active_redis_key, idempotency_redis_key)
+                    raise
+    finally:
+        await redis.aclose()
+    return envelope(
+        request,
+        {
+            "caseId": str(case_id),
+            "taskId": task_id,
+            "status": "QUEUED",
+            "reused": reused,
+        },
+    )
+
+
 @router.get("/cases/{case_id}/work-items")
 async def get_case_work_items(
     request: Request,

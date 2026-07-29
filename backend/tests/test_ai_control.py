@@ -7,9 +7,13 @@ import pytest
 from app.ai_control import CostLimitReached, check_cost_headroom
 from app.upstage import (
     EMBEDDING_DIMENSION,
+    chat_cost,
+    chat_request_hash,
+    chat_response_format,
     embedding_cost,
     embedding_request_hash,
     pack_embedding_vectors,
+    parse_chat_response,
     parse_embedding_response,
     unpack_embedding_vectors,
 )
@@ -70,3 +74,97 @@ def test_embedding_cache_payload_round_trip() -> None:
     )
 
     assert restored == vectors
+
+
+def test_chat_cost_separates_cached_input_and_includes_vat() -> None:
+    assert chat_cost(1_000_000, 0, 1_000_000) == Decimal("0.82500000")
+    assert chat_cost(1_000_000, 1_000_000, 1_000_000) == Decimal("0.67650000")
+
+
+def test_chat_request_hash_covers_prompt_and_model() -> None:
+    first = chat_request_hash("solar-pro3", "system", "user")
+
+    assert first == chat_request_hash("solar-pro3", "system", "user")
+    assert first != chat_request_hash("solar-pro3", "system", "other")
+    assert first != chat_request_hash("other", "system", "user")
+    assert first != chat_request_hash(
+        "solar-pro3",
+        "system",
+        "user",
+        chat_response_format({"type": "object"}, schema_name="result"),
+    )
+
+
+def test_chat_response_format_supports_json_schema() -> None:
+    schema = {"type": "object", "properties": {"status": {"type": "string"}}}
+
+    assert chat_response_format(None) == {"type": "json_object"}
+    assert chat_response_format(schema, schema_name="result") == {
+        "type": "json_schema",
+        "json_schema": {"name": "result", "schema": schema},
+    }
+
+
+def test_chat_response_requires_json_stop_and_consistent_usage() -> None:
+    parsed, input_tokens, cached_tokens, output_tokens = parse_chat_response(
+        {
+            "choices": [
+                {
+                    "finish_reason": "stop",
+                    "message": {"content": '{"summary":"확인"}'},
+                }
+            ],
+            "usage": {
+                "prompt_tokens": 100,
+                "completion_tokens": 20,
+                "prompt_tokens_details": {"cached_tokens": 40},
+            },
+        }
+    )
+
+    assert parsed == {"summary": "확인"}
+    assert (input_tokens, cached_tokens, output_tokens) == (100, 40, 20)
+
+
+@pytest.mark.parametrize(
+    "payload,error",
+    [
+        (
+            {
+                "choices": [
+                    {"finish_reason": "length", "message": {"content": '{"ok":true}'}}
+                ],
+                "usage": {"prompt_tokens": 1, "completion_tokens": 1},
+            },
+            "FINISH_INVALID",
+        ),
+        (
+            {
+                "choices": [
+                    {"finish_reason": "stop", "message": {"content": "not json"}}
+                ],
+                "usage": {"prompt_tokens": 1, "completion_tokens": 1},
+            },
+            "JSON_INVALID",
+        ),
+        (
+            {
+                "choices": [
+                    {"finish_reason": "stop", "message": {"content": '{"ok":true}'}}
+                ],
+                "usage": {
+                    "prompt_tokens": 1,
+                    "completion_tokens": 1,
+                    "prompt_tokens_details": {"cached_tokens": 2},
+                },
+            },
+            "USAGE_INVALID",
+        ),
+    ],
+)
+def test_chat_response_rejects_unsafe_contracts(
+    payload: dict[str, object],
+    error: str,
+) -> None:
+    with pytest.raises(ValueError, match=error):
+        parse_chat_response(payload)

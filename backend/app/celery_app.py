@@ -96,6 +96,32 @@ def create_celery_app(settings: Settings) -> Celery:
 
         return asyncio.run(run_case_retrieval(settings, UUID(case_id)))
 
+    @application.task(
+        name="esafe.generate_case_recommendation",
+        shared=False,
+        lazy=False,
+    )
+    def generate_case_recommendation(case_id: str) -> dict[str, Any]:
+        from uuid import UUID
+
+        from redis.asyncio import Redis
+
+        from app.recommendations import run_case_recommendation
+
+        async def execute() -> dict[str, Any]:
+            try:
+                return await run_case_recommendation(settings, UUID(case_id))
+            finally:
+                redis = Redis.from_url(settings.redis_url, decode_responses=True)
+                try:
+                    await redis.delete(
+                        f"recommendation:active:{settings.profile}:{case_id}"
+                    )
+                finally:
+                    await redis.aclose()
+
+        return asyncio.run(execute())
+
     return application
 
 
