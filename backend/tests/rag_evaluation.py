@@ -225,12 +225,23 @@ async def _fetch_generation_result(
             await connection.execute(
                 text(
                     """
-                    SELECT recommendation_id, situation_summary, required_checks,
-                           uncertainties, conflicts, warning, model,
-                           prompt_version, generation_version
+                    SELECT recommendation.recommendation_id,
+                           recommendation.situation_summary,
+                           recommendation.required_checks,
+                           recommendation.uncertainties,
+                           recommendation.conflicts,
+                           recommendation.warning,
+                           recommendation.model,
+                           recommendation.prompt_version,
+                           recommendation.generation_version,
+                           bundle.status AS evidence_status
                     FROM recommendation
-                    WHERE case_id = :case_id AND status = 'READY'
-                    ORDER BY version DESC
+                    JOIN evidence_bundle AS bundle
+                      ON bundle.evidence_bundle_id =
+                         recommendation.evidence_bundle_id
+                    WHERE recommendation.case_id = :case_id
+                      AND recommendation.status = 'READY'
+                    ORDER BY recommendation.version DESC
                     LIMIT 1
                     """
                 ),
@@ -313,20 +324,41 @@ async def _fetch_generation_result(
                 ],
             }
         )
-    statuses = {str(action["evidenceStatus"]) for action in actions}
-    if "CONFLICT" in statuses:
-        classification = "CONFLICT"
-    elif actions and statuses == {"SUFFICIENT"}:
-        classification = "SUFFICIENT"
-    else:
-        classification = "INSUFFICIENT"
+    evidence_rows = (
+        (
+            await connection.execute(
+                text(
+                    """
+                    SELECT item.excerpt, item.locator
+                    FROM evidence_item AS item
+                    JOIN evidence_bundle AS bundle
+                      ON bundle.evidence_bundle_id = item.evidence_bundle_id
+                    WHERE bundle.case_id = :case_id AND bundle.is_current
+                    """
+                ),
+                {"case_id": case_id},
+            )
+        )
+        .mappings()
+        .all()
+    )
+    evidence_numbers = sorted(
+        {
+            number
+            for row in evidence_rows
+            for number in NUMBER_PATTERN.findall(
+                f"{row['excerpt']} {row['locator']}"
+            )
+        }
+    )
     return {
         "situationSummary": recommendation["situation_summary"],
         "requiredChecks": recommendation["required_checks"],
         "uncertainties": recommendation["uncertainties"],
         "conflicts": recommendation["conflicts"],
         "warning": recommendation["warning"],
-        "classification": classification,
+        "classification": recommendation["evidence_status"],
+        "evidenceNumbers": evidence_numbers,
         "model": recommendation["model"],
         "promptVersion": recommendation["prompt_version"],
         "generationVersion": recommendation["generation_version"],
@@ -345,7 +377,8 @@ def _evaluate_generation(
     unsupported_numbers: set[str] = set()
     supported_actions = 0
     action_count = len(generation["actions"])
-    evidence_text = ""
+    allowed_numbers = set(generation["evidenceNumbers"])
+    allowed_numbers.update(NUMBER_PATTERN.findall(question["question"]))
 
     for action in generation["actions"]:
         action_text = f"{action['title']} {action['description']}"
@@ -355,7 +388,6 @@ def _evaluate_generation(
             citation_count += 1
             quote = str(citation["quote"])
             source_text = str(citation["sourceText"])
-            evidence_text += f" {source_text}"
             if quote not in source_text:
                 citation_integrity_errors.append(f"{citation['citationId']}: quote mismatch")
             if not citation["locator"]:
@@ -392,7 +424,7 @@ def _evaluate_generation(
         ]
     )
     for number in NUMBER_PATTERN.findall(all_generated_text):
-        if number not in evidence_text and number not in question["question"]:
+        if number not in allowed_numbers:
             unsupported_numbers.add(number)
 
     expected_classification = question.get("expectedClassification")
@@ -535,8 +567,22 @@ async def run(fixture_path: Path, output_path: Path) -> int:
                     primary_region_code=question["regionCode"],
                     today=started_at.date(),
                 )
-                top_documents = _unique_documents(candidates, 5)
-                top_chunks = [str(candidate.row["chunk_id"]) for candidate in candidates[:10]]
+                ranking_group = (
+                    "PAST_INCIDENT"
+                    if question["category"]
+                    in {"NORMAL_INCIDENT", "MAJOR_INCIDENT"}
+                    else "OFFICIAL"
+                )
+                grouped_candidates = [
+                    candidate
+                    for candidate in candidates
+                    if candidate.group == ranking_group
+                ]
+                top_documents = _unique_documents(grouped_candidates, 5)
+                top_chunks = [
+                    str(candidate.row["chunk_id"])
+                    for candidate in grouped_candidates[:10]
+                ]
                 expected_documents = [str(value) for value in question["expectedDocumentIds"]]
                 expected_chunks = [str(value) for value in question["expectedChunkIds"]]
                 if question["category"] == "CONFLICT":
@@ -580,6 +626,8 @@ async def run(fixture_path: Path, output_path: Path) -> int:
                         "queryText": query_text,
                         "retrieval": retrieval,
                         "queryEmbeddingCacheHit": embedding.cache_hit,
+                        "rankingGroup": ranking_group,
+                        "globalTop5DocumentIds": _unique_documents(candidates, 5),
                         "top5DocumentIds": top_documents,
                         "top10ChunkIds": top_chunks,
                         "expectedDocumentIds": expected_documents,

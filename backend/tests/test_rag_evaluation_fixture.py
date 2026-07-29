@@ -27,6 +27,7 @@ KNOWN_EVALUATION_REGION_CODES = {
     "46870",
     "46880",
 }
+KNOWN_CASE_TYPES = {"FIRE", "WEATHER_WARNING", "DISASTER_MESSAGE"}
 
 
 def test_rag_evaluation_fixture_has_30_reviewed_questions() -> None:
@@ -40,6 +41,7 @@ def test_rag_evaluation_fixture_has_30_reviewed_questions() -> None:
     assert {
         question["regionCode"] for question in questions
     } <= KNOWN_EVALUATION_REGION_CODES
+    assert {question["caseType"] for question in questions} <= KNOWN_CASE_TYPES
     assert all(question["rationale"].strip() for question in questions)
     assert all(question["supportTerms"] for question in questions)
 
