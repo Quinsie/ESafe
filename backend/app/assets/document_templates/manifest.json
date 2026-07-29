@@ -85,8 +85,8 @@
     {
       "key": "response-plan",
       "memberCount": 31,
-      "sha256": "a641068fa9600d62558cd470db42daf4110a2a402797d22ccfddbab0d2a00363",
-      "sizeBytes": 4735679,
+      "sha256": "50077b4e9be111d04989acc177d317bb063b7601c2ed1146dd82c8649e14629c",
+      "sizeBytes": 4735689,
       "textNodeCount": 1446,
       "tokenNames": [
         "analysis.conflicts",
@@ -112,7 +112,8 @@
         "response.recipients",
         "response.reportingProcedure",
         "response.reportingTiming",
-        "response.summary"
+        "response.summary",
+        "review.warning"
       ]
     }
   ]

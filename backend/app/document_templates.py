@@ -195,6 +195,7 @@ RESPONSE_PLAN_REPLACEMENTS: Mapping[int, str] = {
     106: "□",
     107: "불확실성 및 충돌",
     109: "{{analysis.uncertainties}}",
+    120: "{{review.warning}}",
     121: "{{analysis.conflicts}}",
     175: "□",
     177: "관제 신호",
