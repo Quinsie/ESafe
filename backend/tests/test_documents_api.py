@@ -85,6 +85,32 @@ def test_document_endpoints_require_authentication() -> None:
             ).status_code
             == 401
         )
+        assert (
+            client.post(
+                f"/api/v1/documents/{document_id}/clone",
+                headers={"Idempotency-Key": "document-auth-clone"},
+            ).status_code
+            == 401
+        )
+        assert (
+            client.post(
+                f"/api/v1/document-artifacts/{artifact_id}/retry",
+                headers={"Idempotency-Key": "document-auth-retry"},
+            ).status_code
+            == 401
+        )
+        assert (
+            client.post(
+                f"/api/v1/document-versions/{uuid4()}/manual-deliveries",
+                headers={"Idempotency-Key": "document-auth-delivery"},
+                json={
+                    "recipient": "광주광역시",
+                    "deliveredAt": "2026-07-29T16:00:00+09:00",
+                    "method": "EMAIL",
+                },
+            ).status_code
+            == 401
+        )
 
 
 def test_document_create_and_update_queue_profile_artifacts(monkeypatch) -> None:
@@ -167,5 +193,88 @@ def test_document_read_and_download_contracts(
         assert download_response.content == b"%PDF-test\n%%EOF"
         assert download_response.headers["cache-control"] == "private, no-store"
         assert download_response.headers["x-content-type-options"] == "nosniff"
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_document_clone_retry_and_manual_delivery_contracts(
+    monkeypatch,
+) -> None:
+    session = _session()
+    app.dependency_overrides[require_csrf] = lambda: session
+    document_id = uuid4()
+    version_id = uuid4()
+    artifact_id = uuid4()
+    detail = _detail(document_id, artifact_id)
+    clone_mock = AsyncMock(return_value=(detail, False))
+    retry_mock = AsyncMock(
+        return_value=(
+            {
+                "documentDraftId": str(document_id),
+                "artifact": {
+                    "documentArtifactId": str(artifact_id),
+                    "status": "QUEUED",
+                },
+            },
+            False,
+        )
+    )
+    delivery = {
+        "documentManualDeliveryId": str(uuid4()),
+        "documentVersionId": str(version_id),
+        "recipient": "광주광역시",
+        "externalDeliveryVerified": False,
+    }
+    delivery_mock = AsyncMock(return_value=(delivery, False))
+    send_mock = Mock()
+    monkeypatch.setattr(
+        "app.api.documents.clone_document_draft",
+        clone_mock,
+    )
+    monkeypatch.setattr(
+        "app.api.documents.retry_document_artifact",
+        retry_mock,
+    )
+    monkeypatch.setattr(
+        "app.api.documents.record_manual_delivery",
+        delivery_mock,
+    )
+    monkeypatch.setattr("app.api.documents.celery_app.send_task", send_mock)
+    try:
+        with TestClient(app) as client:
+            clone_response = client.post(
+                f"/api/v1/documents/{document_id}/clone",
+                headers={"Idempotency-Key": "document-clone-1"},
+            )
+            retry_response = client.post(
+                f"/api/v1/document-artifacts/{artifact_id}/retry",
+                headers={"Idempotency-Key": "document-retry-1"},
+            )
+            delivery_response = client.post(
+                f"/api/v1/document-versions/{version_id}/manual-deliveries",
+                headers={"Idempotency-Key": "document-delivery-1"},
+                json={
+                    "recipient": "광주광역시",
+                    "deliveredAt": "2026-07-29T16:00:00+09:00",
+                    "method": "EMAIL",
+                    "memo": "사용자가 시스템 밖에서 전달했다고 기록했습니다.",
+                },
+            )
+        assert clone_response.status_code == 202
+        assert retry_response.status_code == 202
+        assert delivery_response.status_code == 201
+        assert clone_mock.await_args.kwargs["user_id"] == session.user_id
+        assert retry_mock.await_args.kwargs["artifact_id"] == artifact_id
+        assert delivery_mock.await_args.kwargs["document_version_id"] == version_id
+        assert delivery_mock.await_args.kwargs["method"] == "EMAIL"
+        assert (
+            delivery_response.json()["data"]["externalDeliveryVerified"]
+            is False
+        )
+        assert send_mock.call_count == 2
+        assert all(
+            call.kwargs["queue"] == "live-documents"
+            for call in send_mock.call_args_list
+        )
     finally:
         app.dependency_overrides.clear()

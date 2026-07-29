@@ -11,9 +11,11 @@ from app.approvals import (
     approval_detail,
     approval_list,
     decide_approval,
+    request_document_approval,
     request_recommendation_approval,
 )
 from app.auth import AuthenticatedSession
+from app.celery_app import celery_app
 from app.workflow import WorkflowContractError
 
 router = APIRouter(prefix="/api/v1", tags=["approvals"])
@@ -29,6 +31,18 @@ class ApprovalDecisionBody(BaseModel):
     reason: str = Field(min_length=1, max_length=1000)
     warning_acknowledged: bool = Field(
         default=False, alias="warningAcknowledged"
+    )
+    discard_reason: Literal[
+        "FALSE_ALARM",
+        "DUPLICATE",
+        "NO_ACTION_REQUIRED",
+        "EVIDENCE_INAPPROPRIATE",
+        "OTHER",
+    ] | None = Field(default=None, alias="discardReason")
+    discard_reason_detail: str | None = Field(
+        default=None,
+        alias="discardReasonDetail",
+        max_length=500,
     )
 
 
@@ -122,6 +136,33 @@ async def post_recommendation_approval_request(
     return envelope(request, data)
 
 
+@router.post(
+    "/documents/{document_draft_id}/approval-requests",
+    status_code=201,
+)
+async def post_document_approval_request(
+    request: Request,
+    session: WriteSession,
+    document_draft_id: UUID,
+    idempotency_key: Annotated[
+        str | None, Header(alias="Idempotency-Key")
+    ] = None,
+) -> Any:
+    settings = request.app.state.settings
+    try:
+        data = await request_document_approval(
+            request.app.state.db_engine,
+            profile=settings.profile,
+            document_draft_id=document_draft_id,
+            user_id=session.user_id,
+            request_id=UUID(request.state.request_id),
+            idempotency_key=idempotency_key,
+        )
+    except WorkflowContractError as error:
+        return _error(request, error)
+    return envelope(request, data)
+
+
 @router.post("/approvals/{approval_request_id}/decision")
 async def post_approval_decision(
     request: Request,
@@ -145,7 +186,16 @@ async def post_approval_decision(
             decision=body.decision,
             reason=body.reason,
             warning_acknowledged=body.warning_acknowledged,
+            discard_reason=body.discard_reason,
+            discard_reason_detail=body.discard_reason_detail,
         )
     except WorkflowContractError as error:
         return _error(request, error)
+    for artifact_id in data.get("generatedArtifactIds", []):
+        celery_app.send_task(
+            "esafe.generate_document_artifact",
+            args=[artifact_id],
+            task_id=artifact_id,
+            queue=f"{settings.celery_queue}-documents",
+        )
     return envelope(request, data)

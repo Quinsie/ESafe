@@ -10,9 +10,19 @@ from uuid import UUID, uuid4
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
+from app.documents import _insert_artifacts
 from app.workflow import WorkflowContractError
 
 DECISIONS = frozenset(("APPROVED", "ON_HOLD", "DISCARDED"))
+DOCUMENT_DISCARD_REASONS = frozenset(
+    (
+        "FALSE_ALARM",
+        "DUPLICATE",
+        "NO_ACTION_REQUIRED",
+        "EVIDENCE_INAPPROPRIATE",
+        "OTHER",
+    )
+)
 APPROVAL_STATUSES = frozenset(
     ("APPROVAL_PENDING", "APPROVED", "ON_HOLD", "DISCARDED", "SUPERSEDED")
 )
@@ -228,6 +238,231 @@ async def _recommendation_target(
     }
 
 
+async def _document_target(
+    connection: AsyncConnection,
+    document_draft_id: UUID,
+    target_version: int | None = None,
+    *,
+    lock: bool = False,
+) -> dict[str, Any] | None:
+    row = (
+        (
+            await connection.execute(
+                text(
+                    f"""
+                    SELECT
+                        draft.document_draft_id,
+                        draft.case_id,
+                        draft.family,
+                        draft.variant,
+                        draft.title,
+                        draft.status AS draft_status,
+                        draft.current_version,
+                        draft.version AS draft_lock_version,
+                        version_record.document_version_id,
+                        version_record.version AS document_version,
+                        version_record.status AS version_status,
+                        version_record.structured_payload,
+                        version_record.evidence_status,
+                        version_record.warning,
+                        version_record.content_sha256,
+                        version_record.template_key,
+                        version_record.template_version,
+                        version_record.template_sha256,
+                        version_record.warning_acknowledged,
+                        version_record.approval_reason,
+                        version_record.created_at AS version_created_at,
+                        version_record.approved_at,
+                        case_record.case_number,
+                        case_record.title AS case_title,
+                        case_record.case_type,
+                        case_record.status AS case_status,
+                        case_record.monitoring_priority,
+                        case_record.primary_region_code,
+                        region.full_name AS region_name
+                    FROM document_draft draft
+                    JOIN document_version version_record
+                      ON version_record.document_draft_id =
+                         draft.document_draft_id
+                     AND version_record.version =
+                         COALESCE(
+                           CAST(:target_version AS integer),
+                           draft.current_version
+                         )
+                    LEFT JOIN case_record
+                      ON case_record.case_id = draft.case_id
+                    LEFT JOIN admin_region region
+                      ON region.region_code =
+                         case_record.primary_region_code
+                    WHERE draft.document_draft_id = :document_draft_id
+                    {
+                        "FOR UPDATE OF draft, version_record"
+                        if lock
+                        else ""
+                    }
+                    """
+                ),
+                {
+                    "document_draft_id": document_draft_id,
+                    "target_version": target_version,
+                },
+            )
+        )
+        .mappings()
+        .one_or_none()
+    )
+    if row is None:
+        return None
+    artifact_rows = (
+        (
+            await connection.execute(
+                text(
+                    """
+                    SELECT *
+                    FROM document_artifact
+                    WHERE document_version_id = :document_version_id
+                    ORDER BY stage, format, queued_at
+                    """
+                ),
+                {"document_version_id": row["document_version_id"]},
+            )
+        )
+        .mappings()
+        .all()
+    )
+    delivery_rows = (
+        (
+            await connection.execute(
+                text(
+                    """
+                    SELECT delivery.*, user_record.display_name AS recorded_by_name
+                    FROM document_manual_delivery delivery
+                    JOIN app_user user_record
+                      ON user_record.user_id = delivery.recorded_by
+                    WHERE delivery.document_version_id = :document_version_id
+                    ORDER BY delivery.delivered_at DESC,
+                             delivery.document_manual_delivery_id
+                    """
+                ),
+                {"document_version_id": row["document_version_id"]},
+            )
+        )
+        .mappings()
+        .all()
+    )
+    document = {
+        "documentDraftId": str(row["document_draft_id"]),
+        "documentVersionId": str(row["document_version_id"]),
+        "caseId": str(row["case_id"]) if row["case_id"] else None,
+        "family": row["family"],
+        "variant": row["variant"],
+        "title": row["title"],
+        "draftStatus": row["draft_status"],
+        "currentVersion": int(row["current_version"]),
+        "draftLockVersion": int(row["draft_lock_version"]),
+        "version": int(row["document_version"]),
+        "versionStatus": row["version_status"],
+        "payload": row["structured_payload"],
+        "evidenceStatus": row["evidence_status"],
+        "warning": row["warning"],
+        "contentSha256": row["content_sha256"],
+        "template": {
+            "key": row["template_key"],
+            "version": row["template_version"],
+            "sha256": row["template_sha256"],
+        },
+        "warningAcknowledged": bool(row["warning_acknowledged"]),
+        "approvalReason": row["approval_reason"],
+        "versionCreatedAt": _iso(row["version_created_at"]),
+        "approvedAt": _iso(row["approved_at"]),
+        "artifacts": [
+            {
+                "documentArtifactId": str(artifact["document_artifact_id"]),
+                "format": artifact["format"],
+                "stage": artifact["stage"],
+                "status": artifact["status"],
+                "attemptCount": int(artifact["attempt_count"]),
+                "fileName": artifact["file_name"],
+                "mimeType": artifact["mime_type"],
+                "sizeBytes": (
+                    int(artifact["size_bytes"])
+                    if artifact["size_bytes"] is not None
+                    else None
+                ),
+                "sha256": artifact["sha256"],
+                "errorCode": artifact["error_code"],
+                "errorMessage": artifact["error_message"],
+            }
+            for artifact in artifact_rows
+        ],
+        "manualDeliveries": [
+            {
+                "documentManualDeliveryId": str(
+                    delivery["document_manual_delivery_id"]
+                ),
+                "recipient": delivery["recipient"],
+                "deliveredAt": _iso(delivery["delivered_at"]),
+                "method": delivery["method"],
+                "memo": delivery["memo"],
+                "recordedBy": delivery["recorded_by_name"],
+                "recordedAt": _iso(delivery["recorded_at"]),
+                "externalDeliveryVerified": False,
+            }
+            for delivery in delivery_rows
+        ],
+    }
+    return {
+        "case": (
+            {
+                "caseId": str(row["case_id"]),
+                "caseNumber": row["case_number"],
+                "title": row["case_title"],
+                "caseType": row["case_type"],
+                "status": row["case_status"],
+                "monitoringPriority": row["monitoring_priority"],
+                "regionCode": row["primary_region_code"],
+                "regionName": row["region_name"],
+            }
+            if row["case_id"] is not None
+            else None
+        ),
+        "document": document,
+        "contentSha256": row["content_sha256"],
+    }
+
+
+async def _approval_target(
+    connection: AsyncConnection,
+    target_type: str,
+    target_id: UUID,
+    target_version: int,
+    *,
+    lock: bool = False,
+) -> dict[str, Any]:
+    if target_type == "RECOMMENDATION":
+        target = await _recommendation_target(connection, target_id, lock=lock)
+    elif target_type == "DOCUMENT_DRAFT":
+        target = await _document_target(
+            connection,
+            target_id,
+            target_version,
+            lock=lock,
+        )
+    else:
+        raise WorkflowContractError(
+            409,
+            "APPROVAL_TARGET_UNSUPPORTED",
+            "현재 화면에서 지원하지 않는 승인 대상입니다.",
+        )
+    if target is None:
+        raise WorkflowContractError(
+            409,
+            "APPROVAL_TARGET_MISSING",
+            "승인 대상 버전을 찾을 수 없습니다.",
+        )
+    return target
+
+
 async def _detail(
     connection: AsyncConnection,
     approval_request_id: UUID,
@@ -252,19 +487,12 @@ async def _detail(
     )
     if request is None:
         return None
-    if request["target_type"] != "RECOMMENDATION":
-        raise WorkflowContractError(
-            409,
-            "APPROVAL_TARGET_UNSUPPORTED",
-            "현재 화면에서 지원하지 않는 승인 대상입니다.",
-        )
-    target = await _recommendation_target(connection, request["target_id"])
-    if target is None:
-        raise WorkflowContractError(
-            409,
-            "APPROVAL_TARGET_MISSING",
-            "승인 대상 버전을 찾을 수 없습니다.",
-        )
+    target = await _approval_target(
+        connection,
+        request["target_type"],
+        request["target_id"],
+        int(request["target_version"]),
+    )
     decision = (
         (
             await connection.execute(
@@ -302,13 +530,25 @@ async def _detail(
         "decidedAt": _iso(request["decided_at"]),
         "version": int(request["version"]),
         "case": target["case"],
-        "recommendation": target["recommendation"],
+        "recommendation": target.get("recommendation"),
+        "document": target.get("document"),
         "executionImpact": {
-            "workItemCount": len(target["recommendation"]["actions"]),
+            "workItemCount": (
+                len(target["recommendation"]["actions"])
+                if request["target_type"] == "RECOMMENDATION"
+                else 0
+            ),
             "externalEffect": False,
             "summary": (
-                "승인하면 제안 행동별 내부 수행과업과 체크리스트가 생성됩니다. "
-                "외부 기관 연락·발송·현장 조치는 자동 실행되지 않습니다."
+                (
+                    "승인하면 제안 행동별 내부 수행과업과 체크리스트가 생성됩니다. "
+                    "외부 기관 연락·발송·현장 조치는 자동 실행되지 않습니다."
+                )
+                if request["target_type"] == "RECOMMENDATION"
+                else (
+                    "승인하면 현재 문서 버전이 잠기고 FINAL HWPX·PDF 생성이 "
+                    "시작됩니다. 외부 전송은 실행되지 않습니다."
+                )
             ),
         },
         "decision": (
@@ -636,6 +876,166 @@ async def request_recommendation_approval(
     return {**result, "reused": reused}
 
 
+async def request_document_approval(
+    engine: AsyncEngine,
+    *,
+    profile: str,
+    document_draft_id: UUID,
+    user_id: UUID,
+    request_id: UUID,
+    idempotency_key: str | None,
+) -> dict[str, Any]:
+    key = _key(idempotency_key)
+    audit_key = _audit_key("document-approval-request", profile, key)
+    approval_request_id: UUID
+    reused = False
+    async with engine.begin() as connection:
+        duplicate_id = (
+            await connection.execute(
+                text(
+                    """
+                    SELECT target_id
+                    FROM audit_event
+                    WHERE idempotency_key = :idempotency_key
+                    """
+                ),
+                {"idempotency_key": audit_key},
+            )
+        ).scalar_one_or_none()
+        if duplicate_id is not None:
+            approval_request_id = UUID(str(duplicate_id))
+            reused = True
+        else:
+            target = await _document_target(
+                connection,
+                document_draft_id,
+                lock=True,
+            )
+            if target is None:
+                raise WorkflowContractError(
+                    404,
+                    "DOCUMENT_NOT_FOUND",
+                    "검토할 문서 초안을 찾을 수 없습니다.",
+                )
+            document = target["document"]
+            if document["draftStatus"] not in ("DRAFT", "ON_HOLD"):
+                raise WorkflowContractError(
+                    409,
+                    "DOCUMENT_NOT_REVIEWABLE",
+                    "현재 상태의 문서는 승인 요청할 수 없습니다.",
+                )
+            existing = (
+                (
+                    await connection.execute(
+                        text(
+                            """
+                            SELECT approval_request_id, status
+                            FROM approval_request
+                            WHERE target_type = 'DOCUMENT_DRAFT'
+                              AND target_id = :target_id
+                              AND target_version = :target_version
+                            ORDER BY requested_at DESC
+                            FOR UPDATE
+                            """
+                        ),
+                        {
+                            "target_id": document_draft_id,
+                            "target_version": document["version"],
+                        },
+                    )
+                )
+                .mappings()
+                .first()
+            )
+            if existing is not None and existing["status"] in (
+                "APPROVAL_PENDING",
+                "APPROVED",
+            ):
+                approval_request_id = existing["approval_request_id"]
+                reused = True
+            else:
+                approval_request_id = uuid4()
+                await connection.execute(
+                    text(
+                        """
+                        INSERT INTO approval_request (
+                            approval_request_id, case_id, target_type,
+                            target_id, target_version, title, status,
+                            content_sha256, evidence_status, warning,
+                            requested_by
+                        )
+                        VALUES (
+                            :approval_request_id, :case_id, 'DOCUMENT_DRAFT',
+                            :target_id, :target_version, :title,
+                            'APPROVAL_PENDING', :content_sha256,
+                            :evidence_status, :warning, :requested_by
+                        )
+                        """
+                    ),
+                    {
+                        "approval_request_id": approval_request_id,
+                        "case_id": document["caseId"],
+                        "target_id": document_draft_id,
+                        "target_version": document["version"],
+                        "title": (
+                            f"{document['title']} v{document['version']} 검토"
+                        ),
+                        "content_sha256": document["contentSha256"],
+                        "evidence_status": document["evidenceStatus"],
+                        "warning": document["warning"],
+                        "requested_by": user_id,
+                    },
+                )
+                await connection.execute(
+                    text(
+                        """
+                        UPDATE document_version
+                        SET status = 'APPROVAL_PENDING'
+                        WHERE document_version_id = :document_version_id
+                        """
+                    ),
+                    {"document_version_id": document["documentVersionId"]},
+                )
+                await connection.execute(
+                    text(
+                        """
+                        UPDATE document_draft
+                        SET status = 'APPROVAL_PENDING',
+                            updated_at = CURRENT_TIMESTAMP,
+                            version = version + 1
+                        WHERE document_draft_id = :document_draft_id
+                        """
+                    ),
+                    {"document_draft_id": document_draft_id},
+                )
+                await _audit(
+                    connection,
+                    profile=profile,
+                    user_id=user_id,
+                    request_id=request_id,
+                    idempotency_key=audit_key,
+                    action="DOCUMENT_APPROVAL_REQUEST_CREATED",
+                    approval_request_id=approval_request_id,
+                    target_version=1,
+                    before_state={
+                        "documentStatus": document["draftStatus"],
+                        "documentVersion": document["version"],
+                    },
+                    after_state={
+                        "status": "APPROVAL_PENDING",
+                        "targetType": "DOCUMENT_DRAFT",
+                        "targetId": str(document_draft_id),
+                        "targetVersion": document["version"],
+                    },
+                    reason={"source": "USER"},
+                    input_sha256=document["contentSha256"],
+                )
+    result = await approval_detail(engine, approval_request_id, 2.0)
+    if result is None:
+        raise RuntimeError("Created document approval request not found")
+    return {**result, "reused": reused}
+
+
 async def decide_approval(
     engine: AsyncEngine,
     *,
@@ -648,6 +1048,8 @@ async def decide_approval(
     decision: str,
     reason: str,
     warning_acknowledged: bool,
+    discard_reason: str | None = None,
+    discard_reason_detail: str | None = None,
 ) -> dict[str, Any]:
     key = _key(idempotency_key)
     normalized_decision = decision.strip().upper()
@@ -665,6 +1067,7 @@ async def decide_approval(
             "1~1000자의 결정 사유를 입력해 주세요.",
         )
     created_work_item_ids: list[str] = []
+    generated_artifact_ids: list[str] = []
     async with engine.begin() as connection:
         duplicate = (
             (
@@ -725,15 +1128,31 @@ async def decide_approval(
                     "APPROVAL_ALREADY_DECIDED",
                     "이미 결정된 승인 요청입니다.",
                 )
-            target = await _recommendation_target(
-                connection, request["target_id"], lock=True
+            target = await _approval_target(
+                connection,
+                request["target_type"],
+                request["target_id"],
+                int(request["target_version"]),
+                lock=True,
             )
-            if target is None or target["contentSha256"] != request["content_sha256"]:
+            if target["contentSha256"] != request["content_sha256"]:
                 raise WorkflowContractError(
                     409,
                     "APPROVAL_CONTENT_CHANGED",
                     "승인 요청 이후 내용이 달라졌습니다. 새 버전을 검토해 주세요.",
                 )
+            if request["target_type"] == "DOCUMENT_DRAFT":
+                document = target["document"]
+                if (
+                    document["currentVersion"] != int(request["target_version"])
+                    or document["draftStatus"] != "APPROVAL_PENDING"
+                    or document["versionStatus"] != "APPROVAL_PENDING"
+                ):
+                    raise WorkflowContractError(
+                        409,
+                        "APPROVAL_CONTENT_CHANGED",
+                        "승인 요청 이후 문서 상태가 달라졌습니다. 새로 검토해 주세요.",
+                    )
             if (
                 normalized_decision == "APPROVED"
                 and request["evidence_status"] in ("INSUFFICIENT", "CONFLICT")
@@ -744,6 +1163,49 @@ async def decide_approval(
                     "WARNING_ACKNOWLEDGEMENT_REQUIRED",
                     "근거 부족·충돌 경고를 확인해야 승인할 수 있습니다.",
                 )
+            normalized_discard_reason = (
+                discard_reason.strip().upper() if discard_reason else None
+            )
+            normalized_discard_detail = (
+                discard_reason_detail.strip() if discard_reason_detail else None
+            )
+            if (
+                request["target_type"] == "DOCUMENT_DRAFT"
+                and normalized_decision == "DISCARDED"
+            ):
+                if normalized_discard_reason not in DOCUMENT_DISCARD_REASONS:
+                    raise WorkflowContractError(
+                        422,
+                        "DOCUMENT_DISCARD_REASON_REQUIRED",
+                        "문서 폐기 사유를 선택해 주세요.",
+                    )
+                if (
+                    normalized_discard_reason == "OTHER"
+                    and not normalized_discard_detail
+                ):
+                    raise WorkflowContractError(
+                        422,
+                        "DOCUMENT_DISCARD_DETAIL_REQUIRED",
+                        "기타 폐기 사유를 입력해 주세요.",
+                    )
+                if (
+                    normalized_discard_reason != "OTHER"
+                    and normalized_discard_detail
+                ):
+                    raise WorkflowContractError(
+                        422,
+                        "DOCUMENT_DISCARD_DETAIL_NOT_ALLOWED",
+                        "기타를 선택한 경우에만 추가 설명을 입력할 수 있습니다.",
+                    )
+                if (
+                    normalized_discard_detail is not None
+                    and len(normalized_discard_detail) > 500
+                ):
+                    raise WorkflowContractError(
+                        422,
+                        "DOCUMENT_DISCARD_DETAIL_TOO_LONG",
+                        "기타 폐기 사유는 500자 이하로 입력해 주세요.",
+                    )
             await connection.execute(
                 text(
                     """
@@ -787,102 +1249,160 @@ async def decide_approval(
                     "approval_request_id": approval_request_id,
                 },
             )
-            recommendation = target["recommendation"]
-            if normalized_decision == "APPROVED":
-                case_priority = target["case"]["monitoringPriority"]
-                priority = {
-                    "URGENT": "URGENT",
-                    "ATTENTION": "HIGH",
-                }.get(case_priority, "NORMAL")
-                for action in recommendation["actions"]:
-                    action_id = UUID(action["recommendationActionId"])
-                    work_item_id = uuid4()
-                    await connection.execute(
-                        text(
-                            """
-                            INSERT INTO work_item (
-                                work_item_id, work_type, case_id,
-                                recommendation_action_id, status,
-                                priority, title, input_version,
-                                progress, idempotency_key
-                            )
-                            VALUES (
-                                :work_item_id, 'CASE_RESPONSE', :case_id,
-                                :action_id, 'QUEUED', :priority, :title,
-                                :input_version, 0, :idempotency_key
-                            )
-                            """
-                        ),
-                        {
-                            "work_item_id": work_item_id,
-                            "case_id": recommendation["caseId"],
-                            "action_id": action_id,
-                            "priority": priority,
-                            "title": action["title"],
-                            "input_version": (
-                                f"recommendation:{recommendation['recommendationId']}"
-                                f":v{recommendation['version']}"
-                            ),
-                            "idempotency_key": (
-                                f"approval:{approval_request_id}:action:{action_id}"
-                            ),
-                        },
-                    )
-                    for ordinal, label in enumerate(
-                        action["checklist"], start=1
-                    ):
+            if request["target_type"] == "RECOMMENDATION":
+                recommendation = target["recommendation"]
+                if normalized_decision == "APPROVED":
+                    case_priority = target["case"]["monitoringPriority"]
+                    priority = {
+                        "URGENT": "URGENT",
+                        "ATTENTION": "HIGH",
+                    }.get(case_priority, "NORMAL")
+                    for action in recommendation["actions"]:
+                        action_id = UUID(action["recommendationActionId"])
+                        work_item_id = uuid4()
                         await connection.execute(
                             text(
                                 """
-                                INSERT INTO work_item_checklist (
-                                    checklist_item_id, work_item_id,
-                                    ordinal, label
+                                INSERT INTO work_item (
+                                    work_item_id, work_type, case_id,
+                                    recommendation_action_id, status,
+                                    priority, title, input_version,
+                                    progress, idempotency_key
                                 )
                                 VALUES (
-                                    :checklist_item_id, :work_item_id,
-                                    :ordinal, :label
+                                    :work_item_id, 'CASE_RESPONSE', :case_id,
+                                    :action_id, 'QUEUED', :priority, :title,
+                                    :input_version, 0, :idempotency_key
                                 )
                                 """
                             ),
                             {
-                                "checklist_item_id": uuid4(),
                                 "work_item_id": work_item_id,
-                                "ordinal": ordinal,
-                                "label": label,
+                                "case_id": recommendation["caseId"],
+                                "action_id": action_id,
+                                "priority": priority,
+                                "title": action["title"],
+                                "input_version": (
+                                    f"recommendation:"
+                                    f"{recommendation['recommendationId']}"
+                                    f":v{recommendation['version']}"
+                                ),
+                                "idempotency_key": (
+                                    f"approval:{approval_request_id}:"
+                                    f"action:{action_id}"
+                                ),
                             },
                         )
+                        for ordinal, label in enumerate(
+                            action["checklist"], start=1
+                        ):
+                            await connection.execute(
+                                text(
+                                    """
+                                    INSERT INTO work_item_checklist (
+                                        checklist_item_id, work_item_id,
+                                        ordinal, label
+                                    )
+                                    VALUES (
+                                        :checklist_item_id, :work_item_id,
+                                        :ordinal, :label
+                                    )
+                                    """
+                                ),
+                                {
+                                    "checklist_item_id": uuid4(),
+                                    "work_item_id": work_item_id,
+                                    "ordinal": ordinal,
+                                    "label": label,
+                                },
+                            )
+                        await connection.execute(
+                            text(
+                                """
+                                UPDATE recommendation_action
+                                SET status = 'ACCEPTED'
+                                WHERE recommendation_action_id = :action_id
+                                """
+                            ),
+                            {"action_id": action_id},
+                        )
+                        created_work_item_ids.append(str(work_item_id))
+                elif normalized_decision == "DISCARDED":
                     await connection.execute(
                         text(
                             """
                             UPDATE recommendation_action
-                            SET status = 'ACCEPTED'
-                            WHERE recommendation_action_id = :action_id
+                            SET status = 'DISCARDED'
+                            WHERE recommendation_id = :recommendation_id
                             """
                         ),
-                        {"action_id": action_id},
+                        {"recommendation_id": request["target_id"]},
                     )
-                    created_work_item_ids.append(str(work_item_id))
-            elif normalized_decision == "DISCARDED":
+                    await connection.execute(
+                        text(
+                            """
+                            UPDATE recommendation
+                            SET status = 'SUPERSEDED',
+                                superseded_at = CURRENT_TIMESTAMP
+                            WHERE recommendation_id = :recommendation_id
+                            """
+                        ),
+                        {"recommendation_id": request["target_id"]},
+                    )
+            else:
+                document = target["document"]
+                document_version_id = UUID(document["documentVersionId"])
+                if normalized_decision == "APPROVED":
+                    generated_artifact_ids = [
+                        str(artifact_id)
+                        for artifact_id in await _insert_artifacts(
+                            connection,
+                            document_version_id,
+                            "FINAL",
+                        )
+                    ]
                 await connection.execute(
                     text(
                         """
-                        UPDATE recommendation_action
-                        SET status = 'DISCARDED'
-                        WHERE recommendation_id = :recommendation_id
+                        UPDATE document_version
+                        SET status = CAST(:decision AS varchar),
+                            warning_acknowledged = :warning_acknowledged,
+                            approval_reason = :approval_reason,
+                            approved_by = CASE
+                              WHEN CAST(:decision AS varchar) = 'APPROVED'
+                                THEN CAST(:user_id AS uuid)
+                              ELSE CAST(NULL AS uuid)
+                            END,
+                            approved_at = CASE
+                              WHEN CAST(:decision AS varchar) = 'APPROVED'
+                                THEN CURRENT_TIMESTAMP
+                              ELSE NULL
+                            END
+                        WHERE document_version_id = :document_version_id
                         """
                     ),
-                    {"recommendation_id": request["target_id"]},
+                    {
+                        "decision": normalized_decision,
+                        "warning_acknowledged": warning_acknowledged,
+                        "approval_reason": normalized_reason,
+                        "user_id": user_id,
+                        "document_version_id": document_version_id,
+                    },
                 )
                 await connection.execute(
                     text(
                         """
-                        UPDATE recommendation
-                        SET status = 'SUPERSEDED',
-                            superseded_at = CURRENT_TIMESTAMP
-                        WHERE recommendation_id = :recommendation_id
+                        UPDATE document_draft
+                        SET status = CAST(:decision AS varchar),
+                            updated_at = CURRENT_TIMESTAMP,
+                            version = version + 1
+                        WHERE document_draft_id = :document_draft_id
                         """
                     ),
-                    {"recommendation_id": request["target_id"]},
+                    {
+                        "decision": normalized_decision,
+                        "document_draft_id": request["target_id"],
+                    },
                 )
             await _audit(
                 connection,
@@ -901,14 +1421,33 @@ async def decide_approval(
                     "status": normalized_decision,
                     "version": expected_version + 1,
                     "createdWorkItemIds": created_work_item_ids,
+                    "generatedArtifactIds": generated_artifact_ids,
                 },
                 reason={
                     "userReason": normalized_reason,
                     "warningAcknowledged": warning_acknowledged,
+                    "discardReason": normalized_discard_reason,
+                    "discardReasonDetail": normalized_discard_detail,
                 },
                 input_sha256=request["content_sha256"],
             )
     result = await approval_detail(engine, approval_request_id, 2.0)
     if result is None:
         raise RuntimeError("Decided approval request not found")
-    return {**result, "createdWorkItemIds": created_work_item_ids}
+    if (
+        not generated_artifact_ids
+        and result["targetType"] == "DOCUMENT_DRAFT"
+        and result["status"] == "APPROVED"
+        and result["document"] is not None
+    ):
+        generated_artifact_ids = [
+            artifact["documentArtifactId"]
+            for artifact in result["document"]["artifacts"]
+            if artifact["stage"] == "FINAL"
+            and artifact["status"] == "QUEUED"
+        ]
+    return {
+        **result,
+        "createdWorkItemIds": created_work_item_ids,
+        "generatedArtifactIds": generated_artifact_ids,
+    }

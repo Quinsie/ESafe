@@ -191,6 +191,26 @@ async def _current_document_detail(
         .mappings()
         .all()
     )
+    delivery_rows = (
+        (
+            await connection.execute(
+                text(
+                    """
+                    SELECT delivery.*, user_record.display_name AS recorded_by_name
+                    FROM document_manual_delivery delivery
+                    JOIN app_user user_record
+                      ON user_record.user_id = delivery.recorded_by
+                    WHERE delivery.document_version_id = :document_version_id
+                    ORDER BY delivered_at DESC,
+                             document_manual_delivery_id
+                    """
+                ),
+                {"document_version_id": row["document_version_id"]},
+            )
+        )
+        .mappings()
+        .all()
+    )
     payload = DocumentPayload.model_validate(row["structured_payload"])
     return {
         "documentDraftId": str(row["document_draft_id"]),
@@ -221,6 +241,21 @@ async def _current_document_detail(
         "versionCreatedAt": _iso(row["version_created_at"]),
         "approvedAt": _iso(row["approved_at"]),
         "artifacts": [_serialize_artifact(item) for item in artifact_rows],
+        "manualDeliveries": [
+            {
+                "documentManualDeliveryId": str(
+                    item["document_manual_delivery_id"]
+                ),
+                "recipient": item["recipient"],
+                "deliveredAt": _iso(item["delivered_at"]),
+                "method": item["method"],
+                "memo": item["memo"],
+                "recordedBy": item["recorded_by_name"],
+                "recordedAt": _iso(item["recorded_at"]),
+                "externalDeliveryVerified": False,
+            }
+            for item in delivery_rows
+        ],
         "versions": [
             {
                 "version": int(item["version"]),
@@ -739,6 +774,557 @@ async def update_document_draft(
         if detail is None:
             raise RuntimeError("DOCUMENT_UPDATE_NOT_VISIBLE")
         return detail, False
+
+
+async def clone_document_draft(
+    engine: AsyncEngine,
+    *,
+    profile: str,
+    document_draft_id: UUID,
+    user_id: UUID,
+    request_id: UUID,
+    idempotency_key: str | None,
+) -> tuple[dict[str, Any], bool]:
+    audit_key = _idempotency_key("clone", profile, idempotency_key)
+    async with engine.begin() as connection:
+        existing = await _existing_idempotent_document(connection, audit_key)
+        if existing is not None:
+            return existing, True
+        current = await _current_document_detail(
+            connection,
+            document_draft_id,
+            lock=True,
+        )
+        if current is None:
+            raise WorkflowContractError(
+                404,
+                "DOCUMENT_NOT_FOUND",
+                "복제할 문서를 찾을 수 없습니다.",
+            )
+        if current["status"] not in ("APPROVED", "DISCARDED"):
+            raise WorkflowContractError(
+                409,
+                "DOCUMENT_CLONE_NOT_ALLOWED",
+                "승인본 또는 폐기본만 새 초안으로 복제할 수 있습니다.",
+            )
+        next_version = int(current["currentVersion"]) + 1
+        next_version_id = uuid4()
+        payload = DocumentPayload.model_validate(current["payload"])
+        await connection.execute(
+            text(
+                """
+                INSERT INTO document_version (
+                    document_version_id, document_draft_id, version,
+                    parent_version_id, status, structured_payload,
+                    evidence_status, warning, content_sha256,
+                    template_key, template_version, template_sha256,
+                    created_by
+                )
+                VALUES (
+                    :document_version_id, :document_draft_id, :version,
+                    :parent_version_id, 'DRAFT',
+                    CAST(:structured_payload AS jsonb), :evidence_status,
+                    :warning, :content_sha256, :template_key,
+                    :template_version, :template_sha256, :created_by
+                )
+                """
+            ),
+            {
+                "document_version_id": next_version_id,
+                "document_draft_id": document_draft_id,
+                "version": next_version,
+                "parent_version_id": UUID(current["documentVersionId"]),
+                "structured_payload": json.dumps(
+                    payload.model_dump(mode="json", by_alias=True),
+                    ensure_ascii=False,
+                ),
+                "evidence_status": current["evidenceStatus"],
+                "warning": current["warning"],
+                "content_sha256": current["contentSha256"],
+                "template_key": current["template"]["key"],
+                "template_version": current["template"]["version"],
+                "template_sha256": current["template"]["sha256"],
+                "created_by": user_id,
+            },
+        )
+        if current["status"] == "APPROVED":
+            await connection.execute(
+                text(
+                    """
+                    UPDATE document_version
+                    SET status = 'SUPERSEDED',
+                        superseded_at = CURRENT_TIMESTAMP
+                    WHERE document_version_id = :document_version_id
+                    """
+                ),
+                {"document_version_id": UUID(current["documentVersionId"])},
+            )
+        await connection.execute(
+            text(
+                """
+                UPDATE document_draft
+                SET status = 'DRAFT',
+                    current_version = :current_version,
+                    updated_at = CURRENT_TIMESTAMP,
+                    version = version + 1
+                WHERE document_draft_id = :document_draft_id
+                """
+            ),
+            {
+                "current_version": next_version,
+                "document_draft_id": document_draft_id,
+            },
+        )
+        await _insert_artifacts(connection, next_version_id, "REVIEW")
+        await connection.execute(
+            text(
+                """
+                INSERT INTO audit_event (
+                    audit_event_id, profile, actor_type, actor_user_id,
+                    action, target_type, target_id, target_version,
+                    before_state, after_state, reason, correlation_id,
+                    idempotency_key, input_sha256, output_sha256
+                )
+                VALUES (
+                    :audit_event_id, :profile, 'USER', :user_id,
+                    'DOCUMENT_DRAFT_CLONED', 'DOCUMENT_DRAFT',
+                    :target_id, :target_version,
+                    CAST(:before_state AS jsonb), CAST(:after_state AS jsonb),
+                    CAST(:reason AS jsonb), :request_id, :idempotency_key,
+                    :input_sha256, :output_sha256
+                )
+                """
+            ),
+            {
+                "audit_event_id": uuid4(),
+                "profile": profile,
+                "user_id": user_id,
+                "target_id": str(document_draft_id),
+                "target_version": next_version,
+                "before_state": json.dumps(
+                    {
+                        "version": current["currentVersion"],
+                        "status": current["status"],
+                    }
+                ),
+                "after_state": json.dumps(
+                    {"version": next_version, "status": "DRAFT"}
+                ),
+                "reason": json.dumps(
+                    {
+                        "sourceStatus": current["status"],
+                        "sourceVersion": current["currentVersion"],
+                    }
+                ),
+                "request_id": request_id,
+                "idempotency_key": audit_key,
+                "input_sha256": current["contentSha256"],
+                "output_sha256": current["contentSha256"],
+            },
+        )
+        detail = await _current_document_detail(connection, document_draft_id)
+        if detail is None:
+            raise RuntimeError("DOCUMENT_CLONE_NOT_VISIBLE")
+        return detail, False
+
+
+async def retry_document_artifact(
+    engine: AsyncEngine,
+    *,
+    profile: str,
+    artifact_id: UUID,
+    user_id: UUID,
+    request_id: UUID,
+    idempotency_key: str | None,
+) -> tuple[dict[str, Any], bool]:
+    audit_key = _idempotency_key("artifact-retry", profile, idempotency_key)
+    async with engine.begin() as connection:
+        duplicate_id = (
+            await connection.execute(
+                text(
+                    """
+                    SELECT target_id
+                    FROM audit_event
+                    WHERE idempotency_key = :idempotency_key
+                      AND target_type = 'DOCUMENT_ARTIFACT'
+                    """
+                ),
+                {"idempotency_key": audit_key},
+            )
+        ).scalar_one_or_none()
+        reused = duplicate_id is not None
+        target_id = UUID(str(duplicate_id)) if duplicate_id else artifact_id
+        row = (
+            (
+                await connection.execute(
+                    text(
+                        """
+                        SELECT artifact.*, version.document_draft_id,
+                               version.version AS document_version
+                        FROM document_artifact artifact
+                        JOIN document_version version
+                          ON version.document_version_id =
+                             artifact.document_version_id
+                        WHERE artifact.document_artifact_id = :artifact_id
+                        FOR UPDATE OF artifact
+                        """
+                    ),
+                    {"artifact_id": target_id},
+                )
+            )
+            .mappings()
+            .one_or_none()
+        )
+        if row is None:
+            raise WorkflowContractError(
+                404,
+                "DOCUMENT_ARTIFACT_NOT_FOUND",
+                "재시도할 문서 산출물을 찾을 수 없습니다.",
+            )
+        if reused:
+            return {
+                "documentDraftId": str(row["document_draft_id"]),
+                "artifact": _serialize_artifact(row),
+            }, True
+        if row["status"] != "FAILED":
+            raise WorkflowContractError(
+                409,
+                "DOCUMENT_ARTIFACT_NOT_RETRYABLE",
+                "실패한 문서 산출물만 재시도할 수 있습니다.",
+            )
+        await connection.execute(
+            text(
+                """
+                UPDATE document_artifact
+                SET status = 'QUEUED',
+                    storage_path = NULL,
+                    file_name = NULL,
+                    mime_type = NULL,
+                    size_bytes = NULL,
+                    sha256 = NULL,
+                    validation = '{}'::jsonb,
+                    error_code = NULL,
+                    error_message = NULL,
+                    queued_at = CURRENT_TIMESTAMP,
+                    started_at = NULL,
+                    finished_at = NULL
+                WHERE document_artifact_id = :artifact_id
+                """
+            ),
+            {"artifact_id": artifact_id},
+        )
+        await connection.execute(
+            text(
+                """
+                INSERT INTO audit_event (
+                    audit_event_id, profile, actor_type, actor_user_id,
+                    action, target_type, target_id, target_version,
+                    before_state, after_state, reason, correlation_id,
+                    idempotency_key
+                )
+                VALUES (
+                    :audit_event_id, :profile, 'USER', :user_id,
+                    'DOCUMENT_ARTIFACT_RETRIED', 'DOCUMENT_ARTIFACT',
+                    :target_id, :target_version,
+                    CAST(:before_state AS jsonb), CAST(:after_state AS jsonb),
+                    '{}'::jsonb, :request_id, :idempotency_key
+                )
+                """
+            ),
+            {
+                "audit_event_id": uuid4(),
+                "profile": profile,
+                "user_id": user_id,
+                "target_id": str(artifact_id),
+                "target_version": int(row["document_version"]),
+                "before_state": json.dumps(
+                    {
+                        "status": "FAILED",
+                        "attemptCount": int(row["attempt_count"]),
+                        "errorCode": row["error_code"],
+                    }
+                ),
+                "after_state": json.dumps(
+                    {
+                        "status": "QUEUED",
+                        "attemptCount": int(row["attempt_count"]),
+                    }
+                ),
+                "request_id": request_id,
+                "idempotency_key": audit_key,
+            },
+        )
+        updated = (
+            (
+                await connection.execute(
+                    text(
+                        """
+                        SELECT artifact.*, version.document_draft_id
+                        FROM document_artifact artifact
+                        JOIN document_version version
+                          ON version.document_version_id =
+                             artifact.document_version_id
+                        WHERE artifact.document_artifact_id = :artifact_id
+                        """
+                    ),
+                    {"artifact_id": artifact_id},
+                )
+            )
+            .mappings()
+            .one()
+        )
+        return {
+            "documentDraftId": str(updated["document_draft_id"]),
+            "artifact": _serialize_artifact(updated),
+        }, False
+
+
+async def record_manual_delivery(
+    engine: AsyncEngine,
+    *,
+    profile: str,
+    document_version_id: UUID,
+    recipient: str,
+    delivered_at: datetime,
+    method: str,
+    memo: str | None,
+    user_id: UUID,
+    request_id: UUID,
+    idempotency_key: str | None,
+) -> tuple[dict[str, Any], bool]:
+    normalized_recipient = recipient.strip()
+    normalized_method = method.strip().upper()
+    normalized_memo = memo.strip() if memo and memo.strip() else None
+    if not normalized_recipient or len(normalized_recipient) > 500:
+        raise WorkflowContractError(
+            422,
+            "MANUAL_DELIVERY_RECIPIENT_INVALID",
+            "수신처는 1~500자로 입력해 주세요.",
+        )
+    if normalized_method not in {
+        "EMAIL",
+        "MESSENGER",
+        "E_DOCUMENT",
+        "IN_PERSON",
+        "OTHER",
+    }:
+        raise WorkflowContractError(
+            422,
+            "MANUAL_DELIVERY_METHOD_INVALID",
+            "지원하는 전달방법을 선택해 주세요.",
+        )
+    if delivered_at.utcoffset() is None:
+        raise WorkflowContractError(
+            422,
+            "MANUAL_DELIVERY_TIMEZONE_REQUIRED",
+            "발송시각에는 시간대를 포함해 주세요.",
+        )
+    if normalized_memo is not None and len(normalized_memo) > 2000:
+        raise WorkflowContractError(
+            422,
+            "MANUAL_DELIVERY_MEMO_TOO_LONG",
+            "메모는 2000자 이하로 입력해 주세요.",
+        )
+    delivery_key = _idempotency_key("manual-delivery", profile, idempotency_key)
+    async with engine.begin() as connection:
+        duplicate = (
+            (
+                await connection.execute(
+                    text(
+                        """
+                        SELECT delivery.*, user_record.display_name
+                        FROM document_manual_delivery delivery
+                        JOIN app_user user_record
+                          ON user_record.user_id = delivery.recorded_by
+                        WHERE delivery.idempotency_key = :idempotency_key
+                        """
+                    ),
+                    {"idempotency_key": delivery_key},
+                )
+            )
+            .mappings()
+            .one_or_none()
+        )
+        if duplicate is not None:
+            if duplicate["document_version_id"] != document_version_id:
+                raise WorkflowContractError(
+                    409,
+                    "IDEMPOTENCY_KEY_CONFLICT",
+                    "다른 문서 버전에 사용된 Idempotency-Key입니다.",
+                )
+            return {
+                "documentManualDeliveryId": str(
+                    duplicate["document_manual_delivery_id"]
+                ),
+                "documentVersionId": str(duplicate["document_version_id"]),
+                "recipient": duplicate["recipient"],
+                "deliveredAt": _iso(duplicate["delivered_at"]),
+                "method": duplicate["method"],
+                "memo": duplicate["memo"],
+                "recordedBy": duplicate["display_name"],
+                "recordedAt": _iso(duplicate["recorded_at"]),
+                "externalDeliveryVerified": False,
+            }, True
+        version = (
+            (
+                await connection.execute(
+                    text(
+                        """
+                        SELECT version.*, draft.document_draft_id
+                        FROM document_version version
+                        JOIN document_draft draft
+                          ON draft.document_draft_id =
+                             version.document_draft_id
+                        WHERE version.document_version_id =
+                              :document_version_id
+                        FOR UPDATE OF version
+                        """
+                    ),
+                    {"document_version_id": document_version_id},
+                )
+            )
+            .mappings()
+            .one_or_none()
+        )
+        if version is None:
+            raise WorkflowContractError(
+                404,
+                "DOCUMENT_VERSION_NOT_FOUND",
+                "발송 기록을 남길 문서 버전을 찾을 수 없습니다.",
+            )
+        if version["approved_at"] is None:
+            raise WorkflowContractError(
+                409,
+                "DOCUMENT_VERSION_NOT_APPROVED",
+                "승인된 문서 버전에만 수동 발송 기록을 남길 수 있습니다.",
+            )
+        succeeded_final_count = int(
+            (
+                await connection.execute(
+                    text(
+                        """
+                        SELECT count(DISTINCT format)
+                        FROM document_artifact
+                        WHERE document_version_id = :document_version_id
+                          AND stage = 'FINAL'
+                          AND status = 'SUCCEEDED'
+                        """
+                    ),
+                    {"document_version_id": document_version_id},
+                )
+            ).scalar_one()
+        )
+        if succeeded_final_count != 2:
+            raise WorkflowContractError(
+                409,
+                "DOCUMENT_FINAL_ARTIFACTS_INCOMPLETE",
+                "최종 HWPX와 PDF 생성이 끝난 뒤 발송 기록을 남길 수 있습니다.",
+            )
+        delivery_id = uuid4()
+        await connection.execute(
+            text(
+                """
+                INSERT INTO document_manual_delivery (
+                    document_manual_delivery_id, document_version_id,
+                    recipient, delivered_at, method, memo, recorded_by,
+                    idempotency_key
+                )
+                VALUES (
+                    :delivery_id, :document_version_id, :recipient,
+                    :delivered_at, :method, :memo, :recorded_by,
+                    :idempotency_key
+                )
+                """
+            ),
+            {
+                "delivery_id": delivery_id,
+                "document_version_id": document_version_id,
+                "recipient": normalized_recipient,
+                "delivered_at": delivered_at,
+                "method": normalized_method,
+                "memo": normalized_memo,
+                "recorded_by": user_id,
+                "idempotency_key": delivery_key,
+            },
+        )
+        await connection.execute(
+            text(
+                """
+                INSERT INTO audit_event (
+                    audit_event_id, profile, actor_type, actor_user_id,
+                    action, target_type, target_id, target_version,
+                    after_state, reason, correlation_id, idempotency_key,
+                    input_sha256
+                )
+                VALUES (
+                    :audit_event_id, :profile, 'USER', :user_id,
+                    'DOCUMENT_MANUAL_DELIVERY_RECORDED', 'DOCUMENT_VERSION',
+                    :target_id, :target_version, CAST(:after_state AS jsonb),
+                    CAST(:reason AS jsonb), :request_id, :audit_key,
+                    :input_sha256
+                )
+                """
+            ),
+            {
+                "audit_event_id": uuid4(),
+                "profile": profile,
+                "user_id": user_id,
+                "target_id": str(document_version_id),
+                "target_version": int(version["version"]),
+                "after_state": json.dumps(
+                    {
+                        "documentManualDeliveryId": str(delivery_id),
+                        "manualRecordOnly": True,
+                    }
+                ),
+                "reason": json.dumps(
+                    {
+                        "recipient": normalized_recipient,
+                        "deliveredAt": delivered_at.isoformat(),
+                        "method": normalized_method,
+                    },
+                    ensure_ascii=False,
+                ),
+                "request_id": request_id,
+                "audit_key": _idempotency_key(
+                    "manual-delivery-audit",
+                    profile,
+                    idempotency_key,
+                ),
+                "input_sha256": version["content_sha256"],
+            },
+        )
+        recorded = (
+            (
+                await connection.execute(
+                    text(
+                        """
+                        SELECT delivery.recorded_at,
+                               user_record.display_name
+                        FROM document_manual_delivery delivery
+                        JOIN app_user user_record
+                          ON user_record.user_id = delivery.recorded_by
+                        WHERE delivery.document_manual_delivery_id =
+                              :delivery_id
+                        """
+                    ),
+                    {"delivery_id": delivery_id},
+                )
+            )
+            .mappings()
+            .one()
+        )
+        return {
+            "documentManualDeliveryId": str(delivery_id),
+            "documentVersionId": str(document_version_id),
+            "recipient": normalized_recipient,
+            "deliveredAt": delivered_at.isoformat(),
+            "method": normalized_method,
+            "memo": normalized_memo,
+            "recordedBy": recorded["display_name"],
+            "recordedAt": _iso(recorded["recorded_at"]),
+            "externalDeliveryVerified": False,
+        }, False
 
 
 async def document_detail(

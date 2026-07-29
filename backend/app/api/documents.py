@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+from datetime import datetime
 from pathlib import Path
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, Query, Request
@@ -14,10 +15,13 @@ from app.auth import AuthenticatedSession
 from app.celery_app import celery_app
 from app.document_content import DocumentPayload, DocumentVariant
 from app.documents import (
+    clone_document_draft,
     create_document_draft,
     document_artifact_download,
     document_detail,
     document_library,
+    record_manual_delivery,
+    retry_document_artifact,
     update_document_draft,
 )
 from app.workflow import WorkflowContractError
@@ -40,6 +44,21 @@ class UpdateDocumentBody(BaseModel):
     payload: DocumentPayload
 
 
+class ManualDeliveryBody(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    recipient: str = Field(min_length=1, max_length=500)
+    delivered_at: datetime = Field(alias="deliveredAt")
+    method: Literal[
+        "EMAIL",
+        "MESSENGER",
+        "E_DOCUMENT",
+        "IN_PERSON",
+        "OTHER",
+    ]
+    memo: str | None = Field(default=None, max_length=2000)
+
+
 def _error(request: Request, error: WorkflowContractError) -> JSONResponse:
     return JSONResponse(
         status_code=error.status_code,
@@ -59,7 +78,7 @@ def _queue_artifacts(request: Request, detail: dict[str, Any]) -> None:
         artifact_id = artifact["documentArtifactId"]
         celery_app.send_task(
             "esafe.generate_document_artifact",
-            args=[artifact_id],
+            args=[str(artifact_id)],
             task_id=artifact_id,
             queue=f"{settings.celery_queue}-documents",
         )
@@ -169,6 +188,95 @@ async def put_document(
     except WorkflowContractError as error:
         return _error(request, error)
     return envelope(request, detail | {"reused": reused})
+
+
+@router.post("/documents/{document_draft_id}/clone", status_code=202)
+async def post_document_clone(
+    request: Request,
+    session: WriteSession,
+    document_draft_id: UUID,
+    idempotency_key: Annotated[
+        str | None, Header(alias="Idempotency-Key")
+    ] = None,
+) -> Any:
+    settings = request.app.state.settings
+    try:
+        detail, reused = await clone_document_draft(
+            request.app.state.db_engine,
+            profile=settings.profile,
+            document_draft_id=document_draft_id,
+            user_id=session.user_id,
+            request_id=UUID(request.state.request_id),
+            idempotency_key=idempotency_key,
+        )
+        _queue_artifacts(request, detail)
+    except WorkflowContractError as error:
+        return _error(request, error)
+    return envelope(request, detail | {"reused": reused})
+
+
+@router.post("/document-artifacts/{artifact_id}/retry", status_code=202)
+async def post_document_artifact_retry(
+    request: Request,
+    session: WriteSession,
+    artifact_id: UUID,
+    idempotency_key: Annotated[
+        str | None, Header(alias="Idempotency-Key")
+    ] = None,
+) -> Any:
+    settings = request.app.state.settings
+    try:
+        result, reused = await retry_document_artifact(
+            request.app.state.db_engine,
+            profile=settings.profile,
+            artifact_id=artifact_id,
+            user_id=session.user_id,
+            request_id=UUID(request.state.request_id),
+            idempotency_key=idempotency_key,
+        )
+    except WorkflowContractError as error:
+        return _error(request, error)
+    artifact = result["artifact"]
+    if artifact["status"] == "QUEUED":
+        celery_app.send_task(
+            "esafe.generate_document_artifact",
+            args=[str(artifact_id)],
+            task_id=str(artifact_id),
+            queue=f"{settings.celery_queue}-documents",
+        )
+    return envelope(request, result | {"reused": reused})
+
+
+@router.post(
+    "/document-versions/{document_version_id}/manual-deliveries",
+    status_code=201,
+)
+async def post_document_manual_delivery(
+    request: Request,
+    session: WriteSession,
+    document_version_id: UUID,
+    body: ManualDeliveryBody,
+    idempotency_key: Annotated[
+        str | None, Header(alias="Idempotency-Key")
+    ] = None,
+) -> Any:
+    settings = request.app.state.settings
+    try:
+        delivery, reused = await record_manual_delivery(
+            request.app.state.db_engine,
+            profile=settings.profile,
+            document_version_id=document_version_id,
+            recipient=body.recipient,
+            delivered_at=body.delivered_at,
+            method=body.method,
+            memo=body.memo,
+            user_id=session.user_id,
+            request_id=UUID(request.state.request_id),
+            idempotency_key=idempotency_key,
+        )
+    except WorkflowContractError as error:
+        return _error(request, error)
+    return envelope(request, delivery | {"reused": reused})
 
 
 @router.get("/document-artifacts/{artifact_id}/download")
