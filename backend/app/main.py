@@ -16,6 +16,7 @@ from app.api.home import router as home_router
 from app.api.responses import envelope
 from app.api.similarity import router as similarity_router
 from app.api.spatial import router as spatial_router
+from app.api.workflow import router as workflow_router
 from app.config import get_settings
 from app.logging import configure_logging
 from app.middleware import RequestContextMiddleware
@@ -58,6 +59,7 @@ app.include_router(home_router)
 app.include_router(spatial_router)
 app.include_router(similarity_router)
 app.include_router(cases_router)
+app.include_router(workflow_router)
 
 
 @app.exception_handler(AuthError)
