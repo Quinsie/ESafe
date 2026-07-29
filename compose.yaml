@@ -57,6 +57,7 @@ services:
       context: .
       dockerfile: infra/database/Dockerfile
     restart: unless-stopped
+    shm_size: 512m
     environment:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
@@ -81,6 +82,7 @@ services:
       context: .
       dockerfile: infra/database/Dockerfile
     restart: unless-stopped
+    shm_size: 512m
     environment:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
