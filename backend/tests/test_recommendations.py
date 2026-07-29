@@ -10,6 +10,7 @@ from app.recommendations import (
     SYSTEM_PROMPT,
     RecommendationGenerationError,
     _build_input,
+    _numeric_claims,
     recommendation_response_schema,
     validate_recommendation_payload,
 )
@@ -21,7 +22,7 @@ PAST = UUID("00000000-0000-4000-8000-000000000103")
 
 def test_prompt_treats_unapplied_official_amendment_as_conflict() -> None:
     assert PROMPT_VERSION == "case-recommendation-ko-v4"
-    assert GENERATION_VERSION == "recommendation-generator-v7"
+    assert GENERATION_VERSION == "recommendation-generator-v8"
     assert "변경 전 용어나 내용이 그대로 남아 있으면" in SYSTEM_PROMPT
     assert "하나의 CONFLICT 행동" in SYSTEM_PROMPT
 
@@ -132,6 +133,43 @@ def test_grounded_paraphrase_recovers_exact_source_excerpt() -> None:
     assert result.evidence_status == "SUFFICIENT"
     assert result.actions[0].citations[0].support_type == "DIRECT"
     assert result.actions[0].citations[0].quote == evidence_rows()[0]["excerpt"]
+
+
+def test_equivalent_date_format_is_preserved() -> None:
+    rows = evidence_rows()
+    rows[0]["excerpt"] = (
+        "현장 접근 전 전원 차단 여부를 확인한다. "
+        "정기점검은 '20.1.30. 완료되었다."
+    )
+    value = proposal()
+    value["situationSummary"] = "정기점검은 2020년 1월 30일 완료되었습니다."
+
+    result = validate_recommendation_payload(value, rows)
+
+    assert "2020년 1월 30일" in result.situation_summary
+    assert result.evidence_status == "SUFFICIENT"
+
+
+def test_numeric_claims_normalize_equivalent_date_formats() -> None:
+    source = _numeric_claims("정기점검은 '20.1.30. 완료되었다.")
+    generated = _numeric_claims("정기점검은 2020년 1월 30일 완료되었다.")
+
+    assert "date:2020-01-30" in source
+    assert "date:2020-01-30" in generated
+    assert "num:2020" in source
+    assert "num:2020" in generated
+
+
+def test_unsupported_number_is_removed_and_warned() -> None:
+    value = proposal()
+    value["situationSummary"] = "근거에 없는 999개 설비를 점검해야 합니다."
+
+    result = validate_recommendation_payload(value, evidence_rows())
+
+    assert "999" not in result.situation_summary
+    assert "근거 확인 필요 수치" in result.situation_summary
+    assert result.evidence_status == "INSUFFICIENT"
+    assert result.warning == "근거에서 확인되지 않은 수치를 초안에서 제거했습니다."
 
 
 def test_response_schema_only_allows_supplied_evidence_ids() -> None:

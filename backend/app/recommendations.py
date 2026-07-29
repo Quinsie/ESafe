@@ -17,7 +17,7 @@ from app.config import Settings
 from app.upstage import UpstageChatClient
 
 PROMPT_VERSION = "case-recommendation-ko-v4"
-GENERATION_VERSION = "recommendation-generator-v7"
+GENERATION_VERSION = "recommendation-generator-v8"
 ALLOWED_PRIVACY_STATUSES = frozenset(("PUBLIC_SAFE", "MASKED_VERIFIED"))
 QUOTE_TOKEN_PATTERN = re.compile(r"[가-힣A-Za-z0-9]{2,}")
 QUOTE_STOP_WORDS = frozenset(
@@ -44,6 +44,17 @@ CASE_DOCUMENT_TERMS = {
     "WEATHER_WARNING": ("기상", "태풍", "호우", "폭염"),
     "DISASTER_MESSAGE": ("재난", "전기", "감전"),
 }
+KOREAN_DATE_PATTERN = re.compile(
+    r"(?<!\d)(?P<year>'?\d{2}|\d{4})년\s*"
+    r"(?P<month>\d{1,2})월\s*(?P<day>\d{1,2})일"
+)
+SEPARATED_DATE_PATTERN = re.compile(
+    r"(?<!\d)(?P<year>'?\d{2}|\d{4})[./-]"
+    r"(?P<month>\d{1,2})[./-](?P<day>\d{1,2})(?!\d)"
+)
+GENERIC_NUMBER_PATTERN = re.compile(
+    r"(?<![\dA-Za-z])\d+(?:,\d{3})*(?:\.\d+)?(?![\dA-Za-z])"
+)
 
 SYSTEM_PROMPT = """
 당신은 대한민국 공공기관의 전기재해 예방 관제 의사결정 보조자다.
@@ -309,6 +320,158 @@ def _detect_explicit_amendment_conflict(
     return directive, chosen, directive_quote, affected_quote
 
 
+def _canonical_year(value: str) -> int:
+    digits = value.lstrip("'")
+    year = int(digits)
+    return year + 2000 if len(digits) == 2 else year
+
+
+def _numeric_claim_spans(value: str) -> list[tuple[int, int, str, str]]:
+    spans: list[tuple[int, int, str, str]] = []
+    occupied: list[tuple[int, int]] = []
+    for pattern in (KOREAN_DATE_PATTERN, SEPARATED_DATE_PATTERN):
+        for match in pattern.finditer(value):
+            start, end = match.span()
+            if any(start < used_end and end > used_start for used_start, used_end in occupied):
+                continue
+            year = _canonical_year(match.group("year"))
+            month = int(match.group("month"))
+            day = int(match.group("day"))
+            spans.append(
+                (
+                    start,
+                    end,
+                    f"date:{year:04d}-{month:02d}-{day:02d}",
+                    "date",
+                )
+            )
+            spans.append((start, end, f"num:{year}", "year"))
+            occupied.append((start, end))
+    for match in GENERIC_NUMBER_PATTERN.finditer(value):
+        start, end = match.span()
+        if any(start < used_end and end > used_start for used_start, used_end in occupied):
+            continue
+        normalized = match.group(0).replace(",", "")
+        spans.append((start, end, f"num:{normalized}", "number"))
+    return spans
+
+
+def _numeric_claims(value: str) -> set[str]:
+    return {claim for _, _, claim, _ in _numeric_claim_spans(value)}
+
+
+def _sanitize_unsupported_numeric_claims(
+    value: str | None,
+    allowed_claims: set[str],
+) -> tuple[str | None, bool]:
+    if value is None:
+        return None, False
+    replacements = [
+        (
+            start,
+            end,
+            "근거 확인 필요 시점" if kind == "date" else "근거 확인 필요 수치",
+        )
+        for start, end, claim, kind in _numeric_claim_spans(value)
+        if claim not in allowed_claims and kind != "year"
+    ]
+    if not replacements:
+        return value, False
+    sanitized = value
+    for start, end, replacement in sorted(replacements, reverse=True):
+        sanitized = sanitized[:start] + replacement + sanitized[end:]
+    return sanitized, True
+
+
+def _sanitize_required_numeric_claims(
+    value: str,
+    allowed_claims: set[str],
+) -> tuple[str, bool]:
+    sanitized, changed = _sanitize_unsupported_numeric_claims(value, allowed_claims)
+    if sanitized is None:
+        raise AssertionError("required text cannot become null")
+    return sanitized, changed
+
+
+def _sanitize_proposal_numeric_claims(
+    proposal: RecommendationProposal,
+    evidence_rows: list[dict[str, Any]],
+    case_title: str | None,
+) -> None:
+    allowed_claims = _numeric_claims(case_title or "")
+    for row in evidence_rows:
+        allowed_claims.update(
+            _numeric_claims(
+                " ".join(
+                    (
+                        str(row.get("excerpt") or ""),
+                        str(row.get("locator") or ""),
+                        str(row.get("document_title") or ""),
+                        str(row.get("document_number") or ""),
+                        str(row.get("published_at") or ""),
+                    )
+                )
+            )
+        )
+    changed = False
+    proposal.situation_summary, summary_changed = _sanitize_required_numeric_claims(
+        proposal.situation_summary,
+        allowed_claims,
+    )
+    changed |= summary_changed
+    for attribute in ("required_checks", "uncertainties", "conflicts"):
+        values = getattr(proposal, attribute)
+        sanitized_values: list[str] = []
+        for value in values:
+            sanitized, value_changed = _sanitize_required_numeric_claims(
+                value,
+                allowed_claims,
+            )
+            sanitized_values.append(sanitized)
+            changed |= value_changed
+        setattr(proposal, attribute, sanitized_values)
+    for action in proposal.actions:
+        action.title, title_changed = _sanitize_required_numeric_claims(
+            action.title,
+            allowed_claims,
+        )
+        action.description, description_changed = _sanitize_required_numeric_claims(
+            action.description,
+            allowed_claims,
+        )
+        action.due_guidance, due_changed = _sanitize_unsupported_numeric_claims(
+            action.due_guidance,
+            allowed_claims,
+        )
+        sanitized_checklist: list[str] = []
+        checklist_changed = False
+        for value in action.checklist:
+            sanitized, value_changed = _sanitize_required_numeric_claims(
+                value,
+                allowed_claims,
+            )
+            sanitized_checklist.append(sanitized)
+            checklist_changed |= value_changed
+        action.checklist = sanitized_checklist
+        action_changed = (
+            title_changed
+            or description_changed
+            or due_changed
+            or checklist_changed
+        )
+        if action_changed:
+            action.evidence_status = "INSUFFICIENT"
+            action.warning = (
+                "근거에서 확인되지 않은 수치를 초안에서 제거했습니다."
+            )
+        changed |= action_changed
+    if changed:
+        proposal.answer_evidence_status = "INSUFFICIENT"
+        proposal.answer_warning = (
+            "근거에서 확인되지 않은 수치를 초안에서 제거했습니다."
+        )
+
+
 def recommendation_response_schema(
     evidence_rows: list[dict[str, Any]],
 ) -> dict[str, Any]:
@@ -347,6 +510,7 @@ def validate_recommendation_payload(
         raise RecommendationGenerationError(
             "RECOMMENDATION_OUTPUT_SCHEMA_INVALID"
         ) from error
+    _sanitize_proposal_numeric_claims(proposal, evidence_rows, case_title)
     evidence = {UUID(str(item["evidence_item_id"])): item for item in evidence_rows}
     validated_actions: list[ValidatedAction] = []
     for proposed_action in proposal.actions:
