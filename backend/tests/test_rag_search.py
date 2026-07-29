@@ -69,7 +69,7 @@ def test_case_query_prefers_korean_signal_terms_without_priority_noise() -> None
         }
     )
 
-    assert RETRIEVAL_VERSION == "rag-hybrid-rrf-v3"
+    assert RETRIEVAL_VERSION == "rag-hybrid-rrf-v4"
     assert query == "전남 목포시 조선소 화재 발생 전라남도 화재 소방"
     assert "URGENT" not in query
 
@@ -105,4 +105,29 @@ def test_context_selects_distinct_official_documents_before_second_chunks() -> N
 
     selected_chunk_ids = [item.row["chunk_id"] for item in selected]
     assert "f-1" in selected_chunk_ids
+    assert "a-2" not in selected_chunk_ids
+
+
+def test_context_fills_unused_slots_with_new_documents_before_duplicates() -> None:
+    official = [
+        candidate("a-1", document_id="document-a"),
+        candidate("a-2", document_id="document-a"),
+        *[
+            candidate(f"{letter}-1", document_id=f"document-{letter}")
+            for letter in "bcdefghijkl"
+        ],
+    ]
+
+    selected = select_context(
+        fuse_candidates(
+            official,
+            official,
+            primary_region_code="29",
+            today=date(2026, 7, 29),
+        )
+    )
+
+    selected_chunk_ids = [item.row["chunk_id"] for item in selected]
+    assert len(selected_chunk_ids) == 12
+    assert "l-1" in selected_chunk_ids
     assert "a-2" not in selected_chunk_ids

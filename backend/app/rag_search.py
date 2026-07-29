@@ -15,7 +15,7 @@ from app.ai_control import AiCostGate
 from app.config import Settings
 from app.upstage import UpstageEmbeddingClient
 
-RETRIEVAL_VERSION = "rag-hybrid-rrf-v3"
+RETRIEVAL_VERSION = "rag-hybrid-rrf-v4"
 RRF_K = 60
 MAX_CANDIDATES_PER_CHANNEL = 40
 MAX_SELECTED = 12
@@ -152,6 +152,20 @@ def select_context(candidates: list[FusedCandidate]) -> list[FusedCandidate]:
                 continue
             selected.append(candidate)
             per_document[document_id] = per_document.get(document_id, 0) + 1
+    if len(selected) < MAX_SELECTED:
+        selected_ids = {str(item.row["chunk_id"]) for item in selected}
+        for candidate in candidates:
+            document_id = str(candidate.row["document_id"])
+            if (
+                str(candidate.row["chunk_id"]) in selected_ids
+                or per_document.get(document_id, 0) >= 1
+            ):
+                continue
+            selected.append(candidate)
+            selected_ids.add(str(candidate.row["chunk_id"]))
+            per_document[document_id] = 1
+            if len(selected) == MAX_SELECTED:
+                break
     if len(selected) < MAX_SELECTED:
         selected_ids = {str(item.row["chunk_id"]) for item in selected}
         for candidate in candidates:
