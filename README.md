@@ -29,8 +29,9 @@
 
 ## 저장소와 데이터 경계
 
-- 애플리케이션 코드와 배포 설정만 이 서버 로컬 Git으로 관리한다.
-- 외부 Git remote를 등록하거나 push하지 않는다.
+- 공식 GitHub 저장소는 `https://github.com/Quinsie/ESafe`이며 기본 branch는 `main`이다.
+- 애플리케이션 코드와 배포 설정은 GitHub와 `Main:/data2/ESafe` 작업트리에서 같은 Git 이력으로 관리한다.
+- 배포 release는 검증된 `main` commit 전체 SHA로 식별하고 원자적 Conventional Commit 단위로 push한다.
 - `data/`, `storage/`, `artifacts/`, `backups/`, `secrets/`와 `.env`는 Git에서 제외한다.
 - API 키, 비밀번호, 원천 데이터, DB volume, 생성 문서와 테스트 산출물은 commit하지 않는다.
 - `/data2/ESafe/data`와 `storage/reference`는 사용자·기준 자산이다. 검증 없이 삭제하거나 덮어쓰지 않는다.
