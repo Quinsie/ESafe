@@ -11,6 +11,22 @@ EXPECTED_CATEGORIES = {
     "CONFLICT",
     "INSUFFICIENT",
 }
+KNOWN_EVALUATION_REGION_CODES = {
+    "29",
+    "29110",
+    "29140",
+    "29155",
+    "29170",
+    "29200",
+    "46",
+    "46170",
+    "46710",
+    "46720",
+    "46790",
+    "46860",
+    "46870",
+    "46880",
+}
 
 
 def test_rag_evaluation_fixture_has_30_reviewed_questions() -> None:
@@ -21,6 +37,9 @@ def test_rag_evaluation_fixture_has_30_reviewed_questions() -> None:
     assert len(questions) == 30
     assert len({question["id"] for question in questions}) == 30
     assert {question["category"] for question in questions} == EXPECTED_CATEGORIES
+    assert {
+        question["regionCode"] for question in questions
+    } <= KNOWN_EVALUATION_REGION_CODES
     assert all(question["rationale"].strip() for question in questions)
     assert all(question["supportTerms"] for question in questions)
 
