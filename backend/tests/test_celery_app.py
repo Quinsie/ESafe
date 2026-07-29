@@ -41,6 +41,12 @@ def test_runtime_heartbeat_contains_no_cross_profile_state() -> None:
     assert result["status"] == "UP"
 
 
+def test_rag_retrieval_task_is_registered_per_profile() -> None:
+    application = create_celery_app(demo_settings())
+
+    assert "esafe.retrieve_case_evidence" in application.tasks
+
+
 def test_signal_dispatch_is_ten_minutes_with_bounded_jitter(monkeypatch) -> None:
     application = create_celery_app(demo_settings())
     sender = Mock()

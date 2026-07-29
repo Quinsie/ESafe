@@ -84,6 +84,18 @@ def create_celery_app(settings: Settings) -> Celery:
             raise ValueError(f"unsupported signal source: {source_name}") from error
         return asyncio.run(run_signal_poll(settings, source))
 
+    @application.task(
+        name="esafe.retrieve_case_evidence",
+        shared=False,
+        lazy=False,
+    )
+    def retrieve_case_evidence(case_id: str) -> dict[str, Any]:
+        from uuid import UUID
+
+        from app.rag_search import run_case_retrieval
+
+        return asyncio.run(run_case_retrieval(settings, UUID(case_id)))
+
     return application
 
 

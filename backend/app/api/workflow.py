@@ -1,14 +1,18 @@
+import hashlib
 from datetime import datetime
 from typing import Annotated, Any
-from uuid import UUID
+from uuid import UUID, uuid5
 
 from fastapi import APIRouter, Depends, Header, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
+from redis.asyncio import Redis
+from sqlalchemy import text
 
 from app.api.auth import require_csrf, require_session
 from app.api.responses import envelope
 from app.auth import AuthenticatedSession
+from app.celery_app import celery_app
 from app.workflow import (
     WorkflowContractError,
     case_closure_review,
@@ -74,6 +78,78 @@ def _not_found(request: Request, code: str, message: str) -> JSONResponse:
     return JSONResponse(
         status_code=404,
         content=envelope(request, None, error={"code": code, "message": message}),
+    )
+
+
+@router.post("/cases/{case_id}/evidence/retrieve", status_code=202)
+async def post_case_evidence_retrieval(
+    request: Request,
+    _: WriteSession,
+    case_id: UUID,
+    idempotency_key: Annotated[
+        str | None, Header(alias="Idempotency-Key")
+    ] = None,
+) -> Any:
+    if idempotency_key is None or not 8 <= len(idempotency_key) <= 200:
+        return JSONResponse(
+            status_code=400,
+            content=envelope(
+                request,
+                None,
+                error={
+                    "code": "IDEMPOTENCY_KEY_REQUIRED",
+                    "message": "8~200자의 Idempotency-Key가 필요합니다.",
+                },
+            ),
+        )
+    async with request.app.state.db_engine.connect() as connection:
+        exists = (
+            await connection.execute(
+                text("SELECT 1 FROM case_record WHERE case_id = :case_id"),
+                {"case_id": case_id},
+            )
+        ).scalar_one_or_none()
+    if exists is None:
+        return _not_found(request, "CASE_NOT_FOUND", "Case를 찾을 수 없습니다.")
+    settings = request.app.state.settings
+    digest = hashlib.sha256(
+        f"{settings.profile}:{case_id}:{idempotency_key}".encode()
+    ).hexdigest()
+    redis_key = f"rag:retrieve:idempotency:{digest}"
+    task_id = str(uuid5(case_id, digest))
+    redis = Redis.from_url(settings.redis_url, decode_responses=True)
+    try:
+        created = bool(
+            await redis.set(
+                redis_key,
+                task_id,
+                ex=24 * 60 * 60,
+                nx=True,
+            )
+        )
+        if created:
+            try:
+                celery_app.send_task(
+                    "esafe.retrieve_case_evidence",
+                    args=[str(case_id)],
+                    task_id=task_id,
+                    queue=settings.celery_queue,
+                )
+            except Exception:
+                await redis.delete(redis_key)
+                raise
+        else:
+            task_id = str(await redis.get(redis_key))
+    finally:
+        await redis.aclose()
+    return envelope(
+        request,
+        {
+            "caseId": str(case_id),
+            "taskId": task_id,
+            "status": "QUEUED",
+            "reused": not created,
+        },
     )
 
 
