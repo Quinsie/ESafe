@@ -70,11 +70,12 @@ async def _begin_poll(
     engine: AsyncEngine,
     settings: Settings,
     source: SignalSource,
+    idempotency_key_override: str | None = None,
 ) -> tuple[UUID, frozenset[str]] | None:
     now = datetime.now(UTC)
     bucket = int(now.timestamp()) // 600
     poll_id = uuid4()
-    idempotency_key = f"{settings.profile}:{source.value}:{bucket}"
+    idempotency_key = idempotency_key_override or (f"{settings.profile}:{source.value}:{bucket}")
     async with engine.begin() as connection:
         health = (
             (
@@ -379,6 +380,11 @@ async def _store_success(
     poll_id: UUID,
     batch: SourceBatch,
     scenario_id: UUID | None,
+    *,
+    run_type: str = "SIGNAL_POLL",
+    trigger_type: str = "SCHEDULED",
+    audit_action: str = "SIGNAL_POLL_COMPLETED",
+    reason_code: str | None = None,
 ) -> dict[str, object]:
     now = datetime.now(UTC)
     response_hashes = [_sha256(document.body) for document in batch.documents]
@@ -488,7 +494,7 @@ async def _store_success(
                     source, input_version, output_version, rule_version,
                     idempotency_key, started_at, finished_at, metadata
                 )
-                SELECT :run_id, :profile, 'SIGNAL_POLL', 'SCHEDULED', 'SUCCEEDED',
+                SELECT :run_id, :profile, :run_type, :trigger_type, 'SUCCEEDED',
                        source, response_sha256, :output_version, :rule_version,
                        'poll:' || poll_id::text, started_at, finished_at,
                        CAST(:metadata AS jsonb)
@@ -498,6 +504,8 @@ async def _store_success(
             {
                 "run_id": run_id,
                 "profile": settings.profile,
+                "run_type": run_type,
+                "trigger_type": trigger_type,
                 "output_version": aggregate_hash,
                 "rule_version": CONTRACT_VERSION,
                 "metadata": _json(
@@ -506,6 +514,7 @@ async def _store_success(
                         "inserted": inserted,
                         "updated": updated,
                         "unchanged": unchanged,
+                        "reasonCode": reason_code,
                     }
                 ),
                 "poll_id": poll_id,
@@ -520,7 +529,7 @@ async def _store_success(
                     output_sha256, metadata
                 )
                 VALUES (
-                    :audit_id, :profile, 'SYSTEM', 'SIGNAL_POLL_COMPLETED',
+                    :audit_id, :profile, 'SYSTEM', :audit_action,
                     'source_poll', :target_id, CAST(:reason AS jsonb),
                     :correlation_id, :idempotency_key, :output_sha256,
                     CAST(:metadata AS jsonb)
@@ -530,8 +539,14 @@ async def _store_success(
             {
                 "audit_id": uuid4(),
                 "profile": settings.profile,
+                "audit_action": audit_action,
                 "target_id": str(poll_id),
-                "reason": _json({"source": batch.source.value}),
+                "reason": _json(
+                    {
+                        "source": batch.source.value,
+                        "reasonCode": reason_code,
+                    }
+                ),
                 "correlation_id": poll_id,
                 "idempotency_key": f"audit:poll:{poll_id}",
                 "output_sha256": aggregate_hash,
@@ -563,6 +578,10 @@ async def _store_failure(
     source: SignalSource,
     poll_id: UUID,
     error: Exception,
+    *,
+    run_type: str = "SIGNAL_POLL",
+    trigger_type: str = "SCHEDULED",
+    reason_code: str | None = None,
 ) -> dict[str, object]:
     now = datetime.now(UTC)
     status_code = error.status_code if isinstance(error, SourceRequestError) else None
@@ -646,7 +665,7 @@ async def _store_failure(
                     source, rule_version, retry_count, error_class,
                     idempotency_key, started_at, finished_at, metadata
                 )
-                SELECT :run_id, :profile, 'SIGNAL_POLL', 'SCHEDULED', 'FAILED',
+                SELECT :run_id, :profile, :run_type, :trigger_type, 'FAILED',
                        source, :rule_version, :retry_count, :error_class,
                        'poll:' || poll_id::text, started_at, finished_at,
                        CAST(:metadata AS jsonb)
@@ -656,10 +675,18 @@ async def _store_failure(
             {
                 "run_id": uuid4(),
                 "profile": settings.profile,
+                "run_type": run_type,
+                "trigger_type": trigger_type,
                 "rule_version": CONTRACT_VERSION,
                 "retry_count": failure_count,
                 "error_class": error_class,
-                "metadata": _json({"blocked": blocked, "schemaError": schema_error}),
+                "metadata": _json(
+                    {
+                        "blocked": blocked,
+                        "schemaError": schema_error,
+                        "reasonCode": reason_code,
+                    }
+                ),
                 "poll_id": poll_id,
             },
         )
@@ -696,6 +723,64 @@ async def run_signal_poll(
         except Exception as error:
             if isinstance(error, (SourceRequestError, PayloadSchemaError, RuntimeError)):
                 return await _store_failure(engine, settings, source, poll_id, error)
+            raise
+    finally:
+        await engine.dispose()
+
+
+async def run_kma_source_repair(
+    settings: Settings,
+    client: httpx.AsyncClient | None = None,
+) -> dict[str, object]:
+    if settings.profile != "LIVE":
+        raise RuntimeError("KMA source repair is available only in LIVE")
+    source = SignalSource.KMA_WARNING
+    repair_version = "message-window-v2"
+    engine = create_async_engine(settings.database_url, pool_pre_ping=True)
+    try:
+        started = await _begin_poll(
+            engine,
+            settings,
+            source,
+            idempotency_key_override=(f"{settings.profile}:{source.value}:repair:{repair_version}"),
+        )
+        if started is None:
+            return {
+                "status": "SKIPPED",
+                "source": source.value,
+                "reason": "ALREADY_APPLIED_OR_SOURCE_DELAYED",
+            }
+        poll_id, _ = started
+        try:
+            batch, scenario_id = await _fetch_batch(
+                settings,
+                source,
+                frozenset(),
+                client,
+            )
+            return await _store_success(
+                engine,
+                settings,
+                poll_id,
+                batch,
+                scenario_id,
+                run_type="SIGNAL_SOURCE_REPAIR",
+                trigger_type="USER",
+                audit_action="KMA_SOURCE_REPAIR_COMPLETED",
+                reason_code="KMA_MESSAGE_WINDOW_CONTRACT_CORRECTION",
+            )
+        except Exception as error:
+            if isinstance(error, (SourceRequestError, PayloadSchemaError, RuntimeError)):
+                return await _store_failure(
+                    engine,
+                    settings,
+                    source,
+                    poll_id,
+                    error,
+                    run_type="SIGNAL_SOURCE_REPAIR",
+                    trigger_type="USER",
+                    reason_code="KMA_MESSAGE_WINDOW_CONTRACT_CORRECTION",
+                )
             raise
     finally:
         await engine.dispose()

@@ -1,5 +1,6 @@
 import argparse
 import asyncio
+import json
 from collections.abc import Sequence
 from uuid import uuid4
 
@@ -8,6 +9,8 @@ from sqlalchemy.ext.asyncio import create_async_engine
 
 from app.config import get_settings
 from app.security import hash_password
+from app.signals.ingestion import run_kma_source_repair
+from app.signals.reprocess import reprocess_kma_events
 
 
 async def seed_system_metadata() -> None:
@@ -105,7 +108,7 @@ async def seed_system_metadata() -> None:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="python -m app.cli")
-    parser.add_argument("command", choices=("seed",))
+    parser.add_argument("command", choices=("seed", "reprocess-kma", "repair-kma-source"))
     return parser
 
 
@@ -113,6 +116,12 @@ def main(argv: Sequence[str] | None = None) -> None:
     args = build_parser().parse_args(argv)
     if args.command == "seed":
         asyncio.run(seed_system_metadata())
+    elif args.command == "reprocess-kma":
+        result = asyncio.run(reprocess_kma_events(get_settings()))
+        print(json.dumps(result, ensure_ascii=False, sort_keys=True))
+    elif args.command == "repair-kma-source":
+        result = asyncio.run(run_kma_source_repair(get_settings()))
+        print(json.dumps(result, ensure_ascii=False, sort_keys=True))
 
 
 if __name__ == "__main__":

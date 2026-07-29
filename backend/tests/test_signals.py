@@ -16,6 +16,7 @@ from app.signals.adapters import (
     fetch_kma_warnings,
     fetch_nfds,
 )
+from app.signals.reprocess import parse_stored_kma_payload
 
 
 def _settings() -> Settings:
@@ -128,9 +129,44 @@ def test_kma_does_not_confuse_gyeonggi_gwangju_with_gwangju_metropolitan() -> No
     assert result.is_relevant is False
 
 
+def test_kma_does_not_use_nationwide_status_appendix_as_announcement_scope() -> None:
+    result = parse_kma_warning(
+        {
+            "stnId": "108",
+            "tmFc": "202607291200",
+            "tmSeq": "449",
+            "title": "[특보] 서울특별시 폭염주의보 발표",
+        },
+        {
+            "t1": "폭염주의보 발표",
+            "t2": "o 폭염주의보 : 서울특별시",
+            "t6": "현재 특보현황 : 광주광역시와 전라남도 호우경보",
+        },
+    )
+    assert result.region_codes == ()
+    assert result.is_relevant is False
+
+
 def test_kma_requires_official_list_identity_fields() -> None:
     with pytest.raises(PayloadSchemaError):
         parse_kma_warning({"title": "폭염경보"})
+
+
+def test_stored_kma_payload_reuses_the_canonical_parser() -> None:
+    result = parse_stored_kma_payload(
+        {
+            "listItem": {
+                "stnId": "108",
+                "tmFc": "202607291200",
+                "tmSeq": "449",
+                "title": "[특보] 폭염주의보 발표",
+            },
+            "detailItem": {"t2": "o 폭염주의보 : 전라남도(나주)"},
+        }
+    )
+    assert result.region_codes == ("46",)
+    with pytest.raises(PayloadSchemaError):
+        parse_stored_kma_payload({"detailItem": {}})
 
 
 def test_disaster_message_parses_relevant_rows_and_sequence() -> None:
@@ -199,7 +235,7 @@ async def test_nfds_adapter_requests_only_gwangju_and_jeonnam() -> None:
 
 
 @pytest.mark.asyncio
-async def test_kma_adapter_fetches_detail_only_for_unknown_announcements() -> None:
+async def test_kma_adapter_joins_list_and_message_windows_by_identity() -> None:
     calls: list[str] = []
 
     def envelope(items: list[dict[str, object]]) -> dict[str, object]:
@@ -232,9 +268,23 @@ async def test_kma_adapter_fetches_detail_only_for_unknown_announcements() -> No
                     ]
                 ),
             )
+        assert request.url.params["fromTmFc"]
+        assert request.url.params["toTmFc"]
+        assert "tmFc" not in request.url.params
+        assert "tmSeq" not in request.url.params
         return httpx.Response(
             200,
-            json=envelope([{"t2": "o 호우주의보 : 전라남도(나주)"}]),
+            json=envelope(
+                [
+                    {
+                        "stnId": "108",
+                        "tmFc": "202607291100",
+                        "tmSeq": "2",
+                        "t2": "o 호우주의보 : 전라남도(나주)",
+                    },
+                    {"stnId": "108", "tmFc": "202607291000", "tmSeq": "1"},
+                ]
+            ),
         )
 
     known = frozenset({"108:202607291000:1"})
@@ -244,8 +294,43 @@ async def test_kma_adapter_fetches_detail_only_for_unknown_announcements() -> No
         "/WthrWrnInfoService/getWthrWrnList",
         "/WthrWrnInfoService/getWthrWrnMsg",
     ]
+    assert len(batch.documents) == 2
     assert len(batch.records) == 1
     assert batch.records[0].signal.external_id == "108:202607291100:2"
+    assert batch.records[0].signal.region_codes == ("46",)
+    assert batch.records[0].document_index == 1
+
+
+@pytest.mark.asyncio
+async def test_kma_adapter_fails_closed_when_message_identity_is_missing() -> None:
+    def envelope(items: list[dict[str, object]]) -> dict[str, object]:
+        return {
+            "response": {
+                "header": {"resultCode": "00"},
+                "body": {"items": {"item": items}},
+            }
+        }
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("getWthrWrnList"):
+            return httpx.Response(
+                200,
+                json=envelope(
+                    [
+                        {
+                            "stnId": "108",
+                            "tmFc": "202607291100",
+                            "tmSeq": "2",
+                            "title": "호우주의보 발표",
+                        }
+                    ]
+                ),
+            )
+        return httpx.Response(200, json=envelope([]))
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        with pytest.raises(SourcePayloadError):
+            await fetch_kma_warnings(_settings(), client)
 
 
 @pytest.mark.asyncio

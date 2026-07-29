@@ -13,7 +13,7 @@ from app.signals.contracts import (
     normalize_space,
 )
 
-PARSER_VERSION: Final = "kma-warning-v1"
+PARSER_VERSION: Final = "kma-warning-v2"
 KST: Final = ZoneInfo("Asia/Seoul")
 _WARNING_TYPES: Final = (
     "호우",
@@ -82,13 +82,17 @@ def parse_kma_warning(
     detail_text = " ".join(
         value for key in ("t1", "t2", "t3", "t6", "t7") if (value := _value(detail, key))
     )
-    combined = normalize_space(f"{title} {detail_text}")
-    region_codes, region_names = _affected_regions(combined)
-    warning_type = _warning_type(combined)
-    is_resolved = "해제" in combined and not any(
-        token in combined for token in ("발효", "발령", "변경")
+    # t6 is a nationwide current-status appendix, not the affected area of
+    # this announcement. Only the announcement/action fields decide scope.
+    decision_text = normalize_space(f"{title} {_value(detail, 't1')} {_value(detail, 't2')}")
+    region_codes, region_names = _affected_regions(decision_text)
+    warning_type = _warning_type(decision_text)
+    is_resolved = "해제" in decision_text and not any(
+        token in decision_text for token in ("발효", "발령", "변경")
     )
-    severity = "WARNING" if "경보" in combined else ("WATCH" if "주의보" in combined else None)
+    severity = (
+        "WARNING" if "경보" in decision_text else ("WATCH" if "주의보" in decision_text else None)
+    )
     published_at = _parse_tm_fc(forecast_time)
     return CanonicalSignal(
         source=SignalSource.KMA_WARNING,

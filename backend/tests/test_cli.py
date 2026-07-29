@@ -8,8 +8,10 @@ from app.security import (
 )
 
 
-def test_seed_command_is_explicit() -> None:
+def test_mutating_commands_are_explicit() -> None:
     assert build_parser().parse_args(["seed"]).command == "seed"
+    assert build_parser().parse_args(["reprocess-kma"]).command == "reprocess-kma"
+    assert build_parser().parse_args(["repair-kma-source"]).command == "repair-kma-source"
 
 
 def test_argon2id_password_contract() -> None:
@@ -27,6 +29,4 @@ def test_session_tokens_are_one_way_and_constant_time_comparable() -> None:
     assert raw_token not in stored
     assert tokens_match(stored, raw_token)
     assert not tokens_match(stored, "other")
-    assert request_fingerprint("s" * 32, "client") == request_fingerprint(
-        "s" * 32, "client"
-    )
+    assert request_fingerprint("s" * 32, "client") == request_fingerprint("s" * 32, "client")

@@ -186,6 +186,10 @@ def _kma_url(settings: Settings, operation: str, parameters: dict[str, object]) 
     return f"{settings.kma_warning_base_url}/{operation}?ServiceKey={key}&{query}"
 
 
+def _kma_external_id(item: dict[str, object]) -> str:
+    return f"{item.get('stnId', '')}:{item.get('tmFc', '')}:{item.get('tmSeq', '')}"
+
+
 async def fetch_kma_warnings(
     settings: Settings,
     client: httpx.AsyncClient,
@@ -207,7 +211,14 @@ async def fetch_kma_warnings(
         _kma_url(settings, "getWthrWrnList", parameters),
         headers={"User-Agent": settings.signal_user_agent},
     )
-    documents = [_document("warning-list", "JSON", list_response, {"operation": "list"})]
+    documents = [
+        _document(
+            "warning-list",
+            "JSON",
+            list_response,
+            {"operation": "list", "windowDays": 7},
+        )
+    ]
     try:
         list_payload = list_response.json()
     except json.JSONDecodeError as error:
@@ -216,46 +227,50 @@ async def fetch_kma_warnings(
         items = _kma_items(list_payload)
     except PayloadSchemaError as error:
         raise SourcePayloadError(SignalSource.KMA_WARNING, tuple(documents)) from error
+
+    try:
+        detail_response = await _request(
+            client,
+            SignalSource.KMA_WARNING,
+            "GET",
+            _kma_url(settings, "getWthrWrnMsg", parameters),
+            headers={"User-Agent": settings.signal_user_agent},
+        )
+    except SourceRequestError as error:
+        raise error.with_documents(tuple(documents)) from error
+    documents.append(
+        _document(
+            "warning-messages",
+            "JSON",
+            detail_response,
+            {"operation": "messages", "windowDays": 7},
+        )
+    )
+    try:
+        detail_items = _kma_items(detail_response.json())
+        details_by_id = {_kma_external_id(item): item for item in detail_items}
+        if len(details_by_id) != len(detail_items):
+            raise PayloadSchemaError("KMA warning messages contain duplicate identities")
+    except (json.JSONDecodeError, PayloadSchemaError) as error:
+        raise SourcePayloadError(SignalSource.KMA_WARNING, tuple(documents)) from error
+
     records: list[SourceRecord] = []
     for item in items:
-        external_id = f"{item.get('stnId', '')}:{item.get('tmFc', '')}:{item.get('tmSeq', '')}"
+        external_id = _kma_external_id(item)
         if external_id in known_external_ids:
             continue
-        detail_parameters = dict(parameters)
-        detail_parameters["numOfRows"] = 10
-        detail_parameters["tmFc"] = item.get("tmFc", "")
-        detail_parameters["tmSeq"] = item.get("tmSeq", "")
+        detail = details_by_id.get(external_id)
+        if detail is None:
+            raise SourcePayloadError(SignalSource.KMA_WARNING, tuple(documents))
         try:
-            detail_response = await _request(
-                client,
-                SignalSource.KMA_WARNING,
-                "GET",
-                _kma_url(settings, "getWthrWrnMsg", detail_parameters),
-                headers={"User-Agent": settings.signal_user_agent},
-            )
-        except SourceRequestError as error:
-            raise error.with_documents(tuple(documents)) from error
-        document_index = len(documents)
-        documents.append(
-            _document(
-                f"warning-detail-{external_id}",
-                "JSON",
-                detail_response,
-                {"operation": "detail", "externalId": external_id},
-            )
-        )
-        try:
-            detail_payload = detail_response.json()
-            detail_items = _kma_items(detail_payload)
-            detail = detail_items[0] if detail_items else {}
             signal = parse_kma_warning(item, detail)
-        except (json.JSONDecodeError, PayloadSchemaError) as error:
+        except PayloadSchemaError as error:
             raise SourcePayloadError(SignalSource.KMA_WARNING, tuple(documents)) from error
         records.append(
             SourceRecord(
                 signal,
                 {"listItem": item, "detailItem": detail},
-                document_index,
+                1,
             )
         )
     return SourceBatch(
