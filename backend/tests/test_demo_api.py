@@ -7,6 +7,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.api.auth import require_session
+from app.api.demo import ResetBody
 from app.auth import AuthenticatedSession
 from app.config import Settings
 from app.demo.playback import _reset_rows, require_demo_profile
@@ -97,6 +98,16 @@ def test_demo_catalog_live_error_contract(monkeypatch) -> None:
         assert response.json()["error"]["code"] == "DEMO_PROFILE_REQUIRED"
     finally:
         app.dependency_overrides.clear()
+
+
+def test_demo_reset_contract_allows_switching_to_unstarted_scenario() -> None:
+    body = ResetBody.model_validate(
+        {"expectedVersion": None, "activeExpectedVersion": 7, "confirmed": True}
+    )
+
+    assert body.expected_version is None
+    assert body.active_expected_version == 7
+    assert body.confirmed
 
 
 class _ResetResult:

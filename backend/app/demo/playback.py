@@ -648,7 +648,8 @@ async def reset_scenario(
     *,
     profile: str,
     scenario_id: UUID,
-    expected_version: int,
+    expected_version: int | None,
+    active_expected_version: int | None,
     confirmed: bool,
     actor_user_id: UUID,
     idempotency_key: str,
@@ -666,37 +667,90 @@ async def reset_scenario(
         scenario = await _scenario(connection, scenario_id, True)
         steps = scenario_steps(str(scenario["code"]))
         active = await _active(connection, True)
-        if active and UUID(str(active["demo_scenario_id"])) != scenario_id:
+        active_is_target = bool(
+            active and UUID(str(active["demo_scenario_id"])) == scenario_id
+        )
+        playback = active if active_is_target else await _latest(connection, scenario_id, True)
+        if playback is not None:
+            _version(playback, expected_version)
+        elif expected_version is not None:
             raise WorkflowContractError(
                 409,
-                "DEMO_PLAYBACK_ACTIVE",
-                "다른 체험 시나리오가 실행 중입니다. 해당 시나리오를 먼저 초기화해 주세요.",
+                "DEMO_PLAYBACK_VERSION_CONFLICT",
+                "시나리오 상태가 변경되었습니다. 최신 상태를 다시 확인해 주세요.",
+                {"expectedVersion": expected_version, "actualVersion": None},
             )
-        playback = active or await _latest(connection, scenario_id, True)
-        if not playback:
-            raise WorkflowContractError(
-                409, "DEMO_PLAYBACK_NOT_CREATED", "먼저 시나리오를 시작해 주세요."
+        if active is not None:
+            expected_active = (
+                expected_version
+                if active_is_target and active_expected_version is None
+                else active_expected_version
             )
-        _version(playback, expected_version)
+            _version(active, expected_active)
         counts, paths = await _reset_rows(connection)
         now = datetime.now(UTC)
-        row = dict(
-            (
-                await connection.execute(
-                    text(
-                        "UPDATE demo_playback SET status='READY',current_step=0,generation=generation+1,version=version+1,started_at=NULL,paused_at=NULL,completed_at=NULL,updated_at=:now WHERE demo_playback_id=:id RETURNING *"
-                    ),
-                    {"now": now, "id": playback["demo_playback_id"]},
-                )
+        replaced_scenario_id: str | None = None
+        if active is not None and not active_is_target:
+            replaced_scenario_id = str(active["demo_scenario_id"])
+            await connection.execute(
+                text(
+                    """
+                    UPDATE demo_playback
+                    SET status='COMPLETED', started_at=coalesce(started_at,:now),
+                        paused_at=NULL, completed_at=:now, version=version+1,
+                        updated_at=:now
+                    WHERE demo_playback_id=:id
+                    """
+                ),
+                {"now": now, "id": active["demo_playback_id"]},
             )
-            .mappings()
-            .one()
-        )
+        if playback is not None:
+            row = dict(
+                (
+                    await connection.execute(
+                        text(
+                            "UPDATE demo_playback SET status='READY',current_step=0,generation=generation+1,version=version+1,started_at=NULL,paused_at=NULL,completed_at=NULL,updated_at=:now WHERE demo_playback_id=:id RETURNING *"
+                        ),
+                        {"now": now, "id": playback["demo_playback_id"]},
+                    )
+                )
+                .mappings()
+                .one()
+            )
+        else:
+            generation = int(
+                (
+                    await connection.execute(
+                        text(
+                            "SELECT coalesce(max(generation),0)+1 FROM demo_playback WHERE demo_scenario_id=:id"
+                        ),
+                        {"id": scenario_id},
+                    )
+                ).scalar_one()
+            )
+            row = dict(
+                (
+                    await connection.execute(
+                        text(
+                            "INSERT INTO demo_playback (demo_playback_id,demo_scenario_id,status,current_step,generation,version,updated_at) VALUES (:pid,:sid,'READY',0,:generation,1,:now) RETURNING *"
+                        ),
+                        {
+                            "pid": uuid4(),
+                            "sid": scenario_id,
+                            "generation": generation,
+                            "now": now,
+                        },
+                    )
+                )
+                .mappings()
+                .one()
+            )
         data = {
             "scenarioId": str(scenario_id),
             "code": scenario["code"],
             "command": "RESET",
             "removed": counts,
+            "replacedScenarioId": replaced_scenario_id,
             "playback": _contract(row, len(steps)),
         }
         pid = UUID(str(row["demo_playback_id"]))

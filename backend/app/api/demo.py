@@ -32,7 +32,11 @@ class VersionBody(BaseModel):
     expected_version: int = Field(alias="expectedVersion", ge=1)
 
 
-class ResetBody(VersionBody):
+class ResetBody(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    expected_version: int | None = Field(default=None, alias="expectedVersion", ge=1)
+    active_expected_version: int | None = Field(default=None, alias="activeExpectedVersion", ge=1)
     confirmed: bool = False
 
 
@@ -172,6 +176,7 @@ async def post_reset(
             profile=settings.profile,
             scenario_id=scenario_id,
             expected_version=body.expected_version,
+            active_expected_version=body.active_expected_version,
             confirmed=body.confirmed,
             actor_user_id=session.user_id,
             idempotency_key=str(idempotency_key),
