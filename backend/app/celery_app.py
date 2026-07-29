@@ -1,3 +1,5 @@
+import asyncio
+import secrets
 from datetime import UTC, datetime
 from typing import Any
 
@@ -28,7 +30,11 @@ def create_celery_app(settings: Settings) -> Celery:
             "runtime-heartbeat": {
                 "task": "esafe.runtime_heartbeat",
                 "schedule": 30.0,
-            }
+            },
+            "signal-dispatch": {
+                "task": "esafe.signal_dispatch",
+                "schedule": 600.0,
+            },
         },
     )
 
@@ -40,6 +46,38 @@ def create_celery_app(settings: Settings) -> Celery:
             "status": "UP",
             "timestamp": datetime.now(UTC).isoformat(),
         }
+
+    @application.task(name="esafe.signal_dispatch", shared=False, lazy=False)
+    def signal_dispatch() -> dict[str, Any]:
+        sources = ["KMA_WARNING", "DISASTER_MESSAGE"]
+        if settings.profile == "DEMO" or settings.nfds_enabled:
+            sources.insert(0, "NFDS")
+        scheduled = []
+        for source in sources:
+            countdown = secrets.randbelow(61)
+            application.send_task(
+                "esafe.poll_signal",
+                args=[source],
+                countdown=countdown,
+                queue=settings.celery_queue,
+            )
+            scheduled.append({"source": source, "countdownSeconds": countdown})
+        return {
+            "profile": settings.profile,
+            "scheduled": scheduled,
+            "timestamp": datetime.now(UTC).isoformat(),
+        }
+
+    @application.task(name="esafe.poll_signal", shared=False, lazy=False)
+    def poll_signal(source_name: str) -> dict[str, object]:
+        from app.signals.contracts import SignalSource
+        from app.signals.ingestion import run_signal_poll
+
+        try:
+            source = SignalSource(source_name)
+        except ValueError as error:
+            raise ValueError(f"unsupported signal source: {source_name}") from error
+        return asyncio.run(run_signal_poll(settings, source))
 
     return application
 

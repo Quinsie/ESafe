@@ -267,6 +267,8 @@ services:
       CELERY_RESULT_BACKEND: redis://:${REDIS_PASSWORD}@redis-live:6379/1
       CELERY_QUEUE: live
       UPSTAGE_API_KEY: ${UPSTAGE_API_KEY}
+      DATA_GO_KR_SERVICE_KEY: ${DATA_GO_KR_SERVICE_KEY}
+      NFDS_ENABLED: ${NFDS_ENABLED:-true}
     volumes:
       - ./storage/live:/srv/esafe/storage
       - ./storage/reference:/srv/esafe/reference:ro
@@ -307,6 +309,7 @@ services:
       CELERY_RESULT_BACKEND: redis://:${REDIS_PASSWORD}@redis-demo:6379/1
       CELERY_QUEUE: demo
       UPSTAGE_API_KEY: ${UPSTAGE_API_KEY}
+      NFDS_ENABLED: "false"
     volumes:
       - ./storage/demo:/srv/esafe/storage
       - ./storage/reference:/srv/esafe/reference:ro
@@ -344,7 +347,6 @@ services:
       CELERY_BROKER_URL: redis://:${REDIS_PASSWORD}@redis-live:6379/0
       CELERY_RESULT_BACKEND: redis://:${REDIS_PASSWORD}@redis-live:6379/1
       CELERY_QUEUE: live
-      DATA_GO_KR_SERVICE_KEY: ${DATA_GO_KR_SERVICE_KEY}
       NFDS_ENABLED: ${NFDS_ENABLED:-true}
     volumes:
       - ./storage/live:/srv/esafe/storage
