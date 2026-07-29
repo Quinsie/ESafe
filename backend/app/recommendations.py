@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Any, Literal
@@ -16,7 +17,7 @@ from app.config import Settings
 from app.upstage import UpstageChatClient
 
 PROMPT_VERSION = "case-recommendation-ko-v4"
-GENERATION_VERSION = "recommendation-generator-v4"
+GENERATION_VERSION = "recommendation-generator-v5"
 ALLOWED_PRIVACY_STATUSES = frozenset(("PUBLIC_SAFE", "MASKED_VERIFIED"))
 
 SYSTEM_PROMPT = """
@@ -178,6 +179,14 @@ def _clean_texts(values: list[str], *, maximum: int) -> tuple[str, ...]:
     return tuple(dict.fromkeys(result))
 
 
+def _recover_whitespace_exact_quote(quote: str, excerpt: str) -> str | None:
+    parts = quote.split()
+    if not parts:
+        return None
+    match = re.search(r"\s+".join(re.escape(part) for part in parts), excerpt)
+    return match.group(0) if match is not None else None
+
+
 def recommendation_response_schema(
     evidence_rows: list[dict[str, Any]],
 ) -> dict[str, Any]:
@@ -226,6 +235,11 @@ def validate_recommendation_payload(
                 continue
             excerpt = str(item["excerpt"])
             quote_is_exact = bool(quote and quote in excerpt)
+            if not quote_is_exact:
+                recovered_quote = _recover_whitespace_exact_quote(quote, excerpt)
+                if recovered_quote is not None:
+                    quote = recovered_quote
+                    quote_is_exact = True
             if not quote_is_exact:
                 quote = excerpt[:1200].strip()
                 if not quote:
