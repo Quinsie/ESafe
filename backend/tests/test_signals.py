@@ -1,5 +1,7 @@
+import httpx
 import pytest
 
+from app.config import Settings
 from app.signals import (
     EventType,
     PayloadSchemaError,
@@ -8,17 +10,44 @@ from app.signals import (
     parse_kma_warning,
     parse_nfds,
 )
+from app.signals.adapters import (
+    SourcePayloadError,
+    fetch_disaster_messages,
+    fetch_kma_warnings,
+    fetch_nfds,
+)
 
 
-def test_nfds_parses_gwangju_record_and_coordinates() -> None:
-    payload = """<?xml version="1.0" encoding="UTF-8"?>
-    <response><defail><item>
-      <sidoOvrNum>29-2026-1004</sidoOvrNum><sidoNm>광주광역시</sidoNm>
-      <lawSidoCd>29</lawSidoCd><lawGunguCd>110</lawGunguCd>
-      <addr>광주광역시 동구 금남로 1</addr><frfalTypeCd>건물화재</frfalTypeCd>
-      <overDate>20260729101500</overDate><progressNm>출동 중</progressNm>
-      <longitude>126.92</longitude><latitude>35.15</latitude>
-    </item></defail></response>"""
+def _settings() -> Settings:
+    return Settings.model_validate(
+        {
+            "ESAFE_PROFILE": "LIVE",
+            "ESAFE_SESSION_SECRET": "test-session-secret-at-least-32-characters",
+            "DATA_GO_KR_SERVICE_KEY": "encoded%2Bkey",
+            "NFDS_MONITOR_URL": "https://nfds.test/monitorData.do",
+            "KMA_WARNING_BASE_URL": "https://kma.test/WthrWrnInfoService",
+            "DISASTER_MESSAGE_URL": "https://safety.test/disasterNotification",
+        }
+    )
+
+
+def test_nfds_parses_gwangju_json_record_and_coordinates() -> None:
+    payload = {
+        "defail": [
+            {
+                "sidoOvrNum": "29-2026-1004",
+                "sidoNm": "광주광역시",
+                "lawSidoCd": "29",
+                "lawGunguCd": "110",
+                "addr": "광주광역시 동구 금남로 1",
+                "frfalTypeCd": "건물화재",
+                "overDate": "20260729101500",
+                "progressNm": "출동 중",
+                "longitude": 126.92,
+                "latitude": 35.15,
+            }
+        ]
+    }
     result = parse_nfds(payload)
     assert len(result) == 1
     assert result[0].external_id == "29-2026-1004"
@@ -29,28 +58,41 @@ def test_nfds_parses_gwangju_record_and_coordinates() -> None:
 
 
 def test_nfds_preserves_resolved_update_and_filters_other_region() -> None:
-    payload = """<defail>
-      <item><sidoOvrNum>46-1</sidoOvrNum><sidoNm>전라남도</sidoNm>
-        <lawSidoCd>46</lawSidoCd><addr>전남 나주시</addr><progressNm>상황종료</progressNm>
-      </item>
-      <item><sidoOvrNum>11-1</sidoOvrNum><sidoNm>서울특별시</sidoNm>
-        <lawSidoCd>11</lawSidoCd><addr>서울 중구</addr><progressNm>출동 중</progressNm>
-      </item>
-    </defail>"""
+    payload = {
+        "defail": [
+            {
+                "sidoOvrNum": "46-1",
+                "sidoNm": "전라남도",
+                "lawSidoCd": "46",
+                "addr": "전남 나주시",
+                "progressNm": "상황종료",
+            },
+            {
+                "sidoOvrNum": "11-1",
+                "sidoNm": "서울특별시",
+                "lawSidoCd": "11",
+                "addr": "서울 중구",
+                "progressNm": "출동 중",
+            },
+        ]
+    }
     result = parse_nfds(payload)
     assert result[0].source_status == SourceStatus.RESOLVED
     assert result[0].region_codes == ("46",)
     assert result[1].is_relevant is False
 
 
-@pytest.mark.parametrize("payload", ["<response/>", "<defail><item>"])
-def test_nfds_fails_closed_on_schema_or_xml_change(payload: str) -> None:
+@pytest.mark.parametrize(
+    "payload",
+    [{"other": []}, {"defail": "changed"}, b"\xff\xfe"],
+)
+def test_nfds_fails_closed_on_schema_or_json_change(payload: object) -> None:
     with pytest.raises(PayloadSchemaError):
-        parse_nfds(payload)
+        parse_nfds(payload)  # type: ignore[arg-type]
 
 
 def test_nfds_accepts_valid_empty_container() -> None:
-    assert parse_nfds("<response><defail /></response>") == []
+    assert parse_nfds({"defail": []}) == []
 
 
 def test_kma_uses_detail_regions_and_stable_announcement_id() -> None:
@@ -105,6 +147,7 @@ def test_disaster_message_parses_relevant_rows_and_sequence() -> None:
     assert [item.external_id for item in result] == ["56720", "56719"]
     assert result[0].is_relevant is True
     assert result[0].event_subtype == "호우"
+    assert result[0].source_published_at is not None
     assert result[1].is_relevant is False
 
 
@@ -125,3 +168,127 @@ def test_repeat_parsing_is_deterministic() -> None:
     <td>2026-07-29 11:00</td></tr></table>
     """
     assert parse_disaster_messages(page) == parse_disaster_messages(page)
+
+
+@pytest.mark.asyncio
+async def test_nfds_adapter_requests_only_gwangju_and_jeonnam() -> None:
+    requested: list[str] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        form = (await request.aread()).decode()
+        requested.append(form)
+        code = form.rsplit("=", 1)[-1]
+        return httpx.Response(
+            200,
+            json={
+                "defail": [
+                    {
+                        "sidoOvrNum": f"{code}-1",
+                        "lawSidoCd": code,
+                        "sidoNm": "광주광역시" if code == "29" else "전라남도",
+                    }
+                ]
+            },
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        batch = await fetch_nfds(_settings(), client)
+    assert requested == ["sidoCode=29", "sidoCode=46"]
+    assert len(batch.documents) == 2
+    assert [record.signal.external_id for record in batch.records] == ["29-1", "46-1"]
+
+
+@pytest.mark.asyncio
+async def test_kma_adapter_fetches_detail_only_for_unknown_announcements() -> None:
+    calls: list[str] = []
+
+    def envelope(items: list[dict[str, object]]) -> dict[str, object]:
+        return {
+            "response": {
+                "header": {"resultCode": "00"},
+                "body": {"items": {"item": items}},
+            }
+        }
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request.url.path)
+        if request.url.path.endswith("getWthrWrnList"):
+            return httpx.Response(
+                200,
+                json=envelope(
+                    [
+                        {
+                            "stnId": "108",
+                            "tmFc": "202607291000",
+                            "tmSeq": "1",
+                            "title": "폭염경보 발표",
+                        },
+                        {
+                            "stnId": "108",
+                            "tmFc": "202607291100",
+                            "tmSeq": "2",
+                            "title": "호우주의보 발표",
+                        },
+                    ]
+                ),
+            )
+        return httpx.Response(
+            200,
+            json=envelope([{"t2": "o 호우주의보 : 전라남도(나주)"}]),
+        )
+
+    known = frozenset({"108:202607291000:1"})
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        batch = await fetch_kma_warnings(_settings(), client, known)
+    assert calls == [
+        "/WthrWrnInfoService/getWthrWrnList",
+        "/WthrWrnInfoService/getWthrWrnMsg",
+    ]
+    assert len(batch.records) == 1
+    assert batch.records[0].signal.external_id == "108:202607291100:2"
+
+
+@pytest.mark.asyncio
+async def test_disaster_adapter_uses_one_fifty_item_page() -> None:
+    page = (
+        "<table><tr><td>100</td><td><a href='?sn=100'>"
+        "광주광역시 화재로 인근 주민은 대피 바랍니다.</a></td>"
+        "<td>2026-07-29 11:30</td></tr></table>"
+    )
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.params["currentPage"] == "1"
+        assert request.url.params["cntPerPage"] == "50"
+        return httpx.Response(200, text=page, headers={"content-type": "text/html"})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        batch = await fetch_disaster_messages(_settings(), client)
+    assert len(batch.documents) == 1
+    assert batch.records[0].signal.external_id == "100"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status_code", [403, 429, 500])
+async def test_adapters_surface_block_and_server_status(status_code: int) -> None:
+    async def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(status_code)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        with pytest.raises(RuntimeError) as error:
+            await fetch_disaster_messages(_settings(), client)
+    assert str(status_code) in str(error.value)
+
+
+@pytest.mark.asyncio
+async def test_schema_error_keeps_the_received_document() -> None:
+    async def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            text="<html><body>changed layout</body></html>",
+            headers={"content-type": "text/html"},
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        with pytest.raises(SourcePayloadError) as captured:
+            await fetch_disaster_messages(_settings(), client)
+    assert len(captured.value.documents) == 1

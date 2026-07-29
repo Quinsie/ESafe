@@ -40,6 +40,29 @@ class Settings(BaseSettings):
     )
     vworld_tile_url: str | None = Field(default=None, alias="VWORLD_TILE_URL")
     nfds_enabled: bool = Field(default=True, alias="NFDS_ENABLED")
+    data_go_kr_service_key: SecretStr | None = Field(
+        default=None,
+        alias="DATA_GO_KR_SERVICE_KEY",
+    )
+    nfds_monitor_url: str = Field(
+        default="https://www.nfds.go.kr/dashboard/monitorData.do",
+        alias="NFDS_MONITOR_URL",
+    )
+    kma_warning_base_url: str = Field(
+        default="https://apis.data.go.kr/1360000/WthrWrnInfoService",
+        alias="KMA_WARNING_BASE_URL",
+    )
+    disaster_message_url: str = Field(
+        default="https://www.safetydata.go.kr/disaster-data/disasterNotification",
+        alias="DISASTER_MESSAGE_URL",
+    )
+    signal_user_agent: str = Field(
+        default="ESafe-MVP/0.1 (+public-safety-monitoring)",
+        alias="ESAFE_SIGNAL_USER_AGENT",
+    )
+    signal_http_timeout_seconds: float = Field(
+        default=20.0, ge=2.0, le=60.0, alias="ESAFE_SIGNAL_HTTP_TIMEOUT_SECONDS"
+    )
     session_idle_seconds: int = Field(default=8 * 60 * 60, ge=60)
     session_absolute_seconds: int = Field(default=12 * 60 * 60, ge=60)
     login_rate_limit_attempts: int = Field(default=5, ge=1, le=100)
