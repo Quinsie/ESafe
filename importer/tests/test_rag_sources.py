@@ -68,7 +68,7 @@ def test_compressed_hwp_payload_remains_parseable() -> None:
 
 
 def test_text_normalization_removes_invalid_pdf_surrogates() -> None:
-    assert normalize_text("안전\ud800 점검") == "안전 점검"
+    assert normalize_text("안전\ud800\x00 점검") == "안전 점검"
 
 
 def test_privacy_masking_removes_all_supported_identifiers() -> None:

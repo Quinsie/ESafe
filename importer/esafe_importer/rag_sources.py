@@ -19,7 +19,7 @@ import olefile
 from lxml import etree
 from pypdf import PdfReader
 
-PARSER_VERSION = "rag-local-parser-v1"
+PARSER_VERSION = "rag-local-parser-v2"
 PRIVACY_VERSION = "rag-privacy-ko-v2"
 CHUNK_VERSION = "rag-paragraph-chunker-v2"
 
@@ -136,6 +136,7 @@ def compact_json_bytes(value: Any) -> bytes:
 
 def normalize_text(value: str) -> str:
     value = re.sub(r"[\ud800-\udfff]", "", value)
+    value = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]", " ", value)
     value = value.replace("\r\n", "\n").replace("\r", "\n")
     value = _WHITESPACE.sub(" ", value)
     value = "\n".join(line.strip() for line in value.splitlines())

@@ -203,7 +203,7 @@ services:
       LOG_LEVEL: INFO
     volumes:
       - ./storage/live:/srv/esafe/storage
-      - ./storage/reference/source-documents/${RAG_SOURCE_SNAPSHOT:-initial-20260729}/derived/${RAG_DERIVED_VERSION:-rag-local-parser-v1-rag-privacy-ko-v2-rag-paragraph-chunker-v2}:/srv/esafe/reference/rag:ro
+      - ./storage/reference/source-documents/${RAG_SOURCE_SNAPSHOT:-initial-20260729}/derived/${RAG_DERIVED_VERSION:-rag-local-parser-v2-rag-privacy-ko-v2-rag-paragraph-chunker-v2}:/srv/esafe/reference/rag:ro
     networks:
       - live-backend
       - edge
@@ -234,7 +234,7 @@ services:
       LOG_LEVEL: INFO
     volumes:
       - ./storage/demo:/srv/esafe/storage
-      - ./storage/reference/source-documents/${RAG_SOURCE_SNAPSHOT:-initial-20260729}/derived/${RAG_DERIVED_VERSION:-rag-local-parser-v1-rag-privacy-ko-v2-rag-paragraph-chunker-v2}:/srv/esafe/reference/rag:ro
+      - ./storage/reference/source-documents/${RAG_SOURCE_SNAPSHOT:-initial-20260729}/derived/${RAG_DERIVED_VERSION:-rag-local-parser-v2-rag-privacy-ko-v2-rag-paragraph-chunker-v2}:/srv/esafe/reference/rag:ro
     networks:
       - demo-backend
       - edge
@@ -271,7 +271,7 @@ services:
       NFDS_ENABLED: ${NFDS_ENABLED:-true}
     volumes:
       - ./storage/live:/srv/esafe/storage
-      - ./storage/reference/source-documents/${RAG_SOURCE_SNAPSHOT:-initial-20260729}/derived/${RAG_DERIVED_VERSION:-rag-local-parser-v1-rag-privacy-ko-v2-rag-paragraph-chunker-v2}:/srv/esafe/reference/rag:ro
+      - ./storage/reference/source-documents/${RAG_SOURCE_SNAPSHOT:-initial-20260729}/derived/${RAG_DERIVED_VERSION:-rag-local-parser-v2-rag-privacy-ko-v2-rag-paragraph-chunker-v2}:/srv/esafe/reference/rag:ro
     networks:
       - live-backend
       - outbound
@@ -312,7 +312,7 @@ services:
       NFDS_ENABLED: "false"
     volumes:
       - ./storage/demo:/srv/esafe/storage
-      - ./storage/reference/source-documents/${RAG_SOURCE_SNAPSHOT:-initial-20260729}/derived/${RAG_DERIVED_VERSION:-rag-local-parser-v1-rag-privacy-ko-v2-rag-paragraph-chunker-v2}:/srv/esafe/reference/rag:ro
+      - ./storage/reference/source-documents/${RAG_SOURCE_SNAPSHOT:-initial-20260729}/derived/${RAG_DERIVED_VERSION:-rag-local-parser-v2-rag-privacy-ko-v2-rag-paragraph-chunker-v2}:/srv/esafe/reference/rag:ro
     networks:
       - demo-backend
       - outbound
@@ -467,6 +467,38 @@ services:
     volumes:
       - ./storage/reference:/reference
     network_mode: "none"
+
+  import-rag-live:
+    <<: *importer-common
+    entrypoint: ["python", "-m", "esafe_importer.rag_index"]
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db-live:5432/${LIVE_DATABASE_NAME}
+      RAG_DERIVED_ROOT: /reference/rag
+    volumes:
+      - ./storage/reference/source-documents/${RAG_SOURCE_SNAPSHOT:-initial-20260729}/derived/${RAG_DERIVED_VERSION:-rag-local-parser-v2-rag-privacy-ko-v2-rag-paragraph-chunker-v2}:/reference/rag:ro
+    networks:
+      - live-backend
+    depends_on:
+      db-live:
+        condition: service_healthy
+      migrate-live:
+        condition: service_completed_successfully
+
+  import-rag-demo:
+    <<: *importer-common
+    entrypoint: ["python", "-m", "esafe_importer.rag_index"]
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db-demo:5432/${DEMO_DATABASE_NAME}
+      RAG_DERIVED_ROOT: /reference/rag
+    volumes:
+      - ./storage/reference/source-documents/${RAG_SOURCE_SNAPSHOT:-initial-20260729}/derived/${RAG_DERIVED_VERSION:-rag-local-parser-v2-rag-privacy-ko-v2-rag-paragraph-chunker-v2}:/reference/rag:ro
+    networks:
+      - demo-backend
+    depends_on:
+      db-demo:
+        condition: service_healthy
+      migrate-demo:
+        condition: service_completed_successfully
 
   gateway:
     image: esafe-gateway:${ESAFE_APP_VERSION:-dev}
