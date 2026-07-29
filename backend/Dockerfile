@@ -1,4 +1,4 @@
-FROM python:3.12-slim-bookworm AS runtime
+FROM python:3.12-slim-bookworm AS backend-base
 
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
@@ -13,6 +13,9 @@ RUN groupadd --gid 10001 esafe \
 
 COPY backend/requirements.txt /tmp/requirements.txt
 RUN python -m pip install --requirement /tmp/requirements.txt
+
+
+FROM backend-base AS runtime
 
 COPY --chown=esafe:esafe backend/app /app/app
 COPY --chown=esafe:esafe backend/alembic /app/alembic
@@ -29,11 +32,18 @@ HEALTHCHECK --interval=15s --timeout=3s --start-period=20s --retries=4 \
 
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers", "--forwarded-allow-ips=*"]
 
-FROM runtime AS test
 
-USER root
+FROM backend-base AS test-dependencies
+
 COPY backend/requirements-dev.txt /tmp/requirements-dev.txt
 RUN python -m pip install --requirement /tmp/requirements-dev.txt
+
+
+FROM test-dependencies AS test
+
+COPY backend/app /app/app
+COPY backend/alembic /app/alembic
+COPY backend/alembic.ini /app/alembic.ini
 COPY backend/pyproject.toml /app/pyproject.toml
 COPY backend/tests /app/tests
 RUN ruff check app alembic tests && mypy app alembic && pytest
