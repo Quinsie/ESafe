@@ -45,3 +45,4 @@ Thumbs.db
 
 # Generated documents and reports
 *.hwpx
+!backend/app/assets/document_templates/*.hwpx
