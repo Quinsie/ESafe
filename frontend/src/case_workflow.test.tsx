@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
@@ -8,6 +8,7 @@ import { resolveProfile } from "./profile";
 const caseId = "00000000-0000-4000-8000-000000000301";
 const workItemId = "00000000-0000-4000-8000-000000000801";
 const checklistItemId = "00000000-0000-4000-8000-000000000901";
+const approvalId = "00000000-0000-4000-8000-000000000401";
 
 function response(data: unknown, status = 200): Response {
   return {
@@ -152,7 +153,12 @@ const workItem = {
   ],
 };
 
-function installFetch() {
+function installFetch({
+  recommendationInitiallyMissing = false,
+}: {
+  recommendationInitiallyMissing?: boolean;
+} = {}) {
+  let evidenceReads = 0;
   vi.stubGlobal(
     "fetch",
     vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -168,8 +174,44 @@ function installFetch() {
       if (url.endsWith("/sources/health")) {
         return response(envelope({ summary: "HEALTHY", dataAsOf: null, sources: [] }));
       }
+      if (url.endsWith(`/cases/${caseId}/recommendations/generate`)) {
+        return response(
+          envelope({
+            caseId,
+            taskId: "00000000-0000-4000-8000-000000000799",
+            status: "QUEUED",
+            reused: false,
+          }),
+          202,
+        );
+      }
+      if (
+        url.endsWith(
+          `/recommendations/${evidence.recommendation.recommendationId}/approval-requests`,
+        )
+      ) {
+        return response(
+          envelope({
+            approvalRequestId: approvalId,
+            recommendationId: evidence.recommendation.recommendationId,
+            version: 1,
+            status: "APPROVAL_PENDING",
+            reused: false,
+          }),
+          201,
+        );
+      }
       if (url.endsWith(`/cases/${caseId}/evidence`)) {
-        return response(envelope(evidence));
+        evidenceReads += 1;
+        return response(
+          envelope({
+            ...evidence,
+            recommendation:
+              recommendationInitiallyMissing && evidenceReads === 1
+                ? null
+                : evidence.recommendation,
+          }),
+        );
       }
       if (url.endsWith(`/cases/${caseId}/work-items`)) {
         return response(
@@ -284,6 +326,43 @@ describe("case workflow screens", () => {
     expect(screen.getByRole("link", { name: "과업 열기" })).toHaveAttribute(
       "href",
       `/demo/cases/${caseId}/tasks/${workItemId}`,
+    );
+  });
+
+  it("queues a recommendation after evidence retrieval and renders the result", async () => {
+    installFetch({ recommendationInitiallyMissing: true });
+    renderApp(`/demo/cases/${caseId}/evidence`);
+
+    const generate = await screen.findByRole("button", {
+      name: "대응안 생성",
+    });
+    await userEvent.click(generate);
+
+    expect(
+      await screen.findByText("공장 화재 신호의 전기안전 초동 확인이 필요합니다."),
+    ).toBeVisible();
+    expect(screen.getByRole("button", { name: "대응안 다시 생성" })).toBeVisible();
+    expect(fetch).toHaveBeenCalledWith(
+      expect.stringContaining(`/cases/${caseId}/recommendations/generate`),
+      expect.objectContaining({ method: "POST" }),
+    );
+  });
+
+  it("requests recommendation approval and navigates to the explanation screen", async () => {
+    installFetch();
+    vi.stubGlobal("scrollTo", vi.fn());
+    renderApp(`/demo/cases/${caseId}/evidence`);
+
+    await userEvent.click(await screen.findByRole("button", { name: "대응안 검토·승인" }));
+
+    await waitFor(() => {
+      expect(window.location.pathname).toBe(`/demo/approvals/${approvalId}`);
+    });
+    expect(fetch).toHaveBeenCalledWith(
+      expect.stringContaining(
+        `/recommendations/${evidence.recommendation.recommendationId}/approval-requests`,
+      ),
+      expect.objectContaining({ method: "POST" }),
     );
   });
 

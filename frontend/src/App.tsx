@@ -31,6 +31,11 @@ const AutomationManagement = lazy(() =>
     default: module.AutomationManagement,
   })),
 );
+const ApprovalManagement = lazy(() =>
+  import("./approvals").then((module) => ({
+    default: module.ApprovalManagement,
+  })),
+);
 
 interface SessionData {
   user: {
@@ -84,6 +89,9 @@ function routeTitle(path: string): string | undefined {
   }
   if (/^\/cases\/[^/]+/.test(path)) {
     return "Case 상세";
+  }
+  if (/^\/approvals\/[0-9a-f-]+$/i.test(path)) {
+    return "검토·승인";
   }
   return undefined;
 }
@@ -392,6 +400,18 @@ function AuthenticatedShell({
           }
         >
           <AutomationManagement currentPath={currentPath} runtime={runtime} />
+        </Suspense>
+      ) : currentPath === "/approvals" || /^\/approvals\/[0-9a-f-]+$/i.test(currentPath) ? (
+        <Suspense
+          fallback={
+            <main className="page" id="main-content">
+              <div className="auth-loading" role="status">
+                검토·승인 화면을 준비하고 있습니다.
+              </div>
+            </main>
+          }
+        >
+          <ApprovalManagement currentPath={currentPath} runtime={runtime} />
         </Suspense>
       ) : title ? (
         <SectionPlaceholder title={title} />

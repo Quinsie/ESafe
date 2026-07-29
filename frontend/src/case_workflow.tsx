@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { ApiError, apiRequest } from "./api";
 import { formatKst } from "./home";
 import type { ProfileRuntime } from "./profile";
-import { AppLink } from "./router";
+import { AppLink, navigateInternal } from "./router";
 
 type EvidenceStatus = "SUFFICIENT" | "INSUFFICIENT" | "CONFLICT";
 type WorkStatus =
@@ -359,7 +359,10 @@ function CaseEvidence({
 }) {
   const queryClient = useQueryClient();
   const [retrieving, setRetrieving] = useState(false);
+  const [generating, setGenerating] = useState(false);
+  const [generationTimedOut, setGenerationTimedOut] = useState(false);
   const previousBundleId = useRef<string | null>(null);
+  const previousRecommendationId = useRef<string | null>(null);
   const evidence = useQuery({
     queryKey: ["case-evidence", runtime.profile, caseId],
     queryFn: () =>
@@ -367,7 +370,7 @@ function CaseEvidence({
         (result) => result.data,
       ),
     staleTime: 15_000,
-    refetchInterval: retrieving ? 2_000 : false,
+    refetchInterval: retrieving || generating ? 2_000 : false,
   });
   const retrieve = useMutation({
     mutationFn: () =>
@@ -390,6 +393,43 @@ function CaseEvidence({
     },
     onError: () => setRetrieving(false),
   });
+  const generate = useMutation({
+    mutationFn: () =>
+      apiRequest<{ caseId: string; taskId: string; status: string; reused: boolean }>(
+        runtime,
+        `/cases/${caseId}/recommendations/generate`,
+        {
+          method: "POST",
+          headers: { "Idempotency-Key": idempotencyKey("recommendation") },
+        },
+      ),
+    onMutate: () => {
+      previousRecommendationId.current = evidence.data?.recommendation?.recommendationId ?? null;
+      setGenerationTimedOut(false);
+      setGenerating(true);
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({
+        queryKey: ["case-evidence", runtime.profile, caseId],
+      });
+    },
+    onError: () => setGenerating(false),
+  });
+  const requestApproval = useMutation({
+    mutationFn: (recommendationId: string) =>
+      apiRequest<{ approvalRequestId: string }>(
+        runtime,
+        `/recommendations/${recommendationId}/approval-requests`,
+        {
+          method: "POST",
+          headers: { "Idempotency-Key": idempotencyKey("approval-request") },
+        },
+      ).then((result) => result.data),
+    onSuccess: (result) => {
+      navigateInternal(runtime, `/approvals/${result.approvalRequestId}`);
+      window.scrollTo({ behavior: "auto", left: 0, top: 0 });
+    },
+  });
 
   useEffect(() => {
     if (!retrieving || !evidence.data) return;
@@ -399,6 +439,26 @@ function CaseEvidence({
       (previousBundleId.current === null || currentBundleId !== previousBundleId.current);
     if (completedNewRun) setRetrieving(false);
   }, [evidence.data, retrieving]);
+
+  useEffect(() => {
+    if (!generating || !evidence.data?.recommendation) return;
+    const currentRecommendationId = evidence.data.recommendation.recommendationId;
+    if (
+      previousRecommendationId.current === null ||
+      currentRecommendationId !== previousRecommendationId.current
+    ) {
+      setGenerating(false);
+    }
+  }, [evidence.data, generating]);
+
+  useEffect(() => {
+    if (!generating) return;
+    const timeout = window.setTimeout(() => {
+      setGenerating(false);
+      setGenerationTimedOut(true);
+    }, 90_000);
+    return () => window.clearTimeout(timeout);
+  }, [generating]);
 
   if (evidence.isLoading)
     return <WorkflowState message="근거 기반 대응 절차를 준비하고 있습니다." />;
@@ -416,7 +476,9 @@ function CaseEvidence({
   const completedActions = actions.filter(
     (action) => action.workItemStatus === "COMPLETED" || action.status === "COMPLETED",
   ).length;
-  const directActions = actions.filter((action) => action.citations.length > 0).length;
+  const directActions = actions.filter((action) =>
+    action.citations.some((citation) => citation.supportType === "DIRECT"),
+  ).length;
   const citationCoverage = actions.length ? Math.round((directActions / actions.length) * 100) : 0;
   const steps = [
     { label: "신호 확인", state: "complete" },
@@ -559,10 +621,42 @@ function CaseEvidence({
             <h2>대응 제안과 수행과업</h2>
             <p>각 행동은 직접 인용과 경고를 분리해 표시합니다.</p>
           </div>
-          <span>
-            {completedActions}/{actions.length} 완료
-          </span>
+          <button
+            className="workflow-primary-action"
+            disabled={
+              data.retrievalState !== "COMPLETED" || retrieving || generate.isPending || generating
+            }
+            onClick={() => generate.mutate()}
+            type="button"
+          >
+            {generate.isPending || generating
+              ? "대응안 생성 중…"
+              : data.recommendation
+                ? "대응안 다시 생성"
+                : "대응안 생성"}
+          </button>
         </div>
+        <p className="recommendation-progress">
+          승인된 과업 {completedActions}/{actions.length} 완료
+        </p>
+        {generate.isError ? (
+          <div className="workflow-inline-error" role="alert">
+            {queryMessage(generate.error, "대응안 생성 작업을 시작하지 못했습니다.")}
+          </div>
+        ) : null}
+        {requestApproval.isError ? (
+          <div className="workflow-inline-error" role="alert">
+            {queryMessage(requestApproval.error, "승인 검토 요청을 만들지 못했습니다.")}
+          </div>
+        ) : null}
+        {generationTimedOut ? (
+          <div className="evidence-warning insufficient" role="status">
+            <strong>생성 상태 확인 필요</strong>
+            <span>
+              작업이 지연되었거나 현재 입력과 같을 수 있습니다. 잠시 후 다시 확인해 주세요.
+            </span>
+          </div>
+        ) : null}
         {!data.recommendation ? (
           <div className="workflow-empty">
             구조화된 대응 제안이 아직 생성되지 않았습니다. 검색 근거만으로 자동 조치를 실행하지
@@ -591,6 +685,7 @@ function CaseEvidence({
                       {action.citations.length ? (
                         action.citations.map((citation) => (
                           <span key={citation.citationId}>
+                            {citation.supportType === "DIRECT" ? "직접" : "참고"} ·{" "}
                             {citation.documentTitle} · {citation.locator}
                           </span>
                         ))
@@ -617,6 +712,16 @@ function CaseEvidence({
           </>
         )}
         <div className="workflow-next-actions">
+          {data.recommendation ? (
+            <button
+              className="workflow-action-link"
+              disabled={requestApproval.isPending}
+              onClick={() => requestApproval.mutate(data.recommendation?.recommendationId ?? "")}
+              type="button"
+            >
+              {requestApproval.isPending ? "승인 검토 준비 중…" : "대응안 검토·승인"}
+            </button>
+          ) : null}
           <AppLink
             className="workflow-action-link"
             currentPath={currentPath}

@@ -7,6 +7,7 @@ from fastapi.responses import JSONResponse
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import create_async_engine
 
+from app.api.approvals import router as approvals_router
 from app.api.auth import AuthError
 from app.api.auth import router as auth_router
 from app.api.automation import router as automation_router
@@ -53,6 +54,7 @@ app = FastAPI(
 )
 app.add_middleware(RequestContextMiddleware)
 app.include_router(auth_router)
+app.include_router(approvals_router)
 app.include_router(health_router)
 app.include_router(automation_router)
 app.include_router(home_router)
