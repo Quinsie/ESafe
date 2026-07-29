@@ -7,7 +7,7 @@ from uuid import uuid4
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine
 
-from app.ai_control import AiCostGate, initialize_ai_control
+from app.ai_control import CONTROL_SCHEMA_VERSION, AiCostGate, initialize_ai_control
 from app.config import get_settings
 from app.rag_embeddings import build_embedding_bundle
 from app.security import hash_password
@@ -157,7 +157,12 @@ def main(argv: Sequence[str] | None = None) -> None:
         print(json.dumps(result, ensure_ascii=False, sort_keys=True))
     elif args.command == "init-ai-control":
         asyncio.run(initialize_ai_control(get_settings()))
-        print(json.dumps({"status": "SUCCESS", "schemaVersion": 1}, sort_keys=True))
+        print(
+            json.dumps(
+                {"status": "SUCCESS", "schemaVersion": CONTROL_SCHEMA_VERSION},
+                sort_keys=True,
+            )
+        )
     elif args.command == "probe-upstage-embedding":
         result = asyncio.run(probe_upstage_embedding())
         print(json.dumps(result, ensure_ascii=False, sort_keys=True))
