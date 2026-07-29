@@ -195,6 +195,9 @@ services:
       ESAFE_PUBLIC_USER_ID: ${ESAFE_PUBLIC_USER_ID:-user}
       ESAFE_PUBLIC_USER_PASSWORD: ${ESAFE_PUBLIC_USER_PASSWORD}
       NFDS_ENABLED: ${NFDS_ENABLED:-true}
+      NFDS_MONITOR_URL: ${NFDS_MONITOR_URL:-https://www.nfds.go.kr/dashboard/monitorData.do}
+      KMA_WARNING_BASE_URL: ${KMA_WARNING_BASE_URL:-https://apis.data.go.kr/1360000/WthrWrnInfoService}
+      DISASTER_MESSAGE_URL: ${DISASTER_MESSAGE_URL:-https://www.safetydata.go.kr/disaster-data/disasterNotification}
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db-live:5432/${LIVE_DATABASE_NAME}
     networks:
       - live-backend
@@ -322,6 +325,9 @@ services:
       UPSTAGE_COST_HARD_STOP_USD: ${UPSTAGE_COST_HARD_STOP_USD:-450}
       DATA_GO_KR_SERVICE_KEY: ${DATA_GO_KR_SERVICE_KEY}
       NFDS_ENABLED: ${NFDS_ENABLED:-true}
+      NFDS_MONITOR_URL: ${NFDS_MONITOR_URL:-https://www.nfds.go.kr/dashboard/monitorData.do}
+      KMA_WARNING_BASE_URL: ${KMA_WARNING_BASE_URL:-https://apis.data.go.kr/1360000/WthrWrnInfoService}
+      DISASTER_MESSAGE_URL: ${DISASTER_MESSAGE_URL:-https://www.safetydata.go.kr/disaster-data/disasterNotification}
     volumes:
       - ./storage/live:/srv/esafe/storage
       - ./storage/reference/source-documents/${RAG_SOURCE_SNAPSHOT:-initial-20260729}/derived/${RAG_DERIVED_VERSION:-rag-local-parser-v2-rag-privacy-ko-v2-rag-paragraph-chunker-v2}:/srv/esafe/reference/rag:ro
@@ -521,6 +527,9 @@ services:
       CELERY_RESULT_BACKEND: redis://:${REDIS_PASSWORD}@redis-live:6379/1
       CELERY_QUEUE: live
       NFDS_ENABLED: ${NFDS_ENABLED:-true}
+      NFDS_MONITOR_URL: ${NFDS_MONITOR_URL:-https://www.nfds.go.kr/dashboard/monitorData.do}
+      KMA_WARNING_BASE_URL: ${KMA_WARNING_BASE_URL:-https://apis.data.go.kr/1360000/WthrWrnInfoService}
+      DISASTER_MESSAGE_URL: ${DISASTER_MESSAGE_URL:-https://www.safetydata.go.kr/disaster-data/disasterNotification}
     volumes:
       - ./storage/live:/srv/esafe/storage
     networks:

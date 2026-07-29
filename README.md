@@ -56,10 +56,10 @@ docker compose config --quiet
 - `UPSTAGE_API_KEY`: Solar Pro 3 및 Solar Embedding 2 호출 키
 - `DATA_GO_KR_SERVICE_KEY`: 기상특보·재난문자 공공 API 인증키
 - `NFDS_ENABLED`: `false`이면 다음 관련 서비스 재시작부터 NFDS 외부 호출만 중단
-- `UPSTAGE_COST_HARD_STOP_USD`: 내부 누적 추정비용 하드 중단선, 기본 450 USD
-- `UPSTAGE_CHAT_TIMEOUT_SECONDS`: 비동기 대응안 생성의 provider 응답 제한시간, 기본 180초
+- `ESAFE_COOKIE_SECURE`: Quick Tunnel 공개 배포에서는 반드시 `true`; 로컬 HTTP 전용 격리 환경에서만 `false`
+- `UPSTAGE_CHAT_TIMEOUT_SECONDS`: 비동기 대응안 생성의 provider 응답 제한시간
 
-키와 비용값은 브라우저나 로그에 노출하지 않는다. 개인정보가 포함된 자료는 서버 내부 비식별 검증을 통과한 사본만 Upstage에 전송한다.
+키와 내부 비용 설정은 브라우저·사용자 API·로그에 노출하지 않는다. 개인정보가 포함된 자료는 서버 내부 비식별 검증을 통과한 사본만 Upstage에 전송한다. Quick Tunnel을 시작하기 전에 `ESAFE_COOKIE_SECURE=true`인지 확인한다.
 
 ### 공용 로그인 비밀번호 교체
 
@@ -141,6 +141,21 @@ cat storage/runtime/public-url.txt
 
 공개 주소 한 개에 `/live/`와 `/demo/`를 붙여 사용한다. 일반 앱 build·재시작에는 tunnel compose project를 건드리지 않아 현재 주소를 유지한다. 서버 재부팅이나 `cloudflared` 컨테이너 재생성 시 주소가 바뀔 수 있으며, 이 경우 `public-url.txt`의 새 주소만 안내한다.
 
+### 외부 신호 어댑터 주소 교체
+
+공식 제공처가 URL을 바꾸거나 정식 API로 전환할 때는 코드를 수정하기 전에 `.env`의 전체 endpoint를 바꾼다. `NFDS_MONITOR_URL`, `KMA_WARNING_BASE_URL`, `DISASTER_MESSAGE_URL`은 각각 실제 요청 가능한 전체 기준 경로여야 하며 키는 기존 secret 변수에만 둔다.
+
+```bash
+cd /data2/ESafe
+docker compose config --quiet
+docker compose up -d --no-build worker-live scheduler-live api-live
+docker compose logs --tail=100 worker-live scheduler-live
+./scripts/smoke.sh
+./scripts/verify-tunnel.sh
+```
+
+교체 후 `LIVE / 자동화 기록`에서 HTTP·파서 상태와 다음 호출시각을 확인한다. 계약 확인 전에는 이전 어댑터를 제거하거나 DEMO fixture를 LIVE 대체값으로 사용하지 않는다.
+
 ## 비개발자 사용자 설명서
 
 ### 1. 로그인과 홈
@@ -194,6 +209,15 @@ LLM은 사건 존재·중복·지역·거리·위험순위·상태 전이를 결
 2. 시작 후 `다음 단계`로 원천 응답 → 파싱 → 정규화 → Case 생성·갱신 경로를 통제해서 재생한다.
 3. 필요하면 일시정지하고 화면을 촬영하거나 다른 기능을 확인한다.
 4. `처음부터 초기화`는 현재 시나리오가 만든 DEMO Case·업무·문서 초안만 제거한다. LIVE나 공유 기준자산에는 영향을 주지 않는다.
+5. 촬영은 `DS-01 화재 전체 여정 → H-01D → Case → 근거·대응 → 문서·승인 → HWPX·PDF → 위험지도` 순서를 권장한다.
+6. 이어서 `DS-02`의 기상특보 변경·해제, `DS-05`의 장애·복구, `DS-06`의 충분·부족·충돌 근거를 짧게 확인한다.
+
+화면 표기의 의미:
+
+- `실시간 연동`은 LIVE 실제 어댑터, `체험 데이터`는 DEMO 원천형 fixture를 뜻한다.
+- 위험구간은 광주·전남 상대순위이며 발생확률이 아니다. 기준월과 60일 horizon을 함께 확인한다.
+- `근거 충분`은 직접 공식근거가 있는 상태이고, `근거 부족`과 `근거 충돌`은 사용자 확인과 승인 사유가 필요한 상태다.
+- 소스 `지연`·`수집 장애`는 기존 Case가 사라졌다는 뜻이 아니다. 마지막 성공시각과 자동화 실행기록을 확인한다.
 
 ## 검사
 
@@ -224,6 +248,30 @@ docker compose restart api-live api-demo worker-live worker-demo scheduler-live 
 - AI 비용 하드 중단이나 Upstage 장애가 발생해도 기존 근거·캐시·초안 조회와 결정적 Case 처리는 유지된다.
 - 비동기 작업이 멈추면 Redis, worker, scheduler 순으로 상태와 로그를 확인한다. 같은 입력은 멱등키와 캐시로 중복 실행을 억제한다.
 - 외부 주소 장애 시 앱을 재생성하지 말고 먼저 `./scripts/verify-tunnel.sh`와 tunnel 로그를 확인한다.
+
+시작·중지·업데이트:
+
+```bash
+# 앱만 중지·재개하며 별도 Quick Tunnel 컨테이너는 건드리지 않는다.
+docker compose stop
+docker compose start
+
+# 새 commit의 이미지를 만든 뒤 같은 commit 값으로 재배포한다.
+release_commit=$(git rev-parse HEAD)
+sed -i "s/^ESAFE_APP_VERSION=.*/ESAFE_APP_VERSION=$release_commit/" .env
+sed -i "s/^ESAFE_BUILD_COMMIT=.*/ESAFE_BUILD_COMMIT=$release_commit/" .env
+docker compose build api-live db-live document-worker-live gateway
+docker compose up -d --no-build
+./scripts/smoke.sh
+```
+
+흔한 오류와 복구:
+
+- 로그인이 반복 실패하면 입력값을 확인하고 제한시간이 지난 뒤 다시 시도한다. 비밀번호 노출이 의심되면 `rotate-public-password.sh`를 실행한다.
+- `소스 지연` 또는 `수집 장애`면 `worker-live`, `scheduler-live` 로그와 제공처 응답을 확인한다. LIVE에 fixture를 넣어 숨기지 않는다.
+- 문서 산출물 한 형식만 실패하면 화면의 재시도를 사용하고 document worker 로그를 확인한다. 승인본을 직접 덮어쓰지 않는다.
+- 공개 주소만 열리지 않으면 앱을 재배포하지 말고 tunnel health와 `public-url.txt`를 먼저 확인한다. 주소가 바뀌면 새 값만 안내한다.
+- DB·Redis가 비정상이면 쓰기를 반복하지 말고 healthcheck, 최근 백업 checksum, 복원시험 결과 순으로 확인한다.
 
 ## 백업과 복원
 
