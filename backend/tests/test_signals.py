@@ -111,9 +111,39 @@ def test_kma_uses_detail_regions_and_stable_announcement_id() -> None:
     }
     result = parse_kma_warning(item, detail)
     assert result.external_id == "108:202607291000:447"
-    assert result.region_codes == ("29", "46")
+    assert result.region_codes == ("29", "46170", "46230")
+    assert result.region_names == ("광주광역시", "전라남도 나주시", "전라남도 광양시")
     assert result.severity == "WARNING"
+    assert result.title.endswith("폭염경보 발표")
     assert result.is_relevant is True
+
+
+def test_kma_preserves_specific_jeonnam_municipalities() -> None:
+    result = parse_kma_warning(
+        {
+            "stnId": "108",
+            "tmFc": "202607291030",
+            "tmSeq": "4471",
+            "title": "[특보] 호우주의보 발표",
+        },
+        {"t1": "호우주의보 발표", "t2": "o 호우주의보 : 전라남도(나주, 광양)"},
+    )
+    assert result.region_codes == ("46170", "46230")
+    assert result.location_precision == "SIGUNGU"
+
+
+def test_kma_exclusion_group_falls_back_to_parent_scope() -> None:
+    result = parse_kma_warning(
+        {
+            "stnId": "108",
+            "tmFc": "202607291040",
+            "tmSeq": "4472",
+            "title": "[특보] 강풍주의보 발표",
+        },
+        {"t2": "o 강풍주의보 : 전라남도(거문도.초도 제외)"},
+    )
+    assert result.region_codes == ("46",)
+    assert result.location_precision == "SIDO"
 
 
 def test_kma_does_not_confuse_gyeonggi_gwangju_with_gwangju_metropolitan() -> None:
@@ -165,7 +195,7 @@ def test_stored_kma_payload_reuses_the_canonical_parser() -> None:
             "detailItem": {"t2": "o 폭염주의보 : 전라남도(나주)"},
         }
     )
-    assert result.region_codes == ("46",)
+    assert result.region_codes == ("46170",)
     with pytest.raises(PayloadSchemaError):
         parse_stored_kma_payload({"detailItem": {}})
 
@@ -298,7 +328,7 @@ async def test_kma_adapter_joins_list_and_message_windows_by_identity() -> None:
     assert len(batch.documents) == 2
     assert len(batch.records) == 1
     assert batch.records[0].signal.external_id == "108:202607291100:2"
-    assert batch.records[0].signal.region_codes == ("46",)
+    assert batch.records[0].signal.region_codes == ("46170",)
     assert batch.records[0].document_index == 1
 
 

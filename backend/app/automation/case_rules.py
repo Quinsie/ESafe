@@ -92,7 +92,7 @@ def select_impact_scope(
         raise ValueError("a signal without a point must identify an administrative region")
     warning = (
         "LOCATION_PRECISION_SIDO"
-        if all(len(region_code) == 2 for region_code in signal.region_codes)
+        if any(len(region_code) == 2 for region_code in signal.region_codes)
         else None
     )
     return ImpactScope(

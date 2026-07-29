@@ -133,7 +133,7 @@ async def _insert_scope(
     if not region_codes:
         raise ValueError("a Case without a point must identify a primary region")
     precision_warning = (
-        "LOCATION_PRECISION_SIDO" if all(len(code) == 2 for code in region_codes) else None
+        "LOCATION_PRECISION_SIDO" if any(len(code) == 2 for code in region_codes) else None
     )
     await connection.execute(
         text(
@@ -296,6 +296,47 @@ async def _insert_region_buildings(
     )
 
 
+async def _missing_region_codes(
+    connection: AsyncConnection,
+    region_codes: tuple[str, ...],
+) -> tuple[str, ...]:
+    rows = (
+        (
+            await connection.execute(
+                text(
+                    """
+                    SELECT requested.code
+                    FROM unnest(CAST(:region_codes AS varchar(10)[]))
+                         WITH ORDINALITY AS requested(code, ordinal)
+                    WHERE NOT EXISTS (
+                        SELECT 1
+                        FROM admin_region region
+                        JOIN building b ON b.region_code = region.region_code
+                        JOIN building_risk_snapshot risk
+                          ON risk.building_id = b.building_id
+                         AND risk.reference_month = DATE '2026-03-01'
+                         AND risk.horizon_days = 60
+                         AND risk.lineage_version = :lineage_version
+                         AND risk.source_class = 'V27_1_FOCUS_FINAL_SCORE'
+                         AND NOT risk.is_synthetic
+                        WHERE region.region_code = requested.code
+                           OR region.parent_code = requested.code
+                    )
+                    ORDER BY requested.ordinal
+                    """
+                ),
+                {
+                    "region_codes": list(region_codes),
+                    "lineage_version": RISK_LINEAGE_VERSION,
+                },
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return tuple(str(value) for value in rows)
+
+
 async def rebuild_case_impact(
     connection: AsyncConnection,
     case_id: UUID,
@@ -336,18 +377,29 @@ async def rebuild_case_impact(
         .one()
     )
     building_count = int(counts["building_count"])
-    if scope_type is ImpactScopeType.ADMIN_REGION and building_count == 0:
-        precision_warning = "REFERENCE_BUILDINGS_UNAVAILABLE"
-        await connection.execute(
-            text(
-                """
-                UPDATE case_impact_scope
-                SET precision_warning = :warning
-                WHERE impact_scope_id = :scope_id
-                """
-            ),
-            {"warning": precision_warning, "scope_id": scope_id},
-        )
+    if scope_type is ImpactScopeType.ADMIN_REGION:
+        region_codes = tuple(case_row["region_codes"])
+        missing_codes = await _missing_region_codes(connection, region_codes)
+        warning_parts = [precision_warning] if precision_warning else []
+        if missing_codes:
+            availability_code = (
+                "REFERENCE_BUILDINGS_UNAVAILABLE"
+                if len(missing_codes) == len(region_codes)
+                else "REFERENCE_BUILDINGS_PARTIALLY_UNAVAILABLE"
+            )
+            warning_parts.append(f"{availability_code}:{','.join(missing_codes)}")
+        precision_warning = ";".join(warning_parts) or None
+        if precision_warning is not None:
+            await connection.execute(
+                text(
+                    """
+                    UPDATE case_impact_scope
+                    SET precision_warning = :warning
+                    WHERE impact_scope_id = :scope_id
+                    """
+                ),
+                {"warning": precision_warning, "scope_id": scope_id},
+            )
 
     return ImpactResult(
         case_id=case_id,

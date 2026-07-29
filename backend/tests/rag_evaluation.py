@@ -18,6 +18,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, create_async_engine
 
 from app.ai_control import AiCostGate
+from app.automation.case_lifecycle import allocate_case_number
 from app.config import Settings
 from app.rag_search import (
     RETRIEVAL_VERSION,
@@ -107,11 +108,8 @@ def _question_contract(question: dict[str, Any]) -> None:
 async def _insert_case(
     engine: AsyncEngine,
     question: dict[str, Any],
-    ordinal: int,
-    run_token: str,
 ) -> UUID:
     case_id = uuid4()
-    case_number = f"EVAL-{run_token}-{ordinal:02d}"
     async with engine.begin() as connection:
         region_exists = (
             await connection.execute(
@@ -121,6 +119,7 @@ async def _insert_case(
         ).scalar_one_or_none()
         if region_exists is None:
             raise RuntimeError(f"{question['id']}: region {question['regionCode']} not found")
+        case_number = await allocate_case_number(connection, "DEMO", datetime.now(UTC))
         await connection.execute(
             text(
                 """
@@ -524,7 +523,6 @@ async def run(fixture_path: Path, output_path: Path) -> int:
     engine = create_async_engine(settings.database_url, pool_pre_ping=True)
     gate = AiCostGate(settings)
     started_at = datetime.now(UTC)
-    run_token = started_at.strftime("%H%M%S")
     before_cost = await _cost_snapshot(settings)
     async with engine.connect() as connection:
         index = await _active_index(connection)
@@ -557,7 +555,7 @@ async def run(fixture_path: Path, output_path: Path) -> int:
                 "status": "RUNNING",
             }
             try:
-                case_id = await _insert_case(engine, question, ordinal, run_token)
+                case_id = await _insert_case(engine, question)
                 retrieval = await run_case_retrieval(settings, case_id)
                 async with engine.connect() as connection:
                     query_text = await _latest_query(connection, case_id)

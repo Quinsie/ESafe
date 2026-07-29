@@ -8,6 +8,7 @@ import httpx
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, create_async_engine
 
+from app.automation.case_lifecycle import apply_signal_to_case
 from app.config import Settings
 from app.signals.adapters import (
     SourceBatch,
@@ -241,7 +242,7 @@ async def _store_record(
     record: Any,
     license_note: str,
     scenario_id: UUID | None,
-) -> str:
+) -> tuple[str, UUID]:
     signal: CanonicalSignal = record.signal
     raw_json = _json(record.raw_payload)
     raw_hash = _sha256(raw_json)
@@ -345,7 +346,7 @@ async def _store_record(
                     updated_at = CURRENT_TIMESTAMP
                 WHERE signal_event.latest_raw_signal_id
                   IS DISTINCT FROM EXCLUDED.latest_raw_signal_id
-                RETURNING (xmax = 0) AS inserted
+                RETURNING signal_event_id, (xmax = 0) AS inserted
                 """
             ),
             {
@@ -375,10 +376,23 @@ async def _store_record(
                 "scenario_id": scenario_id,
             },
         )
-    ).scalar_one_or_none()
+    ).mappings().one_or_none()
     if changed is None:
-        return "UNCHANGED"
-    return "INSERTED" if bool(changed) else "UPDATED"
+        existing_id = (
+            await connection.execute(
+                text(
+                    """
+                    SELECT signal_event_id
+                    FROM signal_event
+                    WHERE source = :source AND external_id = :external_id
+                    """
+                ),
+                {"source": signal.source.value, "external_id": signal.external_id},
+            )
+        ).scalar_one()
+        return "UNCHANGED", UUID(str(existing_id))
+    outcome = "INSERTED" if bool(changed["inserted"]) else "UPDATED"
+    return outcome, UUID(str(changed["signal_event_id"]))
 
 
 async def _store_success(
@@ -397,13 +411,14 @@ async def _store_success(
     response_hashes = [_sha256(document.body) for document in batch.documents]
     aggregate_hash = _sha256("|".join(response_hashes))
     inserted = updated = unchanged = 0
+    cases_created = cases_updated = 0
     async with engine.begin() as connection:
         response_ids = [
             await _store_document(connection, poll_id, batch.source, document)
             for document in batch.documents
         ]
         for record in batch.records:
-            outcome = await _store_record(
+            outcome, signal_event_id = await _store_record(
                 connection,
                 poll_id,
                 response_ids[record.document_index],
@@ -414,6 +429,16 @@ async def _store_success(
             inserted += outcome == "INSERTED"
             updated += outcome == "UPDATED"
             unchanged += outcome == "UNCHANGED"
+            if outcome != "UNCHANGED":
+                lifecycle = await apply_signal_to_case(
+                    connection,
+                    profile=settings.profile,
+                    signal_event_id=signal_event_id,
+                    correlation_id=poll_id,
+                )
+                if lifecycle is not None:
+                    cases_created += lifecycle.outcome == "CREATED"
+                    cases_updated += lifecycle.outcome == "UPDATED"
         result = "EMPTY" if not batch.records else "SUCCESS"
         await connection.execute(
             text(
@@ -521,6 +546,8 @@ async def _store_success(
                         "inserted": inserted,
                         "updated": updated,
                         "unchanged": unchanged,
+                        "casesCreated": cases_created,
+                        "casesUpdated": cases_updated,
                         "reasonCode": reason_code,
                     }
                 ),
@@ -567,6 +594,8 @@ async def _store_success(
         "inserted": inserted,
         "updated": updated,
         "unchanged": unchanged,
+        "casesCreated": cases_created,
+        "casesUpdated": cases_updated,
     }
 
 

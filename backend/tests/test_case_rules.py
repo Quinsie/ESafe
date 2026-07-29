@@ -1,5 +1,9 @@
 import pytest
 
+from app.automation.case_lifecycle import (
+    case_number_prefix,
+    is_kma_lifecycle_update,
+)
 from app.automation.case_rules import (
     CaseStatus,
     CaseType,
@@ -84,6 +88,17 @@ def test_region_signal_keeps_region_and_warns_for_sido_precision() -> None:
     assert scope.precision_warning == "LOCATION_PRECISION_SIDO"
 
 
+def test_mixed_region_scope_warns_when_any_region_is_sido_precision() -> None:
+    scope = select_impact_scope(
+        SignalFacts(
+            event_type=EventType.WEATHER_WARNING,
+            source_status=SourceStatus.ACTIVE,
+            region_codes=("29", "46170"),
+        )
+    )
+    assert scope.precision_warning == "LOCATION_PRECISION_SIDO"
+
+
 @pytest.mark.parametrize("radius_m", [499, 501, 2000, 5001])
 def test_unsupported_radius_fails_closed(radius_m: int) -> None:
     with pytest.raises(ValueError):
@@ -108,3 +123,28 @@ def test_signal_without_point_or_region_fails_closed() -> None:
                 region_codes=(),
             )
         )
+
+
+def test_case_number_prefix_separates_live_and_demo() -> None:
+    assert case_number_prefix("LIVE") == "ES"
+    assert case_number_prefix("DEMO") == "DEMO"
+    with pytest.raises(ValueError):
+        case_number_prefix("OTHER")
+
+
+@pytest.mark.parametrize(
+    ("title", "summary"),
+    [
+        ("호우경보 변경", None),
+        ("기상특보 발표", "전라남도 호우주의보 해제"),
+        ("폭염주의보 단계 상향", "광주광역시"),
+    ],
+)
+def test_kma_change_or_release_is_an_existing_case_update(
+    title: str, summary: str | None
+) -> None:
+    assert is_kma_lifecycle_update(title, summary)
+
+
+def test_plain_kma_announcement_starts_a_new_case() -> None:
+    assert not is_kma_lifecycle_update("호우주의보 발표", "전라남도 나주시")
