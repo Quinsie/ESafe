@@ -28,13 +28,13 @@ from app.rag_search import (
 from app.recommendations import (
     GENERATION_VERSION,
     PROMPT_VERSION,
+    _numeric_claims,
     run_case_recommendation,
 )
 from app.upstage import UpstageEmbeddingClient
 
 EVALUATION_VERSION = "rag-evaluation-runner-v1"
 TOKEN_PATTERN = re.compile(r"[가-힣A-Za-z]{2,}")
-NUMBER_PATTERN = re.compile(r"(?<!\d)\d+(?:[.,]\d+)*(?!\d)")
 STOP_WORDS = frozenset(
     {
         "관련",
@@ -331,7 +331,7 @@ async def _fetch_generation_result(
                     """
                     SELECT item.excerpt, item.locator,
                            document.title AS document_title,
-                           document.document_number
+                           document.document_number, document.published_at
                     FROM evidence_item AS item
                     JOIN evidence_bundle AS bundle
                       ON bundle.evidence_bundle_id = item.evidence_bundle_id
@@ -349,15 +349,16 @@ async def _fetch_generation_result(
     )
     evidence_numbers = sorted(
         {
-            number
+            claim
             for row in evidence_rows
-            for number in NUMBER_PATTERN.findall(
+            for claim in _numeric_claims(
                 " ".join(
                     (
                         str(row["excerpt"]),
                         str(row["locator"]),
                         str(row["document_title"]),
                         str(row["document_number"] or ""),
+                        str(row["published_at"] or ""),
                     )
                 )
             )
@@ -390,7 +391,7 @@ def _evaluate_generation(
     supported_actions = 0
     action_count = len(generation["actions"])
     allowed_numbers = set(generation["evidenceNumbers"])
-    allowed_numbers.update(NUMBER_PATTERN.findall(question["question"]))
+    allowed_numbers.update(_numeric_claims(question["question"]))
 
     for action in generation["actions"]:
         action_text = f"{action['title']} {action['description']}"
@@ -435,9 +436,9 @@ def _evaluate_generation(
             ],
         ]
     )
-    for number in NUMBER_PATTERN.findall(all_generated_text):
-        if number not in allowed_numbers:
-            unsupported_numbers.add(number)
+    for claim in _numeric_claims(all_generated_text):
+        if claim not in allowed_numbers:
+            unsupported_numbers.add(claim)
 
     expected_classification = question.get("expectedClassification")
     classification_correct = (
