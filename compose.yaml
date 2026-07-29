@@ -524,6 +524,33 @@ services:
       - ./storage/reference:/reference
     network_mode: "none"
 
+  rag-embedding-build:
+    <<: *backend-common
+    profiles: ["tools"]
+    restart: "no"
+    command: ["python", "-m", "app.cli", "build-rag-embeddings"]
+    environment:
+      ESAFE_PROFILE: LIVE
+      ESAFE_SESSION_SECRET: ${ESAFE_SESSION_SECRET_LIVE}
+      AI_CONTROL_DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db-control:5432/${CONTROL_DATABASE_NAME:-esafe_control}
+      UPSTAGE_API_KEY: ${UPSTAGE_API_KEY}
+      UPSTAGE_BASE_URL: ${UPSTAGE_BASE_URL:-https://api.upstage.ai/v1}
+      UPSTAGE_EMBED_PASSAGE_MODEL: ${UPSTAGE_EMBED_PASSAGE_MODEL:-solar-embedding-2-passage}
+      UPSTAGE_COST_HARD_STOP_USD: ${UPSTAGE_COST_HARD_STOP_USD:-450}
+      RAG_DERIVED_ROOT: /srv/esafe/reference/rag
+      RAG_EMBEDDING_OUTPUT_ROOT: /srv/esafe/reference/rag-embeddings
+    volumes:
+      - ./storage/reference/source-documents/${RAG_SOURCE_SNAPSHOT:-initial-20260729}/derived/${RAG_DERIVED_VERSION:-rag-local-parser-v2-rag-privacy-ko-v2-rag-paragraph-chunker-v2}:/srv/esafe/reference/rag:ro
+      - ./storage/reference/rag-embeddings:/srv/esafe/reference/rag-embeddings
+    networks:
+      - ai-control
+      - outbound
+    depends_on:
+      db-control:
+        condition: service_healthy
+      migrate-control:
+        condition: service_completed_successfully
+
   import-rag-live:
     <<: *importer-common
     entrypoint: ["python", "-m", "esafe_importer.rag_index"]
@@ -548,6 +575,38 @@ services:
       RAG_DERIVED_ROOT: /reference/rag
     volumes:
       - ./storage/reference/source-documents/${RAG_SOURCE_SNAPSHOT:-initial-20260729}/derived/${RAG_DERIVED_VERSION:-rag-local-parser-v2-rag-privacy-ko-v2-rag-paragraph-chunker-v2}:/reference/rag:ro
+    networks:
+      - demo-backend
+    depends_on:
+      db-demo:
+        condition: service_healthy
+      migrate-demo:
+        condition: service_completed_successfully
+
+  import-rag-embeddings-live:
+    <<: *importer-common
+    entrypoint: ["python", "-m", "esafe_importer.rag_embeddings"]
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db-live:5432/${LIVE_DATABASE_NAME}
+      RAG_EMBEDDING_BUNDLE_ROOT: /reference/rag-embeddings
+    volumes:
+      - ./storage/reference/rag-embeddings:/reference/rag-embeddings:ro
+    networks:
+      - live-backend
+    depends_on:
+      db-live:
+        condition: service_healthy
+      migrate-live:
+        condition: service_completed_successfully
+
+  import-rag-embeddings-demo:
+    <<: *importer-common
+    entrypoint: ["python", "-m", "esafe_importer.rag_embeddings"]
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db-demo:5432/${DEMO_DATABASE_NAME}
+      RAG_EMBEDDING_BUNDLE_ROOT: /reference/rag-embeddings
+    volumes:
+      - ./storage/reference/rag-embeddings:/reference/rag-embeddings:ro
     networks:
       - demo-backend
     depends_on:

@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import create_async_engine
 
 from app.ai_control import AiCostGate, initialize_ai_control
 from app.config import get_settings
+from app.rag_embeddings import build_embedding_bundle
 from app.security import hash_password
 from app.signals.ingestion import run_kma_source_repair
 from app.signals.reprocess import reprocess_kma_events
@@ -118,6 +119,7 @@ def build_parser() -> argparse.ArgumentParser:
             "repair-kma-source",
             "init-ai-control",
             "probe-upstage-embedding",
+            "build-rag-embeddings",
         ),
     )
     return parser
@@ -158,6 +160,9 @@ def main(argv: Sequence[str] | None = None) -> None:
         print(json.dumps({"status": "SUCCESS", "schemaVersion": 1}, sort_keys=True))
     elif args.command == "probe-upstage-embedding":
         result = asyncio.run(probe_upstage_embedding())
+        print(json.dumps(result, ensure_ascii=False, sort_keys=True))
+    elif args.command == "build-rag-embeddings":
+        result = asyncio.run(build_embedding_bundle(get_settings()))
         print(json.dumps(result, ensure_ascii=False, sort_keys=True))
 
 

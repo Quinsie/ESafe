@@ -17,6 +17,10 @@ def test_mutating_commands_are_explicit() -> None:
         build_parser().parse_args(["probe-upstage-embedding"]).command
         == "probe-upstage-embedding"
     )
+    assert (
+        build_parser().parse_args(["build-rag-embeddings"]).command
+        == "build-rag-embeddings"
+    )
 
 
 def test_argon2id_password_contract() -> None:
