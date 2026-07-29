@@ -259,11 +259,20 @@ class RagEmbeddingImporter:
                 """,
                 (index_version_id,),
             )
-            cursor.execute("UPDATE rag_document SET is_current = false WHERE is_current")
             cursor.execute(
                 """
                 UPDATE rag_document
-                SET is_current = true
+                SET is_current = false,
+                    deactivated_at = CURRENT_TIMESTAMP
+                WHERE is_current
+                """
+            )
+            cursor.execute(
+                """
+                UPDATE rag_document
+                SET is_current = true,
+                    activated_at = CURRENT_TIMESTAMP,
+                    deactivated_at = NULL
                 WHERE document_id IN (
                     SELECT document_id
                     FROM rag_chunk
