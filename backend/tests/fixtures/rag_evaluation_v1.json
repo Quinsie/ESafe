@@ -327,7 +327,7 @@
     {
       "id": "RAG-029",
       "category": "CONFLICT",
-      "question": "공통 개정사항은 행동매뉴얼의 '대통령실'을 '청와대'로 바꾸라고 하지만 화재 매뉴얼 본문에는 대통령실로 남아 있다. 어느 표현을 적용해야 하는가?",
+      "question": "공통 개정사항은 행동매뉴얼의 '대통령실'을 '청와대'로 일괄 변경하도록 정했지만 소방대상물화재 재난 매뉴얼의 영상회의 참여기관에는 대통령실로 남아 있다. 어느 표현을 적용해야 하는가?",
       "caseType": "FIRE",
       "regionCode": "29110",
       "expectedDocumentIds": [
@@ -336,7 +336,7 @@
       ],
       "expectedChunkIds": [
         "264de088-6654-5ba0-9027-8874655a9539",
-        "837a8379-f1eb-5bb5-b90f-7d4600f2afd7"
+        "de3e78ba-c92d-5938-8626-cd01e9d53c25"
       ],
       "expectedClassification": "CONFLICT",
       "supportTerms": ["대통령실", "청와대", "개정"],
