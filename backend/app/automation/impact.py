@@ -47,7 +47,34 @@ async def _load_case(connection: AsyncConnection, case_id: UUID) -> dict[str, An
     )
     if row is None:
         raise ValueError(f"Case does not exist: {case_id}")
-    return dict(row)
+    case_row = dict(row)
+    linked_regions = (
+        (
+            await connection.execute(
+                text(
+                    """
+                    SELECT DISTINCT region.region_code
+                    FROM case_signal_link link
+                    JOIN signal_event event
+                      ON event.signal_event_id = link.signal_event_id
+                    CROSS JOIN LATERAL
+                      unnest(event.region_codes) AS region(region_code)
+                    WHERE link.case_id = :case_id
+                      AND link.link_type IN ('PRIMARY', 'UPDATE', 'MERGED_SOURCE')
+                    ORDER BY region.region_code
+                    """
+                ),
+                {"case_id": case_id},
+            )
+        )
+        .scalars()
+        .all()
+    )
+    primary_region = case_row["primary_region_code"]
+    case_row["region_codes"] = tuple(str(value) for value in linked_regions) or (
+        (str(primary_region),) if primary_region is not None else ()
+    )
+    return case_row
 
 
 async def _assert_risk_contract(connection: AsyncConnection) -> None:
@@ -102,11 +129,11 @@ async def _insert_scope(
         )
         return scope_id, ImpactScopeType.RADIUS, None
 
-    region_code = case_row["primary_region_code"]
-    if region_code is None:
+    region_codes = tuple(case_row["region_codes"])
+    if not region_codes:
         raise ValueError("a Case without a point must identify a primary region")
     precision_warning = (
-        "LOCATION_PRECISION_SIDO" if case_row["location_precision"] == "SIDO" else None
+        "LOCATION_PRECISION_SIDO" if all(len(code) == 2 for code in region_codes) else None
     )
     await connection.execute(
         text(
@@ -117,14 +144,14 @@ async def _insert_scope(
             )
             VALUES (
                 :scope_id, :case_id, 'ADMIN_REGION', NULL, NULL,
-                ARRAY[:region_code]::varchar(10)[], :precision_warning, :rule_version
+                CAST(:region_codes AS varchar(10)[]), :precision_warning, :rule_version
             )
             """
         ),
         {
             "scope_id": scope_id,
             "case_id": case_id,
-            "region_code": region_code,
+            "region_codes": list(region_codes),
             "precision_warning": precision_warning,
             "rule_version": IMPACT_RULE_VERSION,
         },
@@ -218,7 +245,7 @@ async def _insert_radius_buildings(
 async def _insert_region_buildings(
     connection: AsyncConnection,
     case_id: UUID,
-    region_code: str,
+    region_codes: tuple[str, ...],
 ) -> None:
     await connection.execute(
         text(
@@ -226,8 +253,8 @@ async def _insert_region_buildings(
             WITH selected_regions AS (
                 SELECT region_code
                 FROM admin_region
-                WHERE region_code = :region_code
-                   OR parent_code = :region_code
+                WHERE region_code = ANY(CAST(:region_codes AS varchar(10)[]))
+                   OR parent_code = ANY(CAST(:region_codes AS varchar(10)[]))
             ),
             ranked AS (
                 SELECT b.building_id,
@@ -262,7 +289,7 @@ async def _insert_region_buildings(
         ),
         {
             "case_id": case_id,
-            "region_code": region_code,
+            "region_codes": list(region_codes),
             "lineage_version": RISK_LINEAGE_VERSION,
             "rule_version": IMPACT_RULE_VERSION,
         },
@@ -288,9 +315,7 @@ async def rebuild_case_impact(
     if scope_type is ImpactScopeType.RADIUS:
         await _insert_radius_buildings(connection, case_id, radius_m)
     else:
-        region_code = case_row["primary_region_code"]
-        assert region_code is not None
-        await _insert_region_buildings(connection, case_id, str(region_code))
+        await _insert_region_buildings(connection, case_id, tuple(case_row["region_codes"]))
 
     counts = (
         (
