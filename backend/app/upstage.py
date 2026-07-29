@@ -3,10 +3,13 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import sys
+from array import array
 from collections.abc import Sequence
 from dataclasses import dataclass
 from decimal import Decimal
 from typing import Any
+from uuid import UUID
 
 import httpx
 
@@ -29,6 +32,7 @@ class EmbeddingResult:
     vectors: list[list[float]]
     embedding_tokens: int
     reservation_id: str
+    cache_hit: bool = False
 
 
 def embedding_request_hash(model: str, texts: Sequence[str]) -> str:
@@ -49,6 +53,37 @@ def embedding_cost(tokens: int) -> Decimal:
         / Decimal(1_000_000)
         * EMBEDDING_USD_PER_MILLION_WITH_VAT
     ).quantize(Decimal("0.00000001"))
+
+
+def pack_embedding_vectors(vectors: list[list[float]]) -> bytes:
+    flattened = array("f", (value for vector in vectors for value in vector))
+    if sys.byteorder != "little":
+        flattened.byteswap()
+    return flattened.tobytes()
+
+
+def unpack_embedding_vectors(
+    payload: bytes,
+    *,
+    item_count: int,
+    dimension: int,
+) -> list[list[float]]:
+    if (
+        dimension != EMBEDDING_DIMENSION
+        or not 1 <= item_count <= MAX_EMBEDDING_BATCH_ITEMS
+        or len(payload) != item_count * dimension * 4
+    ):
+        raise ValueError("UPSTAGE_EMBEDDING_CACHE_INVALID")
+    values = array("f")
+    values.frombytes(payload)
+    if sys.byteorder != "little":
+        values.byteswap()
+    if not all(math.isfinite(value) for value in values):
+        raise ValueError("UPSTAGE_EMBEDDING_CACHE_INVALID")
+    return [
+        list(values[offset : offset + dimension])
+        for offset in range(0, len(values), dimension)
+    ]
 
 
 def parse_embedding_response(
@@ -99,21 +134,68 @@ class UpstageEmbeddingClient:
         feature_name: str,
         privacy_verified: bool,
     ) -> EmbeddingResult:
+        return await self._embed(
+            texts,
+            model=self._settings.upstage_embed_passage_model,
+            feature_name=feature_name,
+            privacy_verified=privacy_verified,
+            case_reference=None,
+        )
+
+    async def embed_query(
+        self,
+        text: str,
+        *,
+        feature_name: str,
+        privacy_verified: bool,
+        case_reference: UUID | None = None,
+    ) -> EmbeddingResult:
+        return await self._embed(
+            [text],
+            model=self._settings.upstage_embed_query_model,
+            feature_name=feature_name,
+            privacy_verified=privacy_verified,
+            case_reference=case_reference,
+        )
+
+    async def _embed(
+        self,
+        texts: Sequence[str],
+        *,
+        model: str,
+        feature_name: str,
+        privacy_verified: bool,
+        case_reference: UUID | None,
+    ) -> EmbeddingResult:
         if not privacy_verified:
             raise ValueError("UPSTAGE_PRIVACY_NOT_VERIFIED")
         if not texts or len(texts) > MAX_EMBEDDING_BATCH_ITEMS:
             raise ValueError("UPSTAGE_EMBEDDING_BATCH_SIZE_INVALID")
         if any(not text.strip() for text in texts):
             raise ValueError("UPSTAGE_EMBEDDING_EMPTY_INPUT")
+        request_sha256 = embedding_request_hash(model, texts)
+        cached = await self._cost_gate.get_embedding_cache(
+            model=model,
+            request_sha256=request_sha256,
+        )
+        if cached is not None:
+            return EmbeddingResult(
+                vectors=unpack_embedding_vectors(
+                    cached.vector_payload,
+                    item_count=cached.item_count,
+                    dimension=cached.dimension,
+                ),
+                embedding_tokens=cached.embedding_tokens,
+                reservation_id=str(cached.source_reservation_id),
+                cache_hit=True,
+            )
         api_key = self._settings.upstage_api_key
         if api_key is None:
             raise ValueError("UPSTAGE_API_KEY_REQUIRED")
-        model = self._settings.upstage_embed_passage_model
-        request_sha256 = embedding_request_hash(model, texts)
         reservation = await self._cost_gate.reserve(
             profile=self._settings.profile,
             feature_name=feature_name,
-            case_reference=None,
+            case_reference=case_reference,
             model=model,
             request_kind="EMBEDDING",
             request_sha256=request_sha256,
@@ -144,15 +226,19 @@ class UpstageEmbeddingClient:
             if not isinstance(payload, dict):
                 raise ValueError("UPSTAGE_EMBEDDING_RESPONSE_INVALID")
             vectors, tokens = parse_embedding_response(payload, len(texts))
-            await self._cost_gate.settle(
+            await self._cost_gate.settle_embedding_success(
                 reservation,
-                status="SUCCESS",
                 actual_cost_usd=embedding_cost(tokens),
-                usage={"embedding_tokens": tokens},
+                embedding_tokens=tokens,
                 provider_request_id=(
                     response.headers.get("x-request-id")
                     or response.headers.get("x-upstage-request-id")
                 ),
+                model=model,
+                request_sha256=request_sha256,
+                dimension=EMBEDDING_DIMENSION,
+                item_count=len(texts),
+                vector_payload=pack_embedding_vectors(vectors),
             )
             settled = True
             return EmbeddingResult(

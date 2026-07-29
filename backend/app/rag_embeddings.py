@@ -3,9 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-import sys
 import uuid
-from array import array
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
@@ -18,6 +16,7 @@ from app.upstage import (
     UpstageEmbeddingClient,
     embedding_cost,
     embedding_request_hash,
+    pack_embedding_vectors,
 )
 
 REFERENCE_NAMESPACE = uuid.UUID("963b5245-20a9-5500-80ab-ac380507d08f")
@@ -63,10 +62,7 @@ def stable_uuid(kind: str, source_key: str) -> uuid.UUID:
 
 
 def vector_bytes(vectors: list[list[float]]) -> bytes:
-    flattened = array("f", (value for vector in vectors for value in vector))
-    if sys.byteorder != "little":
-        flattened.byteswap()
-    return flattened.tobytes()
+    return pack_embedding_vectors(vectors)
 
 
 def atomic_write(path: Path, content: bytes) -> None:

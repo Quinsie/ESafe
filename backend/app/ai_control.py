@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
 from app.config import Settings
 
-CONTROL_SCHEMA_VERSION = 1
+CONTROL_SCHEMA_VERSION = 2
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 
 
@@ -32,6 +32,15 @@ class DuplicateCostRequest(CostControlError):
 class CostReservation:
     reservation_id: UUID
     reserved_cost_usd: Decimal
+
+
+@dataclass(frozen=True, slots=True)
+class CachedEmbeddingPayload:
+    vector_payload: bytes
+    dimension: int
+    item_count: int
+    embedding_tokens: int
+    source_reservation_id: UUID
 
 
 def check_cost_headroom(current: Decimal, requested: Decimal, hard_stop: Decimal) -> None:
@@ -76,7 +85,8 @@ async def initialize_ai_control(settings: Settings) -> None:
             version_result = await connection.execute(
                 text("SELECT version FROM ai_control_schema WHERE singleton")
             )
-            if version_result.scalar_one() != CONTROL_SCHEMA_VERSION:
+            current_version = int(version_result.scalar_one())
+            if current_version > CONTROL_SCHEMA_VERSION:
                 raise CostControlError("AI_CONTROL_SCHEMA_VERSION_MISMATCH")
             await connection.execute(
                 text(
@@ -159,6 +169,48 @@ async def initialize_ai_control(settings: Settings) -> None:
             await connection.execute(
                 text(
                     """
+                    CREATE TABLE IF NOT EXISTS ai_embedding_cache (
+                        model varchar(80) NOT NULL,
+                        request_sha256 char(64) NOT NULL,
+                        dimension integer NOT NULL,
+                        item_count integer NOT NULL,
+                        vector_payload bytea NOT NULL,
+                        embedding_tokens integer NOT NULL,
+                        source_reservation_id uuid NOT NULL
+                            REFERENCES ai_cost_entry(reservation_id) ON DELETE RESTRICT,
+                        created_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                        last_used_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                        use_count bigint NOT NULL DEFAULT 0,
+                        PRIMARY KEY (model, request_sha256),
+                        CONSTRAINT ck_ai_embedding_cache_hash CHECK (
+                            request_sha256 ~ '^[0-9a-f]{64}$'
+                        ),
+                        CONSTRAINT ck_ai_embedding_cache_shape CHECK (
+                            dimension = 1024
+                            AND item_count BETWEEN 1 AND 100
+                            AND octet_length(vector_payload) = dimension * item_count * 4
+                        ),
+                        CONSTRAINT ck_ai_embedding_cache_usage CHECK (
+                            embedding_tokens > 0 AND use_count >= 0
+                        )
+                    )
+                    """
+                )
+            )
+            await connection.execute(
+                text(
+                    """
+                    UPDATE ai_control_schema
+                    SET version = :version,
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE singleton
+                    """
+                ),
+                {"version": CONTROL_SCHEMA_VERSION},
+            )
+            await connection.execute(
+                text(
+                    """
                     CREATE UNIQUE INDEX IF NOT EXISTS ux_ai_cost_active_request
                     ON ai_cost_entry (profile, feature_name, model, request_sha256)
                     WHERE status IN ('RESERVED', 'SUCCESS')
@@ -189,6 +241,40 @@ class AiCostGate:
 
     async def close(self) -> None:
         await self._engine.dispose()
+
+    async def get_embedding_cache(
+        self,
+        *,
+        model: str,
+        request_sha256: str,
+    ) -> CachedEmbeddingPayload | None:
+        if not _SHA256.fullmatch(request_sha256):
+            raise ValueError("request SHA-256 is invalid")
+        async with self._engine.begin() as connection:
+            result = await connection.execute(
+                text(
+                    """
+                    UPDATE ai_embedding_cache
+                    SET last_used_at = CURRENT_TIMESTAMP,
+                        use_count = use_count + 1
+                    WHERE model = :model
+                      AND request_sha256 = :request_sha256
+                    RETURNING vector_payload, dimension, item_count,
+                              embedding_tokens, source_reservation_id
+                    """
+                ),
+                {"model": model, "request_sha256": request_sha256},
+            )
+            row = result.one_or_none()
+        if row is None:
+            return None
+        return CachedEmbeddingPayload(
+            vector_payload=bytes(row[0]),
+            dimension=int(row[1]),
+            item_count=int(row[2]),
+            embedding_tokens=int(row[3]),
+            source_reservation_id=row[4],
+        )
 
     async def reserve(
         self,
@@ -336,3 +422,75 @@ class AiCostGate:
             )
             if result.rowcount != 1:
                 raise CostControlError("AI_COST_RESERVATION_NOT_OPEN")
+
+    async def settle_embedding_success(
+        self,
+        reservation: CostReservation,
+        *,
+        actual_cost_usd: Decimal,
+        embedding_tokens: int,
+        provider_request_id: str | None,
+        model: str,
+        request_sha256: str,
+        dimension: int,
+        item_count: int,
+        vector_payload: bytes,
+    ) -> None:
+        if actual_cost_usd < 0 or actual_cost_usd > reservation.reserved_cost_usd:
+            raise ValueError("actual cost is outside the reservation")
+        if (
+            not _SHA256.fullmatch(request_sha256)
+            or dimension != 1024
+            or not 1 <= item_count <= 100
+            or embedding_tokens <= 0
+            or len(vector_payload) != dimension * item_count * 4
+        ):
+            raise ValueError("embedding cache payload is invalid")
+        async with self._engine.begin() as connection:
+            result = await connection.execute(
+                text(
+                    """
+                    UPDATE ai_cost_entry
+                    SET status = 'SUCCESS',
+                        actual_cost_usd = :actual_cost_usd,
+                        embedding_tokens = :embedding_tokens,
+                        provider_request_id = :provider_request_id,
+                        error_type = NULL,
+                        settled_at = CURRENT_TIMESTAMP
+                    WHERE reservation_id = :reservation_id
+                      AND status = 'RESERVED'
+                    """
+                ),
+                {
+                    "reservation_id": reservation.reservation_id,
+                    "actual_cost_usd": actual_cost_usd,
+                    "embedding_tokens": embedding_tokens,
+                    "provider_request_id": provider_request_id,
+                },
+            )
+            if result.rowcount != 1:
+                raise CostControlError("AI_COST_RESERVATION_NOT_OPEN")
+            await connection.execute(
+                text(
+                    """
+                    INSERT INTO ai_embedding_cache (
+                        model, request_sha256, dimension, item_count,
+                        vector_payload, embedding_tokens, source_reservation_id
+                    )
+                    VALUES (
+                        :model, :request_sha256, :dimension, :item_count,
+                        :vector_payload, :embedding_tokens, :source_reservation_id
+                    )
+                    ON CONFLICT (model, request_sha256) DO NOTHING
+                    """
+                ),
+                {
+                    "model": model,
+                    "request_sha256": request_sha256,
+                    "dimension": dimension,
+                    "item_count": item_count,
+                    "vector_payload": vector_payload,
+                    "embedding_tokens": embedding_tokens,
+                    "source_reservation_id": reservation.reservation_id,
+                },
+            )

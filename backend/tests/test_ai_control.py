@@ -9,7 +9,9 @@ from app.upstage import (
     EMBEDDING_DIMENSION,
     embedding_cost,
     embedding_request_hash,
+    pack_embedding_vectors,
     parse_embedding_response,
+    unpack_embedding_vectors,
 )
 
 
@@ -56,3 +58,15 @@ def test_embedding_response_rejects_wrong_dimension() -> None:
 
     with pytest.raises(ValueError, match="VECTOR_INVALID"):
         parse_embedding_response(payload, 1)
+
+
+def test_embedding_cache_payload_round_trip() -> None:
+    vectors = [[0.25] * EMBEDDING_DIMENSION, [-0.5] * EMBEDDING_DIMENSION]
+
+    restored = unpack_embedding_vectors(
+        pack_embedding_vectors(vectors),
+        item_count=2,
+        dimension=EMBEDDING_DIMENSION,
+    )
+
+    assert restored == vectors
