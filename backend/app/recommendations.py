@@ -16,8 +16,9 @@ from app.ai_control import AiCostGate
 from app.config import Settings
 from app.upstage import UpstageChatClient
 
-PROMPT_VERSION = "case-recommendation-ko-v5"
-GENERATION_VERSION = "recommendation-generator-v11"
+PROMPT_VERSION = "case-recommendation-ko-v6"
+GENERATION_VERSION = "recommendation-generator-v12"
+EVIDENCE_EXCERPT_MAX_CHARACTERS = 1_200
 ALLOWED_PRIVACY_STATUSES = frozenset(("PUBLIC_SAFE", "MASKED_VERIFIED"))
 QUOTE_TOKEN_PATTERN = re.compile(r"[가-힣A-Za-z0-9]{2,}")
 QUOTE_STOP_WORDS = frozenset(
@@ -91,7 +92,11 @@ quote는 해당 evidence의 excerpt에서 글자 그대로 연속 복사해야 �
     }
   ]
 }
-actions는 가장 중요한 1~4개만, 각 checklist는 1~5개로 제한하라.
+situationSummary는 최대 2문장으로 작성하라.
+actions는 가장 중요한 1~2개만 작성하고 각 description은 최대 2문장,
+각 citations는 최대 2개, 각 quote는 최대 240자,
+각 checklist는 1~2개로 제한하라.
+같은 사실이나 확인사항을 여러 필드에 반복하지 마라.
 answerEvidenceStatus는 질문 또는 사건의 핵심 판단 전체에 대한 근거 상태다.
 핵심 질문에 직접 답하는 공식 근거가 없으면 일반적인 다른 행동에 근거가 있더라도
 INSUFFICIENT로 판정하라.
@@ -220,6 +225,40 @@ def _clean_texts(values: list[str], *, maximum: int) -> tuple[str, ...]:
             continue
         result.append(normalized[:maximum])
     return tuple(dict.fromkeys(result))
+
+
+def _compact_evidence_excerpt(excerpt: str, query: str) -> str:
+    if len(excerpt) <= EVIDENCE_EXCERPT_MAX_CHARACTERS:
+        return excerpt
+    folded_excerpt = excerpt.casefold()
+    terms = list(
+        dict.fromkeys(
+            token.casefold()
+            for token in QUOTE_TOKEN_PATTERN.findall(query)
+            if token.casefold() not in QUOTE_STOP_WORDS
+        )
+    )
+    maximum = EVIDENCE_EXCERPT_MAX_CHARACTERS
+    starts = {0, len(excerpt) - maximum}
+    for term in terms:
+        offset = 0
+        while True:
+            position = folded_excerpt.find(term, offset)
+            if position < 0:
+                break
+            starts.add(
+                min(max(position - maximum // 3, 0), len(excerpt) - maximum)
+            )
+            offset = position + len(term)
+
+    def score(start: int) -> tuple[int, int, int]:
+        window = folded_excerpt[start : start + maximum]
+        unique_matches = sum(term in window for term in terms)
+        occurrence_matches = sum(min(window.count(term), 3) for term in terms)
+        return unique_matches, occurrence_matches, -start
+
+    chosen = max(starts, key=score)
+    return excerpt[chosen : chosen + maximum].strip()
 
 
 def _recover_whitespace_exact_quote(quote: str, excerpt: str) -> str | None:
@@ -891,7 +930,10 @@ def _build_input(
                     if item["published_at"] is not None
                     else None
                 ),
-                "excerpt": item["excerpt"],
+                "excerpt": _compact_evidence_excerpt(
+                    str(item["excerpt"]),
+                    str(bundle["query_text"]),
+                ),
                 "locator": item["locator"],
             }
             for item in evidence_rows

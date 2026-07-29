@@ -10,6 +10,7 @@ from app.recommendations import (
     SYSTEM_PROMPT,
     RecommendationGenerationError,
     _build_input,
+    _compact_evidence_excerpt,
     _numeric_claims,
     _retryable_generation_error,
     recommendation_response_schema,
@@ -22,10 +23,21 @@ PAST = UUID("00000000-0000-4000-8000-000000000103")
 
 
 def test_prompt_treats_unapplied_official_amendment_as_conflict() -> None:
-    assert PROMPT_VERSION == "case-recommendation-ko-v5"
-    assert GENERATION_VERSION == "recommendation-generator-v11"
+    assert PROMPT_VERSION == "case-recommendation-ko-v6"
+    assert GENERATION_VERSION == "recommendation-generator-v12"
     assert "변경 전 용어나 내용이 그대로 남아 있으면" in SYSTEM_PROMPT
     assert "하나의 CONFLICT 행동" in SYSTEM_PROMPT
+    assert "actions는 가장 중요한 1~2개" in SYSTEM_PROMPT
+    assert "각 quote는 최대 240자" in SYSTEM_PROMPT
+
+
+def test_long_evidence_excerpt_keeps_query_relevant_exact_window() -> None:
+    excerpt = "앞부분 " * 500 + "국민행동요령을 홍보하고 시설을 점검한다." + " 뒷부분" * 500
+    compact = _compact_evidence_excerpt(excerpt, "국민행동요령 홍보 시설 점검")
+
+    assert len(compact) <= 1_200
+    assert "국민행동요령을 홍보하고 시설을 점검한다." in compact
+    assert compact in excerpt
 
 
 def evidence_rows() -> list[dict[str, object]]:
