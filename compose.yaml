@@ -730,6 +730,53 @@ services:
       migrate-demo:
         condition: service_completed_successfully
 
+  backup-scheduler:
+    image: esafe-database:${ESAFE_APP_VERSION:-dev}
+    restart: unless-stopped
+    init: true
+    user: "${ESAFE_HOST_UID:-1001}:${ESAFE_HOST_GID:-1001}"
+    command: ["sh", "/opt/esafe/scripts/backup-loop.sh"]
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      LIVE_DATABASE_NAME: ${LIVE_DATABASE_NAME}
+      DEMO_DATABASE_NAME: ${DEMO_DATABASE_NAME}
+      CONTROL_DATABASE_NAME: ${CONTROL_DATABASE_NAME:-esafe_control}
+      ESAFE_BUILD_COMMIT: ${ESAFE_BUILD_COMMIT:-unknown}
+      TZ: ${TZ:-Asia/Seoul}
+    volumes:
+      - ./scripts:/opt/esafe/scripts:ro
+      - ./storage/live:/source/live:ro
+      - ./storage/demo:/source/demo:ro
+      - ./storage/reference:/source/reference:ro
+      - ./backups:/backups
+    networks:
+      - live-backend
+      - demo-backend
+      - ai-control
+    depends_on:
+      db-live:
+        condition: service_healthy
+      db-demo:
+        condition: service_healthy
+      db-control:
+        condition: service_healthy
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=128m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - test -f /backups/runtime/backup-loop.ready
+      interval: 30s
+      timeout: 5s
+      start_period: 15s
+      retries: 3
+
   gateway:
     image: esafe-gateway:${ESAFE_APP_VERSION:-dev}
     build:
