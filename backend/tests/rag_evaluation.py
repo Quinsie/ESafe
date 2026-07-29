@@ -34,7 +34,7 @@ from app.upstage import UpstageEmbeddingClient
 
 EVALUATION_VERSION = "rag-evaluation-runner-v1"
 TOKEN_PATTERN = re.compile(r"[가-힣A-Za-z]{2,}")
-NUMBER_PATTERN = re.compile(r"(?<![A-Za-z가-힣])\d+(?:[.,]\d+)*(?![A-Za-z가-힣])")
+NUMBER_PATTERN = re.compile(r"(?<!\d)\d+(?:[.,]\d+)*(?!\d)")
 STOP_WORDS = frozenset(
     {
         "관련",
@@ -329,10 +329,15 @@ async def _fetch_generation_result(
             await connection.execute(
                 text(
                     """
-                    SELECT item.excerpt, item.locator
+                    SELECT item.excerpt, item.locator,
+                           document.title AS document_title,
+                           document.document_number
                     FROM evidence_item AS item
                     JOIN evidence_bundle AS bundle
                       ON bundle.evidence_bundle_id = item.evidence_bundle_id
+                    JOIN rag_chunk AS chunk ON chunk.chunk_id = item.chunk_id
+                    JOIN rag_document AS document
+                      ON document.document_id = chunk.document_id
                     WHERE bundle.case_id = :case_id AND bundle.is_current
                     """
                 ),
@@ -347,7 +352,14 @@ async def _fetch_generation_result(
             number
             for row in evidence_rows
             for number in NUMBER_PATTERN.findall(
-                f"{row['excerpt']} {row['locator']}"
+                " ".join(
+                    (
+                        str(row["excerpt"]),
+                        str(row["locator"]),
+                        str(row["document_title"]),
+                        str(row["document_number"] or ""),
+                    )
+                )
             )
         }
     )
