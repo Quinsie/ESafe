@@ -367,6 +367,15 @@ def _local_name(element: etree._Element) -> str:
     return cast(str, etree.QName(element).localname.lower())
 
 
+def _drop_cached_line_layout(root: etree._Element) -> None:
+    for element in tuple(root.iter()):
+        if _local_name(element) != "linesegarray":
+            continue
+        parent = element.getparent()
+        if parent is not None:
+            parent.remove(element)
+
+
 def _text_nodes(root: etree._Element) -> list[etree._Element]:
     return [element for element in root.iter() if _local_name(element) == "t"]
 
@@ -711,6 +720,8 @@ def render_hwpx(
                             lambda match: replacements[match.group(1)],
                             element.tail,
                         )
+                if info.filename == "Contents/section0.xml":
+                    _drop_cached_line_layout(root)
                 data = _serialize_xml(root, data)
             elif suffix == ".txt":
                 try:

@@ -74,6 +74,9 @@ def test_render_hwpx_replaces_all_tokens_and_preserves_package(
     with ZipFile(output_path) as package:
         assert package.infolist()[0].filename == "mimetype"
         assert package.infolist()[0].compress_type == ZIP_STORED
+        assert (
+            b"linesegarray" not in package.read("Contents/section0.xml")
+        )
         assert package.read("mimetype") == HWPX_MIMETYPE
         section = etree.fromstring(package.read("Contents/section0.xml"))
         text = "".join(section.itertext())

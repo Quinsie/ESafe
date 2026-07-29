@@ -142,6 +142,25 @@ def test_html_escapes_user_content_and_final_removes_internal_warning() -> None:
     assert changed.review.warning not in final_html
 
 
+def test_incident_pdf_html_uses_hwpx_layout_contract() -> None:
+    payload = build_initial_document_payload(
+        variant="INCIDENT_REPORT",
+        case=CASE,
+        recommendation=RECOMMENDATION,
+        now=NOW,
+    )
+
+    html = render_document_html(payload, "REVIEW")
+
+    assert '@page { size: A4; margin: 10mm 20mm; }' in html
+    assert 'class="incident-approval-grid"' in html
+    assert 'class="incident-facility"' in html
+    assert "2. 시설 현황" in html
+    assert "Noto Serif CJK KR" in html
+    assert "background: #eef4fa" not in html
+    assert payload.review.warning in html
+
+
 @pytest.mark.parametrize("variant", list(VARIANT_TEMPLATE_KEYS))
 def test_shared_payload_renders_each_real_hwpx_template(
     variant: str,

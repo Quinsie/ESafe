@@ -457,6 +457,213 @@ def _section(title: str, body: str) -> str:
     return f'<section><h2>{_escaped(title)}</h2>{body}</section>'
 
 
+def _incident_value(value: str) -> str:
+    return _escaped(value) if value.strip() else '<span class="incident-blank"></span>'
+
+
+def _incident_line(label: str, value: str) -> str:
+    return (
+        '<p class="incident-line">'
+        f'<span class="incident-bullet">ㅇ</span> {label}: {_incident_value(value)}'
+        "</p>"
+    )
+
+
+def _incident_numbered_lines(values: list[str]) -> str:
+    cleaned = [value.strip() for value in values if value.strip()]
+    if not cleaned:
+        return '<p class="incident-line incident-empty">&nbsp;</p>'
+    return "".join(
+        f'<p class="incident-line">{index}. {_escaped(value)}</p>'
+        for index, value in enumerate(cleaned, 1)
+    )
+
+
+def _incident_report_html(payload: DocumentPayload, stage: ArtifactStage) -> str:
+    warning = payload.review.warning if stage == "REVIEW" else ""
+    warning_line = (
+        f'<p class="incident-warning">{_escaped(warning)}</p>' if warning else ""
+    )
+    facility_detail = (
+        f'<p class="incident-line">{_escaped(payload.facility.detail)}</p>'
+        if payload.facility.detail.strip()
+        else ""
+    )
+    attachments = _incident_numbered_lines(payload.attachments.items)
+    contact = (
+        f'<p class="incident-line">{_escaped(payload.contact.block)}</p>'
+        if payload.contact.block.strip()
+        else ""
+    )
+    return f"""<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>{_escaped(payload.document.title)}</title>
+<style>
+@page {{ size: A4; margin: 10mm 20mm; }}
+* {{ box-sizing: border-box; }}
+html, body {{ margin: 0; padding: 0; }}
+body {{
+  color: #000;
+  font-family: "Noto Serif CJK KR", "Batang", serif;
+  font-size: 15pt;
+  line-height: 1.35;
+  word-break: keep-all;
+  overflow-wrap: break-word;
+}}
+.incident-report {{ width: 170mm; margin: 0 auto; }}
+.incident-title {{
+  margin: 0;
+  text-align: center;
+  font-family: "Noto Sans CJK KR", "Malgun Gothic", sans-serif;
+  font-size: 19pt;
+  font-weight: 900;
+  line-height: 1;
+  letter-spacing: -0.03em;
+}}
+.incident-title span {{
+  display: inline;
+  padding-bottom: 0.5mm;
+  border-bottom: 0.65mm double #000;
+}}
+.incident-approval-grid {{
+  display: grid;
+  width: 127.5mm;
+  height: 25.3mm;
+  margin: 2.5mm 0 0 auto;
+  grid-template-columns: 7.4mm 15.4mm 7.4mm repeat(4, 21mm);
+  grid-template-rows: 2.75mm 2.75mm 8.1mm 11.7mm;
+  border-top: 0.12mm solid #000;
+  border-left: 0.12mm solid #000;
+}}
+.incident-approval-grid span {{
+  border-right: 0.12mm solid #000;
+  border-bottom: 0.12mm solid #000;
+}}
+.incident-approval-grid .r2 {{ grid-row: span 2; }}
+.incident-date {{
+  margin: 1.8mm 0 2.8mm;
+  text-align: center;
+  font-family: "Noto Serif CJK KR", "Batang", serif;
+  font-size: 14pt;
+}}
+.incident-section {{
+  margin: 0 0 2.4mm;
+  break-inside: auto;
+}}
+.incident-section h2 {{
+  margin: 0 0 0.7mm;
+  font-family: "Noto Sans CJK KR", "Malgun Gothic", sans-serif;
+  font-size: 15pt;
+  font-weight: 800;
+  line-height: 1.35;
+  break-after: avoid;
+}}
+.incident-line {{
+  margin: 0;
+  padding-left: 5mm;
+  text-indent: 0;
+  white-space: pre-wrap;
+}}
+.incident-bullet {{ font-family: "Noto Sans CJK KR", sans-serif; }}
+.incident-summary {{ margin: 0; padding-left: 10mm; white-space: pre-wrap; }}
+.incident-blank {{
+  display: inline-block;
+  min-width: 45mm;
+  min-height: 1em;
+  vertical-align: bottom;
+}}
+.incident-facility {{
+  width: 100%;
+  margin: 0 0 2.4mm;
+  border-collapse: collapse;
+  table-layout: fixed;
+  break-inside: avoid;
+}}
+.incident-facility td {{
+  padding: 0.5mm 1.8mm;
+  border: 0.12mm solid #000;
+  vertical-align: top;
+}}
+.incident-facility-title {{
+  width: 53mm;
+  text-align: center;
+  font-family: "Noto Sans CJK KR", "Malgun Gothic", sans-serif;
+  font-size: 15pt;
+  font-weight: 800;
+}}
+.incident-facility-body {{ min-height: 26.7mm; padding: 1.1mm 1.8mm 1.4mm !important; }}
+.incident-warning {{
+  margin: 0;
+  padding-left: 5mm;
+  color: #7a1d1d;
+  font-weight: 700;
+}}
+.incident-empty {{ min-height: 1.35em; }}
+</style>
+</head>
+<body>
+<article class="incident-report">
+  <h1 class="incident-title"><span>{_escaped(payload.document.title)}</span></h1>
+  <div class="incident-approval-grid" aria-label="결재 정보 빈칸">
+    <span class="r2"></span><span></span><span class="r2"></span>
+    <span class="r2"></span><span class="r2"></span><span class="r2"></span>
+    <span class="r2"></span><span></span><span></span><span></span>
+    <span></span><span></span><span></span><span></span><span></span>
+    <span></span><span></span><span></span><span></span><span></span>
+  </div>
+  <p class="incident-date">{_escaped(payload.document.date)}</p>
+  <section class="incident-section">
+    <h2>1. 사고 개요</h2>
+    {_incident_line("발생일시", payload.incident.occurred_at)}
+    {_incident_line("발생장소", payload.incident.location)}
+    {_incident_line("사고원인", payload.incident.cause)}
+    <p class="incident-line"><span class="incident-bullet">ㅇ</span> 상황개요</p>
+    <p class="incident-summary">{_escaped(payload.incident.summary)}</p>
+    <p class="incident-summary">{_escaped(payload.incident.detail)}</p>
+  </section>
+  <table class="incident-facility">
+    <tbody>
+      <tr><td></td><td class="incident-facility-title">2. 시설 현황</td><td></td></tr>
+      <tr>
+        <td colspan="3" class="incident-facility-body">
+          {_incident_line("시설명", payload.facility.name)}
+          {_incident_line("주소", payload.facility.address)}
+          {_incident_line("용도", payload.facility.use)}
+          {_incident_line("기준 위험도", payload.facility.risk)}
+          {_incident_line("관할지역", payload.facility.region)}
+          {facility_detail}
+        </td>
+      </tr>
+    </tbody>
+  </table>
+  <section class="incident-section">
+    <h2>3. 피해 현황</h2>
+    <p class="incident-line">{_incident_value(payload.incident.damage)}</p>
+  </section>
+  <section class="incident-section">
+    <h2>4. 조치 사항</h2>
+    {_incident_numbered_lines(payload.response.actions)}
+    {_incident_numbered_lines(payload.response.evidence)}
+    {warning_line}
+  </section>
+  <section class="incident-section">
+    <h2>5. 향후 계획</h2>
+    {_incident_numbered_lines(payload.response.plan)}
+  </section>
+  <section class="incident-section">
+    <h2>6. 참고 자료</h2>
+    {_incident_numbered_lines(payload.evidence.references)}
+    {attachments}
+    {contact}
+  </section>
+</article>
+</body>
+</html>
+"""
+
+
 def _report_body(payload: DocumentPayload) -> str:
     return (
         _section(
@@ -548,6 +755,8 @@ def _plan_body(payload: DocumentPayload) -> str:
 
 
 def render_document_html(payload: DocumentPayload, stage: ArtifactStage) -> str:
+    if payload.variant == "INCIDENT_REPORT":
+        return _incident_report_html(payload, stage)
     body_by_variant = {
         "INCIDENT_REPORT": _report_body,
         "CRISIS_ASSESSMENT": _crisis_body,
