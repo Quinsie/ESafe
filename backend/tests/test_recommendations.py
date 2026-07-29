@@ -21,7 +21,7 @@ PAST = UUID("00000000-0000-4000-8000-000000000103")
 
 def test_prompt_treats_unapplied_official_amendment_as_conflict() -> None:
     assert PROMPT_VERSION == "case-recommendation-ko-v4"
-    assert GENERATION_VERSION == "recommendation-generator-v6"
+    assert GENERATION_VERSION == "recommendation-generator-v7"
     assert "변경 전 용어나 내용이 그대로 남아 있으면" in SYSTEM_PROMPT
     assert "하나의 CONFLICT 행동" in SYSTEM_PROMPT
 
@@ -175,6 +175,48 @@ def test_conflict_requires_two_distinct_official_documents() -> None:
     assert result.evidence_status == "CONFLICT"
     assert result.actions[0].evidence_status == "CONFLICT"
     assert result.conflicts
+
+
+def test_explicit_amendment_conflict_is_deterministic() -> None:
+    rows = evidence_rows()
+    rows[0].update(
+        {
+            "excerpt": (
+                "용어 수정: 행동매뉴얼의 ‘대통령실’을 ‘청와대’로 일괄 변경한다."
+            ),
+            "document_title": "공통 개정사항",
+            "disaster_types": ["공통"],
+            "rank": 2,
+        }
+    )
+    rows[1].update(
+        {
+            "excerpt": (
+                "화재 영상회의 참여기관은 대통령실, 소방청, 행정안전부로 한다."
+            ),
+            "document_title": "소방대상물화재 재난 매뉴얼",
+            "disaster_types": ["화재"],
+            "rank": 1,
+        }
+    )
+    value = proposal(evidence_status="INSUFFICIENT", quote="원문에 없는 인용")
+
+    result = validate_recommendation_payload(
+        value,
+        rows,
+        case_title=(
+            "공통 개정사항은 '대통령실'을 '청와대'로 변경하지만 "
+            "화재 영상회의 참여기관에는 대통령실로 남아 있다."
+        ),
+        case_type="FIRE",
+    )
+
+    assert result.evidence_status == "CONFLICT"
+    assert result.actions[0].evidence_status == "CONFLICT"
+    assert len(result.actions[0].citations) == 2
+    assert {
+        citation.support_type for citation in result.actions[0].citations
+    } == {"DIRECT"}
 
 
 def test_invalid_shape_is_rejected_before_persistence() -> None:

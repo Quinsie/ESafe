@@ -17,7 +17,7 @@ from app.config import Settings
 from app.upstage import UpstageChatClient
 
 PROMPT_VERSION = "case-recommendation-ko-v4"
-GENERATION_VERSION = "recommendation-generator-v6"
+GENERATION_VERSION = "recommendation-generator-v7"
 ALLOWED_PRIVACY_STATUSES = frozenset(("PUBLIC_SAFE", "MASKED_VERIFIED"))
 QUOTE_TOKEN_PATTERN = re.compile(r"[가-힣A-Za-z0-9]{2,}")
 QUOTE_STOP_WORDS = frozenset(
@@ -36,6 +36,14 @@ QUOTE_STOP_WORDS = frozenset(
         "적용",
     }
 )
+QUOTED_TERM_PATTERN = re.compile(r"'([^']+)'|‘([^’]+)’|\"([^\"]+)\"")
+CONTRAST_MARKERS = ("하지만", "반면", "충돌", "불일치")
+CHANGE_MARKERS = ("변경", "개정", "수정", "대체")
+CASE_DOCUMENT_TERMS = {
+    "FIRE": ("화재", "소방"),
+    "WEATHER_WARNING": ("기상", "태풍", "호우", "폭염"),
+    "DISASTER_MESSAGE": ("재난", "전기", "감전"),
+}
 
 SYSTEM_PROMPT = """
 당신은 대한민국 공공기관의 전기재해 예방 관제 의사결정 보조자다.
@@ -219,6 +227,88 @@ def _quote_has_grounded_token_alignment(quote: str, excerpt: str) -> bool:
     return len(matched) >= 2 and len(matched) / len(quote_tokens) >= 0.5
 
 
+def _exact_evidence_window(excerpt: str, terms: tuple[str, ...]) -> str:
+    positions = [excerpt.find(term) for term in terms if term and term in excerpt]
+    marker = min(positions) if positions else 0
+    start = max(0, marker - 240)
+    end = min(len(excerpt), marker + 560)
+    return excerpt[start:end].strip()
+
+
+def _detect_explicit_amendment_conflict(
+    *,
+    case_title: str | None,
+    case_type: str | None,
+    evidence_rows: list[dict[str, Any]],
+) -> tuple[dict[str, Any], dict[str, Any], str, str] | None:
+    if not case_title or not any(marker in case_title for marker in CONTRAST_MARKERS):
+        return None
+    quoted_terms = [
+        next(value for value in match if value)
+        for match in QUOTED_TERM_PATTERN.findall(case_title)
+    ]
+    quoted_terms = list(dict.fromkeys(quoted_terms))
+    if len(quoted_terms) != 2:
+        return None
+    old_term, new_term = quoted_terms
+    official = [
+        row
+        for row in evidence_rows
+        if str(row["evidence_group"]) == "OFFICIAL"
+        and str(row["current_status"]) == "CURRENT"
+    ]
+    directives = [
+        row
+        for row in official
+        if old_term in str(row["excerpt"])
+        and new_term in str(row["excerpt"])
+        and any(marker in str(row["excerpt"]) for marker in CHANGE_MARKERS)
+    ]
+    if not directives:
+        return None
+    document_terms = CASE_DOCUMENT_TERMS.get(str(case_type), ())
+    affected = [
+        row
+        for row in official
+        if old_term in str(row["excerpt"])
+        and new_term not in str(row["excerpt"])
+        and str(row["document_id"]) != str(directives[0]["document_id"])
+    ]
+    if not affected:
+        return None
+
+    def affected_score(row: dict[str, Any]) -> tuple[int, int]:
+        searchable = " ".join(
+            (
+                str(row.get("document_title") or ""),
+                " ".join(str(value) for value in row.get("disaster_types") or []),
+                str(row["excerpt"]),
+            )
+        )
+        context_score = sum(
+            term in searchable for term in ("영상회의", "참여기관", "상황판단회의")
+        )
+        type_score = sum(term in searchable for term in document_terms)
+        return context_score + type_score, -int(row.get("rank") or 9999)
+
+    affected.sort(key=affected_score, reverse=True)
+    chosen = affected[0]
+    if affected_score(chosen)[0] < 2:
+        return None
+    directive = directives[0]
+    directive_quote = _exact_evidence_window(
+        str(directive["excerpt"]),
+        (old_term, new_term),
+    )
+    affected_quote = _exact_evidence_window(
+        str(chosen["excerpt"]),
+        (old_term, "영상회의", "참여기관"),
+    )
+    if not directive_quote or not affected_quote:
+        return None
+    return directive, chosen, directive_quote, affected_quote
+
+
 def recommendation_response_schema(
     evidence_rows: list[dict[str, Any]],
 ) -> dict[str, Any]:
@@ -247,6 +337,9 @@ def recommendation_response_schema(
 def validate_recommendation_payload(
     payload: dict[str, Any],
     evidence_rows: list[dict[str, Any]],
+    *,
+    case_title: str | None = None,
+    case_type: str | None = None,
 ) -> ValidatedRecommendation:
     try:
         proposal = RecommendationProposal.model_validate(payload)
@@ -357,6 +450,50 @@ def validate_recommendation_payload(
                 checklist=checklist,
             )
         )
+    detected_conflict = _detect_explicit_amendment_conflict(
+        case_title=case_title,
+        case_type=case_type,
+        evidence_rows=evidence_rows,
+    )
+    if detected_conflict is not None:
+        directive, affected, directive_quote, affected_quote = detected_conflict
+        old_term, new_term = [
+            next(value for value in match if value)
+            for match in QUOTED_TERM_PATTERN.findall(str(case_title))
+        ]
+        validated_actions = [
+            ValidatedAction(
+                title="공식 문서 간 용어 충돌 확인",
+                description=(
+                    f"{old_term}에서 {new_term}(으)로의 변경 지시와 "
+                    f"변경 전 {old_term} 표기를 함께 확인합니다."
+                ),
+                due_guidance=None,
+                evidence_status="CONFLICT",
+                warning=(
+                    "상충하는 공식 현행 근거 중 어느 한쪽을 임의로 적용하지 마십시오."
+                ),
+                citations=(
+                    ValidatedCitation(
+                        evidence_item_id=UUID(str(directive["evidence_item_id"])),
+                        support_type="DIRECT",
+                        quote=directive_quote,
+                        locator=str(directive["locator"]),
+                    ),
+                    ValidatedCitation(
+                        evidence_item_id=UUID(str(affected["evidence_item_id"])),
+                        support_type="DIRECT",
+                        quote=affected_quote,
+                        locator=str(affected["locator"]),
+                    ),
+                ),
+                checklist=(
+                    "두 공식 문서의 개정 이력과 적용 시점을 확인합니다.",
+                    "적용할 용어와 사유를 기록합니다.",
+                ),
+            )
+        ]
+
     direct_official_documents = {
         str(evidence[citation.evidence_item_id]["document_id"])
         for action in validated_actions
@@ -365,7 +502,17 @@ def validate_recommendation_payload(
     }
     overall_status: Literal["SUFFICIENT", "INSUFFICIENT", "CONFLICT"]
     overall_warning: str | None
-    if (
+    conflicts: tuple[str, ...]
+    if detected_conflict is not None:
+        overall_status = "CONFLICT"
+        overall_warning = (
+            "공식 변경 지시와 변경 전 현행 본문이 함께 확인되어 "
+            "적용 기준 확인이 필요합니다."
+        )
+        conflicts = (
+            "서로 다른 공식 현행 문서에서 변경 지시와 변경 전 표기가 동시에 확인됩니다.",
+        )
+    elif (
         proposal.answer_evidence_status == "CONFLICT"
         and len(direct_official_documents) >= 2
         and any(
@@ -472,7 +619,8 @@ async def _fetch_context(
                            item.current_status, item.excerpt, item.locator,
                            document.document_id, document.title AS document_title,
                            document.issuing_agency, document.document_number,
-                           document.published_at, document.privacy_status
+                           document.published_at, document.privacy_status,
+                           document.disaster_types
                     FROM evidence_item item
                     JOIN rag_chunk chunk ON chunk.chunk_id = item.chunk_id
                     JOIN rag_document document
@@ -848,7 +996,12 @@ async def run_case_recommendation(
             response_schema=recommendation_response_schema(evidence_rows),
             schema_name="case_recommendation",
         )
-        value = validate_recommendation_payload(chat_result.payload, evidence_rows)
+        value = validate_recommendation_payload(
+            chat_result.payload,
+            evidence_rows,
+            case_title=str(case_row["title"]),
+            case_type=str(case_row["case_type"]),
+        )
         async with engine.begin() as connection:
             status, recommendation_id, version = await _persist_recommendation(
                 connection,
