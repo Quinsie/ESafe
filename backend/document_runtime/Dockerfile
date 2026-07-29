@@ -26,7 +26,8 @@ RUN apt-get update \
     && python3 -m venv /opt/esafe
 
 COPY backend/requirements.txt /tmp/requirements.txt
-RUN python -m pip install --requirement /tmp/requirements.txt
+RUN python -m pip install --upgrade pip==26.1.2 \
+    && python -m pip install --requirement /tmp/requirements.txt
 
 COPY backend/document_runtime/package.json backend/document_runtime/package-lock.json \
     /app/document_runtime/
