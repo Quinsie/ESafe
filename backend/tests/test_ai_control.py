@@ -22,7 +22,7 @@ from app.upstage import (
 
 
 def test_chat_timeout_is_bounded_for_async_generation() -> None:
-    assert Settings().upstage_chat_timeout_seconds == 180.0
+    assert Settings().upstage_chat_timeout_seconds == 300.0
     assert Settings(UPSTAGE_CHAT_TIMEOUT_SECONDS=30).upstage_chat_timeout_seconds == 30.0
     with pytest.raises(ValidationError):
         Settings(UPSTAGE_CHAT_TIMEOUT_SECONDS=301)

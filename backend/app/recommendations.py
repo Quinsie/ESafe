@@ -17,7 +17,7 @@ from app.config import Settings
 from app.upstage import UpstageChatClient
 
 PROMPT_VERSION = "case-recommendation-ko-v5"
-GENERATION_VERSION = "recommendation-generator-v9"
+GENERATION_VERSION = "recommendation-generator-v10"
 ALLOWED_PRIVACY_STATUSES = frozenset(("PUBLIC_SAFE", "MASKED_VERIFIED"))
 QUOTE_TOKEN_PATTERN = re.compile(r"[가-힣A-Za-z0-9]{2,}")
 QUOTE_STOP_WORDS = frozenset(
@@ -497,6 +497,34 @@ def recommendation_response_schema(
     return schema
 
 
+def _normalize_provider_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    normalized = dict(payload)
+    actions = payload.get("actions")
+    if not isinstance(actions, list):
+        return normalized
+    normalized_actions: list[Any] = []
+    for action in actions:
+        if not isinstance(action, dict):
+            normalized_actions.append(action)
+            continue
+        normalized_action = dict(action)
+        citations = action.get("citations")
+        if isinstance(citations, list):
+            normalized_citations: list[Any] = []
+            for citation in citations:
+                if not isinstance(citation, dict):
+                    normalized_citations.append(citation)
+                    continue
+                normalized_citation = dict(citation)
+                if normalized_citation.get("supportType") == "PAST_INCIDENT":
+                    normalized_citation["supportType"] = "CASE_EXAMPLE"
+                normalized_citations.append(normalized_citation)
+            normalized_action["citations"] = normalized_citations
+        normalized_actions.append(normalized_action)
+    normalized["actions"] = normalized_actions
+    return normalized
+
+
 def validate_recommendation_payload(
     payload: dict[str, Any],
     evidence_rows: list[dict[str, Any]],
@@ -505,7 +533,9 @@ def validate_recommendation_payload(
     case_type: str | None = None,
 ) -> ValidatedRecommendation:
     try:
-        proposal = RecommendationProposal.model_validate(payload)
+        proposal = RecommendationProposal.model_validate(
+            _normalize_provider_payload(payload)
+        )
     except ValidationError as error:
         raise RecommendationGenerationError(
             "RECOMMENDATION_OUTPUT_SCHEMA_INVALID"
@@ -864,6 +894,7 @@ def _build_input(
         {
             "model": settings.upstage_chat_model,
             "promptVersion": PROMPT_VERSION,
+            "generationVersion": GENERATION_VERSION,
             "input": safe_input,
         }
     )
