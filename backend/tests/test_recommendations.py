@@ -11,6 +11,7 @@ from app.recommendations import (
     RecommendationGenerationError,
     _build_input,
     _numeric_claims,
+    _retryable_generation_error,
     recommendation_response_schema,
     validate_recommendation_payload,
 )
@@ -22,7 +23,7 @@ PAST = UUID("00000000-0000-4000-8000-000000000103")
 
 def test_prompt_treats_unapplied_official_amendment_as_conflict() -> None:
     assert PROMPT_VERSION == "case-recommendation-ko-v5"
-    assert GENERATION_VERSION == "recommendation-generator-v10"
+    assert GENERATION_VERSION == "recommendation-generator-v11"
     assert "변경 전 용어나 내용이 그대로 남아 있으면" in SYSTEM_PROMPT
     assert "하나의 CONFLICT 행동" in SYSTEM_PROMPT
 
@@ -334,3 +335,13 @@ def test_generation_input_includes_case_title_and_retrieval_query() -> None:
 
     assert prompt["caseFacts"]["caseTitle"] == case_row["title"]
     assert prompt["caseFacts"]["retrievalQuery"] == bundle["query_text"]
+
+
+def test_only_invalid_or_truncated_provider_output_is_retried() -> None:
+    assert _retryable_generation_error(
+        RecommendationGenerationError("RECOMMENDATION_OUTPUT_SCHEMA_INVALID")
+    )
+    assert _retryable_generation_error(
+        ValueError("UPSTAGE_CHAT_FINISH_INVALID:length")
+    )
+    assert not _retryable_generation_error(ValueError("UPSTAGE_CHAT_HTTP_ERROR"))

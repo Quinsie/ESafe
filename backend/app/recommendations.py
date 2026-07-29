@@ -17,7 +17,7 @@ from app.config import Settings
 from app.upstage import UpstageChatClient
 
 PROMPT_VERSION = "case-recommendation-ko-v5"
-GENERATION_VERSION = "recommendation-generator-v10"
+GENERATION_VERSION = "recommendation-generator-v11"
 ALLOWED_PRIVACY_STATUSES = frozenset(("PUBLIC_SAFE", "MASKED_VERIFIED"))
 QUOTE_TOKEN_PATTERN = re.compile(r"[가-힣A-Za-z0-9]{2,}")
 QUOTE_STOP_WORDS = frozenset(
@@ -108,6 +108,13 @@ INSUFFICIENT 또는 CONFLICT이면 answerWarning을 반드시 작성하라.
 
 class RecommendationGenerationError(RuntimeError):
     pass
+
+
+def _retryable_generation_error(error: Exception) -> bool:
+    return str(error) in {
+        "RECOMMENDATION_OUTPUT_SCHEMA_INVALID",
+        "UPSTAGE_CHAT_FINISH_INVALID:length",
+    }
 
 
 class CitationProposal(BaseModel):
@@ -1182,20 +1189,44 @@ async def run_case_recommendation(
                 "version": int(existing["version"]),
                 "externalCall": False,
             }
-        chat_result = await UpstageChatClient(settings, gate).complete_json(
-            system_prompt=SYSTEM_PROMPT,
-            user_prompt=user_prompt,
-            feature_name="case-recommendation-v1",
-            privacy_verified=True,
-            case_reference=case_id,
-            response_schema=None,
-        )
-        value = validate_recommendation_payload(
-            chat_result.payload,
-            evidence_rows,
-            case_title=str(case_row["title"]),
-            case_type=str(case_row["case_type"]),
-        )
+        client = UpstageChatClient(settings, gate)
+        try:
+            chat_result = await client.complete_json(
+                system_prompt=SYSTEM_PROMPT,
+                user_prompt=user_prompt,
+                feature_name="case-recommendation-v1",
+                privacy_verified=True,
+                case_reference=case_id,
+                response_schema=None,
+            )
+            value = validate_recommendation_payload(
+                chat_result.payload,
+                evidence_rows,
+                case_title=str(case_row["title"]),
+                case_type=str(case_row["case_type"]),
+            )
+        except (RecommendationGenerationError, ValueError) as error:
+            if not _retryable_generation_error(error):
+                raise
+            chat_result = await client.complete_json(
+                system_prompt=(
+                    f"{SYSTEM_PROMPT}\n"
+                    "직전 응답의 형식 또는 길이가 유효하지 않았다. "
+                    "행동은 최대 3개, 각 인용문은 300자 이내로 간결하게 다시 작성하라."
+                ),
+                user_prompt=user_prompt,
+                feature_name="case-recommendation-repair-v1",
+                privacy_verified=True,
+                case_reference=case_id,
+                response_schema=recommendation_response_schema(evidence_rows),
+                schema_name="case_recommendation",
+            )
+            value = validate_recommendation_payload(
+                chat_result.payload,
+                evidence_rows,
+                case_title=str(case_row["title"]),
+                case_type=str(case_row["case_type"]),
+            )
         async with engine.begin() as connection:
             status, recommendation_id, version = await _persist_recommendation(
                 connection,
