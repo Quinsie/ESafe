@@ -16,10 +16,17 @@ const SpatialAnalysis = lazy(() =>
   import("./analysis").then((module) => ({ default: module.SpatialAnalysis })),
 );
 const SimilarityAnalysis = lazy(() =>
-  import("./similarity").then((module) => ({ default: module.SimilarityAnalysis })),
+  import("./similarity").then((module) => ({
+    default: module.SimilarityAnalysis,
+  })),
 );
 const CaseManagement = lazy(() =>
   import("./cases").then((module) => ({ default: module.CaseManagement })),
+);
+const AutomationManagement = lazy(() =>
+  import("./automation").then((module) => ({
+    default: module.AutomationManagement,
+  })),
 );
 
 interface SessionData {
@@ -48,6 +55,7 @@ const routeTitles: Record<string, string> = {
   "/cases": "재난 대응",
   "/approvals": "검토·승인",
   "/automation/runs": "자동화 기록",
+  "/automation/policies": "자동화 운영 정책",
   "/artifacts": "보고서·산출물",
   "/similar/incidents": "과거 사고사례 검색",
   "/similar/facilities": "유사 위험시설 탐색",
@@ -267,7 +275,9 @@ function AuthenticatedShell({
   const logout = useMutation({
     mutationFn: () => apiRequest(runtime, "/auth/logout", { method: "POST" }),
     onSuccess: () => {
-      queryClient.removeQueries({ queryKey: ["auth-session", runtime.profile] });
+      queryClient.removeQueries({
+        queryKey: ["auth-session", runtime.profile],
+      });
       navigateInternal(runtime, "/login", true);
     },
   });
@@ -355,6 +365,18 @@ function AuthenticatedShell({
           }
         >
           <CaseManagement currentPath={currentPath} runtime={runtime} />
+        </Suspense>
+      ) : currentPath === "/automation/runs" || currentPath === "/automation/policies" ? (
+        <Suspense
+          fallback={
+            <main className="page" id="main-content">
+              <div className="auth-loading" role="status">
+                자동화 화면을 준비하고 있습니다.
+              </div>
+            </main>
+          }
+        >
+          <AutomationManagement currentPath={currentPath} runtime={runtime} />
         </Suspense>
       ) : title ? (
         <SectionPlaceholder title={title} />
