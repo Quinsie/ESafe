@@ -1,0 +1,358 @@
+{
+  "version": "rag-evaluation-v1",
+  "reviewedAt": "2026-07-29",
+  "reviewMethod": "현재 활성 색인의 문서 메타데이터와 비식별 청크 원문을 문항별로 교차 확인",
+  "questions": [
+    {
+      "id": "RAG-001",
+      "category": "OFFICIAL_CURRENT",
+      "question": "다중밀집시설 대형화재가 발생했을 때 한국전기안전공사가 따라야 할 현장 대응 절차의 공식 근거는 무엇인가?",
+      "caseType": "FIRE",
+      "regionCode": "29170",
+      "expectedDocumentIds": ["b3e33683-2a31-5f67-9691-45c9f83eeaeb"],
+      "expectedChunkIds": ["4f63b541-59a8-5793-bd71-ed24a0efcc3a"],
+      "supportTerms": ["다중밀집시설", "세부대응절차", "한국전기안전공사"],
+      "rationale": "소방대상물화재재난 현장조치 행동매뉴얼의 목적과 적용 원칙을 직접 묻는다."
+    },
+    {
+      "id": "RAG-002",
+      "category": "OFFICIAL_CURRENT",
+      "question": "대형화재 때 재난복구지원본부가 긴급점검 대상과 결과를 어떻게 관리해야 하는가?",
+      "caseType": "FIRE",
+      "regionCode": "29170",
+      "expectedDocumentIds": ["b3e33683-2a31-5f67-9691-45c9f83eeaeb"],
+      "expectedChunkIds": ["837a8379-f1eb-5bb5-b90f-7d4600f2afd7"],
+      "supportTerms": ["긴급점검", "결과", "재난복구지원본부"],
+      "rationale": "공식 화재 매뉴얼에 긴급점검 대상·실시계획·결과 및 조치의견 임무가 함께 명시된다."
+    },
+    {
+      "id": "RAG-003",
+      "category": "OFFICIAL_CURRENT",
+      "question": "화재 재난의 위기경보 수준을 정하기 위한 상황판단회의는 언제 열고, 야간에는 무엇을 기록해야 하는가?",
+      "caseType": "FIRE",
+      "regionCode": "29170",
+      "expectedDocumentIds": ["b3e33683-2a31-5f67-9691-45c9f83eeaeb"],
+      "expectedChunkIds": ["e10837dd-05d6-5da5-bc78-d4859526e116"],
+      "supportTerms": ["상황판단회의", "야간", "상황근무일지"],
+      "rationale": "화재 매뉴얼의 자체 상황판단회의 개최 기준과 예외 기록 의무를 묻는다."
+    },
+    {
+      "id": "RAG-004",
+      "category": "OFFICIAL_CURRENT",
+      "question": "화재 관심 단계에서 비상연락망과 긴급동원 자원, 취약시설 점검을 어떻게 준비해야 하는가?",
+      "caseType": "FIRE",
+      "regionCode": "29140",
+      "expectedDocumentIds": ["b3e33683-2a31-5f67-9691-45c9f83eeaeb"],
+      "expectedChunkIds": ["81b96e8c-a7e9-588b-9bd2-b29a9ac3f1b9"],
+      "supportTerms": ["비상연락망", "긴급", "취약시설"],
+      "rationale": "화재 매뉴얼 관심 단계의 대비태세와 예방활동 목록을 직접 확인한다."
+    },
+    {
+      "id": "RAG-005",
+      "category": "OFFICIAL_CURRENT",
+      "question": "대규모 화재 초동 대응에서 상황보고, 비상소집, 현장 출동과 긴급복구를 어떤 순서로 수행해야 하는가?",
+      "caseType": "FIRE",
+      "regionCode": "46110",
+      "expectedDocumentIds": ["b3e33683-2a31-5f67-9691-45c9f83eeaeb"],
+      "expectedChunkIds": ["8e02f0c7-470a-5e2e-a5b9-67af5c7cb0f4"],
+      "supportTerms": ["상황보고", "비상소집", "긴급복구"],
+      "rationale": "화재 매뉴얼 초기대응 절의 보고·전파, 초동조치와 긴급대응조치를 묻는다."
+    },
+    {
+      "id": "RAG-006",
+      "category": "OFFICIAL_CURRENT",
+      "question": "화재·감전·폭발이 우려되는 전기설비 사고에 적용할 한국전기안전공사의 공식 행동매뉴얼 범위는 무엇인가?",
+      "caseType": "ELECTRICAL_ACCIDENT",
+      "regionCode": "29170",
+      "expectedDocumentIds": ["fa7811ce-f96d-5347-a3e1-6fb8b0f974a3"],
+      "expectedChunkIds": ["9e225235-a50f-5af9-8bdd-55e2a5f87b5b"],
+      "supportTerms": ["화재", "감전", "전기설비"],
+      "rationale": "전기사고 재난 현장조치 행동매뉴얼의 목적과 적용범위를 직접 묻는다."
+    },
+    {
+      "id": "RAG-007",
+      "category": "OFFICIAL_CURRENT",
+      "question": "전기사고 재난에서 화재·붕괴·폭발 또는 감전이 심각 단계에 해당하는 인명피해 기준은 무엇인가?",
+      "caseType": "ELECTRICAL_ACCIDENT",
+      "regionCode": "29140",
+      "expectedDocumentIds": ["fa7811ce-f96d-5347-a3e1-6fb8b0f974a3"],
+      "expectedChunkIds": ["e58c44d7-7e12-5ff8-b8ff-7af6f1c2f980"],
+      "supportTerms": ["심각", "사망", "부상"],
+      "rationale": "전기사고 매뉴얼의 심각 단계 정량 판단기준을 확인한다."
+    },
+    {
+      "id": "RAG-008",
+      "category": "OFFICIAL_CURRENT",
+      "question": "전기사고 발생 시 지역 재난안전대책본부 상황반과 복구수습반이 각각 해야 할 일은 무엇인가?",
+      "caseType": "ELECTRICAL_ACCIDENT",
+      "regionCode": "46110",
+      "expectedDocumentIds": ["fa7811ce-f96d-5347-a3e1-6fb8b0f974a3"],
+      "expectedChunkIds": ["3c7c94fe-3f01-59d6-9a23-0f1f7c2a37e5"],
+      "supportTerms": ["상황반", "복구수습반", "피해현황"],
+      "rationale": "전기사고 매뉴얼의 지역 조직별 임무를 직접 묻는다."
+    },
+    {
+      "id": "RAG-009",
+      "category": "OFFICIAL_CURRENT",
+      "question": "전기사고의 비상대응과 수습복구 단계에서 응급복구, 원인조사, 재발방지 점검은 어떻게 이어지는가?",
+      "caseType": "ELECTRICAL_ACCIDENT",
+      "regionCode": "46230",
+      "expectedDocumentIds": ["fa7811ce-f96d-5347-a3e1-6fb8b0f974a3"],
+      "expectedChunkIds": ["bcfae986-1d2d-558e-893c-b52abcc453bc"],
+      "supportTerms": ["응급복구", "사고원인", "재발방지"],
+      "rationale": "전기사고 매뉴얼의 대응 단계별 지침을 확인한다."
+    },
+    {
+      "id": "RAG-010",
+      "category": "OFFICIAL_CURRENT",
+      "question": "태풍·호우로 전기설비 파손이나 대규모 전기공급 불능이 우려될 때 적용되는 공식 대응 범위는 무엇인가?",
+      "caseType": "WEATHER_WARNING",
+      "regionCode": "29170",
+      "expectedDocumentIds": ["948049ce-46f1-5ddc-a9e0-855e36cc6b13"],
+      "expectedChunkIds": ["a4495431-d714-50a6-a8df-c87d7e22a8ac"],
+      "supportTerms": ["태풍", "호우", "전기설비"],
+      "rationale": "풍수해 현장조치 행동매뉴얼의 적용범위를 묻는다."
+    },
+    {
+      "id": "RAG-011",
+      "category": "OFFICIAL_CURRENT",
+      "question": "태풍·호우 위기경보의 관심·주의·경계·심각 단계별 준비 수준은 어떻게 다른가?",
+      "caseType": "WEATHER_WARNING",
+      "regionCode": "46110",
+      "expectedDocumentIds": ["948049ce-46f1-5ddc-a9e0-855e36cc6b13"],
+      "expectedChunkIds": ["658ab063-51d2-55f5-8ff5-88c50ef147ae"],
+      "supportTerms": ["관심", "주의", "경계", "심각"],
+      "rationale": "풍수해 매뉴얼의 네 위기경보 수준 정의와 활동을 확인한다."
+    },
+    {
+      "id": "RAG-012",
+      "category": "OFFICIAL_CURRENT",
+      "question": "호우 피해에 대비해 한국전기안전공사 지역 재난복구지원본부가 점검·출동·긴급복구를 어떻게 준비해야 하는가?",
+      "caseType": "WEATHER_WARNING",
+      "regionCode": "46230",
+      "expectedDocumentIds": ["948049ce-46f1-5ddc-a9e0-855e36cc6b13"],
+      "expectedChunkIds": ["53a8f6d5-caff-5a63-a841-32ca893f9461"],
+      "supportTerms": ["재난복구지원본부", "안전점검", "긴급복구"],
+      "rationale": "풍수해 매뉴얼의 한국전기안전공사 본사·사업소 임무를 묻는다."
+    },
+    {
+      "id": "RAG-013",
+      "category": "OFFICIAL_CURRENT",
+      "question": "여름철 집중호우 때 배수펌프장과 지하 전기실에서 우선 확인할 전기설비와 조치사항은 무엇인가?",
+      "caseType": "WEATHER_WARNING",
+      "regionCode": "29170",
+      "expectedDocumentIds": ["5a88e135-770e-5db4-bd28-568c29b27ac5"],
+      "expectedChunkIds": ["c5244eca-bbca-5c9e-829c-f2ceea77ce79"],
+      "supportTerms": ["배수펌프장", "지하", "비상발전기"],
+      "rationale": "2026 여름철 전기안전 종합대책의 풍수해 취약시설 점검대상을 묻는다."
+    },
+    {
+      "id": "RAG-014",
+      "category": "OFFICIAL_CURRENT",
+      "question": "여름철 전기화재·감전·대규모 정전·침수 피해가 발생하면 보고와 비상대응을 어떻게 해야 하는가?",
+      "caseType": "WEATHER_WARNING",
+      "regionCode": "46110",
+      "expectedDocumentIds": ["5a88e135-770e-5db4-bd28-568c29b27ac5"],
+      "expectedChunkIds": ["4710a6f6-defe-5a90-8805-1bd130f64fbf"],
+      "supportTerms": ["즉시", "상황 보고", "비상대응"],
+      "rationale": "2026 종합대책의 재난상황 보고와 비상대응 체계 조항을 묻는다."
+    },
+    {
+      "id": "RAG-015",
+      "category": "OFFICIAL_CURRENT",
+      "question": "풍수해 위기경보 관심 단계에서 공통적으로 해야 할 모니터링, 국민행동요령 홍보와 시설 점검은 무엇인가?",
+      "caseType": "WEATHER_WARNING",
+      "regionCode": "29140",
+      "expectedDocumentIds": ["79efbd0a-5ce9-5ff6-b8cb-4481a9db58d1"],
+      "expectedChunkIds": [
+        "272504c9-a6af-576c-bea9-825ebc85a6f4",
+        "041bcfe3-9d70-5cdf-a5be-9279a4ad83f2",
+        "10b70b73-280a-5b16-955a-3045d45eac5a"
+      ],
+      "supportTerms": ["모니터링", "국민행동요령", "점검"],
+      "rationale": "관심 단계 기관별 임무·역할 문서의 공통 조치를 묻는다."
+    },
+    {
+      "id": "RAG-016",
+      "category": "OFFICIAL_CURRENT",
+      "question": "2026년 6월 호우 위기경보가 주의에서 관심으로 내려간 이유와 관계기관의 후속 조치는 무엇인가?",
+      "caseType": "WEATHER_WARNING",
+      "regionCode": "46110",
+      "expectedDocumentIds": ["cc29870b-0e4c-5b70-a1d3-4358ade33f04"],
+      "expectedChunkIds": ["a750fb52-3b81-5646-a9fd-15f82079d4b3"],
+      "supportTerms": ["주의", "관심", "상황관리"],
+      "rationale": "호우 위기경보 수준 조정 공문의 사유와 요청사항을 직접 묻는다."
+    },
+    {
+      "id": "RAG-017",
+      "category": "OFFICIAL_CURRENT",
+      "question": "2026년 하반기 안전한국훈련 세부 추진계획과 총괄표의 제출 기한과 제출 방식은 무엇인가?",
+      "caseType": "ADMINISTRATIVE",
+      "regionCode": "29110",
+      "expectedDocumentIds": ["d0e46b6b-b147-5a39-b586-97f334fb304f"],
+      "expectedChunkIds": ["02653c05-ee19-5a7f-a024-d136e7dd4c40"],
+      "supportTerms": ["7. 13", "공문", "제출"],
+      "rationale": "재난대비훈련 계획 제출 요청 공문의 구체적 제출 요구를 묻는다."
+    },
+    {
+      "id": "RAG-018",
+      "category": "OFFICIAL_CURRENT",
+      "question": "2026년 이안류 위기경보 관심 단계의 발령 기간과 실시간 감시 대상 해수욕장은 무엇인가?",
+      "caseType": "WEATHER_WARNING",
+      "regionCode": "46110",
+      "expectedDocumentIds": ["858230a5-fc76-5c44-8fc7-9989ce090b79"],
+      "expectedChunkIds": ["a37dd579-3ddb-5dcc-ab4c-8476cbab2a01"],
+      "supportTerms": ["관심", "해수욕장", "실시간"],
+      "rationale": "이안류 위기경보 발령 공문의 기간과 감시체계 운영지역을 묻는다."
+    },
+    {
+      "id": "RAG-019",
+      "category": "OFFICIAL_CURRENT",
+      "question": "실시간 이안류 감시 서비스가 제공하는 정보와 이안류 지수 네 단계의 수치 기준은 무엇인가?",
+      "caseType": "WEATHER_WARNING",
+      "regionCode": "46110",
+      "expectedDocumentIds": ["6a796850-ade5-5d9b-980d-ff298fe305d5"],
+      "expectedChunkIds": [
+        "3047e40a-3d45-5e58-a76b-c4acfedbb158",
+        "c9ad0e6e-0e1a-5197-adee-a7dd82209e00"
+      ],
+      "supportTerms": ["이안류 지수", "관심", "위험"],
+      "rationale": "국립해양조사원 서비스 개요의 제공정보와 단계 기준을 묻는다."
+    },
+    {
+      "id": "RAG-020",
+      "category": "OFFICIAL_CURRENT",
+      "question": "건조·강풍 특보로 산불 위험이 커졌을 때 경계 단계가 발령된 판단 근거는 무엇인가?",
+      "caseType": "WEATHER_WARNING",
+      "regionCode": "46170",
+      "expectedDocumentIds": ["aab0f15b-67d1-5478-8df2-f56c083e1f36"],
+      "expectedChunkIds": [
+        "e2d505c4-3d10-5a24-a92a-3aa11455a6b1",
+        "830b2612-2b06-5534-9934-748137801ebc"
+      ],
+      "supportTerms": ["건조", "강풍", "경계"],
+      "rationale": "산림청 위기경보 발령 보고의 감시정보와 판단을 묻는다."
+    },
+    {
+      "id": "RAG-021",
+      "category": "NORMAL_INCIDENT",
+      "question": "2026년 전남 목포 조선소 화재에서 선박과 건물 피해, 전기설비 및 점검 이력은 어떠했는가?",
+      "caseType": "FIRE",
+      "regionCode": "46110",
+      "expectedDocumentIds": ["5a4936ab-5008-522a-bdc7-0b39e5315684"],
+      "expectedChunkIds": ["5074b3f5-9c42-5eef-89d9-76333e67f76c"],
+      "supportTerms": ["조선소", "선박", "전기설비"],
+      "rationale": "일반사고보고의 사고개요와 설비개요를 유사사례로 찾는다."
+    },
+    {
+      "id": "RAG-022",
+      "category": "NORMAL_INCIDENT",
+      "question": "전남 목포 조선소 화재를 인지한 뒤 어떤 경로로 진압 여부와 피해규모를 확인했는가?",
+      "caseType": "FIRE",
+      "regionCode": "46110",
+      "expectedDocumentIds": ["5a4936ab-5008-522a-bdc7-0b39e5315684"],
+      "expectedChunkIds": ["a67ff2dd-e160-58aa-97f4-f7293ae1aab3"],
+      "supportTerms": ["안전디딤돌", "전남소방본부", "피해규모"],
+      "rationale": "일반사고보고의 과거 조치사항을 사례로 검색한다."
+    },
+    {
+      "id": "RAG-023",
+      "category": "NORMAL_INCIDENT",
+      "question": "순천 해룡면 주택 화재의 추정 원인과 농사용 전기설비 점검 이력은 무엇이었는가?",
+      "caseType": "FIRE",
+      "regionCode": "46150",
+      "expectedDocumentIds": ["7e453c95-4c3f-5433-af4f-a63749d77437"],
+      "expectedChunkIds": ["4357342c-8fd5-565c-88d5-6ab111518ded"],
+      "supportTerms": ["전기적 요인", "농사용", "점검현황"],
+      "rationale": "광주·전남 일반사고의 원인과 설비 점검 이력을 찾는다."
+    },
+    {
+      "id": "RAG-024",
+      "category": "NORMAL_INCIDENT",
+      "question": "순천 해룡면 주택 화재의 인명·재산 피해와 사고 인지 후 확인 조치는 무엇이었는가?",
+      "caseType": "FIRE",
+      "regionCode": "46150",
+      "expectedDocumentIds": ["7e453c95-4c3f-5433-af4f-a63749d77437"],
+      "expectedChunkIds": ["4fd86f77-49ea-58f4-9e67-710d75cfd3d8"],
+      "supportTerms": ["사망", "재산피해", "소방안전본부"],
+      "rationale": "일반사고보고의 피해와 과거 확인 조치를 사례로 찾는다."
+    },
+    {
+      "id": "RAG-025",
+      "category": "NORMAL_INCIDENT",
+      "question": "대구 동구 차량사업소 감전사고에서 작업 과정, 피해 인원과 수전설비 규모는 어떠했는가?",
+      "caseType": "ELECTRICAL_ACCIDENT",
+      "regionCode": "29170",
+      "expectedDocumentIds": ["a4bc8cdd-8350-5dcb-80eb-d0ea91649dea"],
+      "expectedChunkIds": ["de3ede3b-ba18-5a86-ac54-767816b53206"],
+      "supportTerms": ["사다리", "감전", "22,900V"],
+      "rationale": "타 지역 일반사고는 공식 규정이 아닌 유사사례로만 검색한다."
+    },
+    {
+      "id": "RAG-026",
+      "category": "MAJOR_INCIDENT",
+      "question": "광주 북구 농장 전기울타리 감전 사망사고의 설비·점검 상태와 이후 조사 계획은 무엇이었는가?",
+      "caseType": "ELECTRICAL_ACCIDENT",
+      "regionCode": "29170",
+      "expectedDocumentIds": ["52fc39dc-6dfe-5c29-9321-f4b7f2ed2b19"],
+      "expectedChunkIds": ["8935e229-deab-5453-9114-ad40608d4d95"],
+      "supportTerms": ["전기울타리", "미점검", "합동조사"],
+      "rationale": "중대사고보고의 비식별 사본에서 사고와 후속조사를 찾는다."
+    },
+    {
+      "id": "RAG-027",
+      "category": "MAJOR_INCIDENT",
+      "question": "중대사고보고에 기록된 2026년 목포 조선소 화재의 사고개요와 약 19억원 피해는 무엇인가?",
+      "caseType": "FIRE",
+      "regionCode": "46110",
+      "expectedDocumentIds": ["b507da67-0b4b-59de-9fe5-905328390502"],
+      "expectedChunkIds": ["2bad2423-8d6a-55a4-8dfb-482a0a488aa5"],
+      "supportTerms": ["목포", "조선소", "19억원"],
+      "rationale": "같은 사건의 중대사고보고 원천을 일반사고보고와 구분해 찾는다."
+    },
+    {
+      "id": "RAG-028",
+      "category": "AUTHORITY_PRIORITY",
+      "question": "목포 조선소 화재와 유사한 과거 사고보고보다 우선하여 적용할 현행 화재 대응 공식 근거와 초기조치는 무엇인가?",
+      "caseType": "FIRE",
+      "regionCode": "46110",
+      "expectedDocumentIds": ["b3e33683-2a31-5f67-9691-45c9f83eeaeb"],
+      "expectedChunkIds": [
+        "4f63b541-59a8-5793-bd71-ed24a0efcc3a",
+        "8e02f0c7-470a-5e2e-a5b9-67af5c7cb0f4"
+      ],
+      "supportTerms": ["공식", "초동", "긴급대응"],
+      "rationale": "권위 1의 현행 매뉴얼이 권위 4의 과거사고보다 우선하는지 확인한다."
+    },
+    {
+      "id": "RAG-029",
+      "category": "CONFLICT",
+      "question": "공통 개정사항은 행동매뉴얼의 '대통령실'을 '청와대'로 바꾸라고 하지만 화재 매뉴얼 본문에는 대통령실로 남아 있다. 어느 표현을 적용해야 하는가?",
+      "caseType": "ADMINISTRATIVE",
+      "regionCode": "29110",
+      "expectedDocumentIds": [
+        "70e62ea3-6fce-526d-8366-cc012b11d22e",
+        "b3e33683-2a31-5f67-9691-45c9f83eeaeb"
+      ],
+      "expectedChunkIds": [
+        "264de088-6654-5ba0-9027-8874655a9539",
+        "837a8379-f1eb-5bb5-b90f-7d4600f2afd7"
+      ],
+      "expectedClassification": "CONFLICT",
+      "supportTerms": ["대통령실", "청와대", "개정"],
+      "rationale": "같은 권위의 현행 공식 문서 간 표현 충돌을 숨기지 않고 표시해야 한다."
+    },
+    {
+      "id": "RAG-030",
+      "category": "INSUFFICIENT",
+      "question": "전기재해 현장에서 모든 드론을 정확히 123미터 고도로 비행해야 한다는 의무와 승인 절차가 있는가?",
+      "caseType": "ELECTRICAL_ACCIDENT",
+      "regionCode": "29170",
+      "expectedDocumentIds": [],
+      "expectedChunkIds": [],
+      "expectedClassification": "INSUFFICIENT",
+      "supportTerms": ["123미터", "드론", "승인"],
+      "rationale": "코퍼스에 없는 임의 수치와 의무를 생성하지 않고 근거 부족으로 경고해야 한다."
+    }
+  ]
+}
