@@ -18,6 +18,9 @@ const SpatialAnalysis = lazy(() =>
 const SimilarityAnalysis = lazy(() =>
   import("./similarity").then((module) => ({ default: module.SimilarityAnalysis })),
 );
+const CaseManagement = lazy(() =>
+  import("./cases").then((module) => ({ default: module.CaseManagement })),
+);
 
 interface SessionData {
   user: {
@@ -340,6 +343,18 @@ function AuthenticatedShell({
           }
         >
           <SimilarityAnalysis currentPath={currentPath} runtime={runtime} />
+        </Suspense>
+      ) : currentPath === "/cases" || /^\/cases\/[0-9a-f-]+$/i.test(currentPath) ? (
+        <Suspense
+          fallback={
+            <main className="page" id="main-content">
+              <div className="auth-loading" role="status">
+                재난 대응 화면을 준비하고 있습니다.
+              </div>
+            </main>
+          }
+        >
+          <CaseManagement currentPath={currentPath} runtime={runtime} />
         </Suspense>
       ) : title ? (
         <SectionPlaceholder title={title} />
