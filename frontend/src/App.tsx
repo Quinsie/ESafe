@@ -46,6 +46,11 @@ const InspectionPlanning = lazy(() =>
     default: module.InspectionPlanning,
   })),
 );
+const NotificationCenter = lazy(() =>
+  import("./notifications").then((module) => ({
+    default: module.NotificationCenter,
+  })),
+);
 
 interface SessionData {
   user: {
@@ -330,9 +335,14 @@ function AuthenticatedShell({
           <span className={`profile-badge ${runtime.profile.toLowerCase()}`}>{runtime.badge}</span>
           <span className={`data-status ${sourceWarning ? "is-warning" : ""}`}>{dataState}</span>
           <span className="as-of">기준 {formatKst(sourceData?.dataAsOf)}</span>
-          <button className="notification-button" type="button">
+          <AppLink
+            className="notification-button"
+            currentPath={currentPath}
+            runtime={runtime}
+            to="/notifications"
+          >
             알림
-          </button>
+          </AppLink>
           <span className="signed-in-user">{session.data.user.displayName}</span>
           <button
             className="logout-button"
@@ -459,6 +469,18 @@ function AuthenticatedShell({
           }
         >
           <DocumentManagement currentPath={currentPath} runtime={runtime} />
+        </Suspense>
+      ) : currentPath === "/notifications" ? (
+        <Suspense
+          fallback={
+            <main className="page" id="main-content">
+              <div className="auth-loading" role="status">
+                알림 센터를 준비하고 있습니다.
+              </div>
+            </main>
+          }
+        >
+          <NotificationCenter currentPath={currentPath} runtime={runtime} />
         </Suspense>
       ) : title ? (
         <SectionPlaceholder title={title} />

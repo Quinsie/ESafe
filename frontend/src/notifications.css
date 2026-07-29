@@ -1,0 +1,240 @@
+.notifications-page .eyebrow {
+  margin: 0 0 8px;
+  color: var(--blue-600);
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+}
+
+.notification-heading {
+  align-items: flex-start;
+}
+
+.notification-heading-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.notification-heading-actions button {
+  min-height: 42px;
+  padding: 0 18px;
+  border: 1px solid #bdcad9;
+  border-radius: 6px;
+  background: white;
+  font-weight: 800;
+}
+
+.notification-unread,
+.notification-kind {
+  display: inline-flex;
+  align-items: center;
+  padding: 6px 12px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.notification-unread,
+.notification-kind.risk {
+  color: #b91c1c;
+  background: #fee8e8;
+}
+
+.notification-kind.approval {
+  color: #a54a00;
+  background: #fff0dc;
+}
+
+.notification-kind.automation {
+  color: #6742a6;
+  background: #f0e9ff;
+}
+
+.notification-summary {
+  display: flex;
+  align-items: center;
+  gap: 34px;
+  padding: 18px 22px;
+}
+
+.notification-summary > div {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.notification-summary > small {
+  margin-left: auto;
+  color: var(--muted);
+}
+
+.notification-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 360px;
+  align-items: start;
+  gap: 18px;
+  margin-top: 18px;
+}
+
+.notification-columns {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.notification-column {
+  min-height: 590px;
+  overflow: hidden;
+  padding: 0;
+  border-top: 4px solid #dd7a1c;
+}
+
+.notification-column.risk {
+  border-top-color: #cf2732;
+}
+
+.notification-column.automation {
+  border-top-color: #7654bf;
+}
+
+.notification-column-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 20px 18px 16px;
+  border-bottom: 1px solid #dce4ed;
+}
+
+.notification-column-heading h2 {
+  margin: 0;
+  font-size: 18px;
+}
+
+.notification-column-heading span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.notification-column ol {
+  padding: 12px;
+  margin: 0;
+  list-style: none;
+}
+
+.notification-column li {
+  margin-bottom: 10px;
+  border: 1px solid #d5deea;
+  border-radius: 7px;
+}
+
+.notification-column li.selected {
+  border-color: var(--blue-600);
+  box-shadow: 0 0 0 2px rgba(23, 89, 166, 0.1);
+}
+
+.notification-column li.read {
+  opacity: 0.7;
+}
+
+.notification-column li.unread {
+  border-left: 4px solid currentColor;
+}
+
+.notification-column li button {
+  display: grid;
+  width: 100%;
+  gap: 7px;
+  padding: 14px;
+  border: 0;
+  color: #172338;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.notification-column li button > span,
+.notification-column li time,
+.notification-column li small {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.notification-column li button > span {
+  color: inherit;
+  font-weight: 800;
+}
+
+.notification-empty {
+  padding: 24px 18px;
+  color: var(--muted);
+  line-height: 1.6;
+}
+
+.notification-detail {
+  position: sticky;
+  top: 18px;
+  min-height: 590px;
+  padding: 24px;
+  border-left: 4px solid var(--navy-700);
+}
+
+.notification-detail h2 {
+  margin: 0 0 24px;
+  font-size: 18px;
+}
+
+.notification-detail h3 {
+  margin: 22px 0 12px;
+  font-size: 23px;
+  line-height: 1.35;
+}
+
+.notification-detail > p {
+  color: #4b5d73;
+  line-height: 1.65;
+}
+
+.notification-detail dl {
+  margin: 22px 0;
+}
+
+.notification-detail dl div {
+  display: flex;
+  justify-content: space-between;
+  padding: 11px 0;
+  border-bottom: 1px solid #e0e7ef;
+}
+
+.notification-detail dt {
+  color: var(--muted);
+}
+
+.notification-detail dd {
+  margin: 0;
+  font-weight: 700;
+}
+
+.notification-detail .primary-action {
+  width: 100%;
+  justify-content: center;
+}
+
+.notification-detail .notification-truth-note {
+  margin-top: 18px;
+  padding: 12px;
+  border-radius: 6px;
+  background: #eef4fb;
+  font-size: 12px;
+}
+
+@media (max-width: 1540px) {
+  .notification-layout {
+    grid-template-columns: minmax(0, 1fr) 310px;
+  }
+
+  .notification-column li button {
+    padding: 12px;
+  }
+}
