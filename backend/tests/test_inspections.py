@@ -1,3 +1,4 @@
+import json
 from datetime import UTC, date, datetime, timedelta
 from unittest.mock import AsyncMock
 from uuid import uuid4
@@ -6,7 +7,12 @@ from fastapi.testclient import TestClient
 
 from app.api.auth import require_csrf, require_session
 from app.auth import AuthenticatedSession
-from app.inspections import InspectionContractError, expanded_filters, inclusive_days
+from app.inspections import (
+    InspectionContractError,
+    _audit_metadata,
+    expanded_filters,
+    inclusive_days,
+)
 from app.main import app
 from app.security import token_hash
 
@@ -37,6 +43,21 @@ def test_expanded_filters_are_deterministic_and_relaxed() -> None:
     assert expanded_filters(10, 0.9) == (25.0, 0.85)
     assert expanded_filters(25, 0.02) == (100.0, 0.0)
     assert expanded_filters(1, 0.5) == expanded_filters(1, 0.5)
+
+
+def test_inspection_audit_metadata_serializes_case_and_building_ids() -> None:
+    case_id = uuid4()
+    building_id = uuid4()
+
+    value = json.loads(
+        _audit_metadata(
+            {"caseId": str(case_id)},
+            {"case": {"case_id": case_id}, "building": {"building_id": building_id}},
+        )
+    )
+
+    assert value["context"]["case"]["case_id"] == str(case_id)
+    assert value["context"]["building"]["building_id"] == str(building_id)
 
 
 def test_inspection_endpoints_require_authentication() -> None:

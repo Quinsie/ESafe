@@ -75,6 +75,12 @@ def _hash(value: Any) -> str:
     ).hexdigest()
 
 
+def _audit_metadata(input_contract: dict[str, Any], context: dict[str, Any]) -> str:
+    return json.dumps(
+        {"input": input_contract, "context": context}, ensure_ascii=False, default=str
+    )
+
+
 def inclusive_days(start_date: date, end_date: date) -> int:
     if end_date < start_date:
         raise InspectionContractError(
@@ -365,9 +371,7 @@ async def create_simulation(
                 "target_id": str(simulation_id),
                 "request_id": request_id,
                 "audit_key": f"inspection-create:{profile}:{idempotency_key}",
-                "metadata": json.dumps(
-                    {"input": input_contract, "context": context}, ensure_ascii=False
-                ),
+                "metadata": _audit_metadata(input_contract, context),
             },
         )
     return {
