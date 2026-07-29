@@ -15,8 +15,8 @@ from app.ai_control import AiCostGate
 from app.config import Settings
 from app.upstage import UpstageChatClient
 
-PROMPT_VERSION = "case-recommendation-ko-v1"
-GENERATION_VERSION = "recommendation-generator-v1"
+PROMPT_VERSION = "case-recommendation-ko-v2"
+GENERATION_VERSION = "recommendation-generator-v2"
 ALLOWED_PRIVACY_STATUSES = frozenset(("PUBLIC_SAFE", "MASKED_VERIFIED"))
 
 SYSTEM_PROMPT = """
@@ -319,7 +319,7 @@ async def _fetch_context(
             await connection.execute(
                 text(
                     """
-                    SELECT c.case_id, c.case_number, c.case_type, c.status,
+                    SELECT c.case_id, c.case_number, c.case_type, c.title, c.status,
                            c.source_status, c.monitoring_priority,
                            c.primary_region_code, region.full_name AS region_name,
                            c.is_simulated, c.version,
@@ -355,7 +355,7 @@ async def _fetch_context(
                 text(
                     """
                     SELECT evidence_bundle_id, version, status, index_version_id,
-                           created_at
+                           query_text, created_at
                     FROM evidence_bundle
                     WHERE case_id = :case_id AND is_current
                     """
@@ -415,6 +415,7 @@ def _build_input(
 ) -> tuple[dict[str, Any], str, str]:
     factual_snapshot = {
         "caseNumber": case_row["case_number"],
+        "caseTitle": case_row["title"],
         "caseType": case_row["case_type"],
         "caseStatus": case_row["status"],
         "sourceStatus": case_row["source_status"],
@@ -428,6 +429,7 @@ def _build_input(
         "incidentBuildingCount": int(case_row["incident_count"]),
         "evidenceBundleId": str(bundle["evidence_bundle_id"]),
         "evidenceBundleVersion": int(bundle["version"]),
+        "retrievalQuery": bundle["query_text"],
     }
     safe_input = {
         "caseFacts": factual_snapshot,

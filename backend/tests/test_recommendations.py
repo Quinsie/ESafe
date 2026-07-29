@@ -1,9 +1,12 @@
+import json
 from uuid import UUID
 
 import pytest
 
+from app.config import Settings
 from app.recommendations import (
     RecommendationGenerationError,
+    _build_input,
     recommendation_response_schema,
     validate_recommendation_payload,
 )
@@ -90,10 +93,7 @@ def test_hallucinated_quote_is_removed_and_warned() -> None:
 
     assert result.evidence_status == "INSUFFICIENT"
     assert result.actions[0].citations[0].support_type == "CONTEXT"
-    assert (
-        result.actions[0].citations[0].quote
-        == evidence_rows()[0]["excerpt"]
-    )
+    assert result.actions[0].citations[0].quote == evidence_rows()[0]["excerpt"]
     assert result.actions[0].warning is not None
 
 
@@ -124,7 +124,7 @@ def test_past_incident_cannot_become_direct_sufficient_evidence() -> None:
 def test_conflict_requires_two_distinct_official_documents() -> None:
     value = proposal(evidence_status="CONFLICT")
     action = value["actions"][0]  # type: ignore[index]
-    action["citations"].append(  # type: ignore[index,union-attr]
+    action["citations"].append(
         {
             "evidenceItemId": str(OFFICIAL_TWO),
             "supportType": "DIRECT",
@@ -146,3 +146,47 @@ def test_invalid_shape_is_rejected_before_persistence() -> None:
         match="OUTPUT_SCHEMA_INVALID",
     ):
         validate_recommendation_payload({"actions": []}, evidence_rows())
+
+
+def test_generation_input_includes_case_title_and_retrieval_query() -> None:
+    case_row = {
+        "case_id": UUID("00000000-0000-4000-8000-000000000301"),
+        "case_number": "EVAL-001",
+        "case_type": "FIRE",
+        "title": "호우 특보 시 배수펌프장 전기설비를 어떻게 점검해야 하나?",
+        "status": "ACTIVE",
+        "source_status": "EVALUATION",
+        "monitoring_priority": "ATTENTION",
+        "primary_region_code": "29170",
+        "region_name": "광주광역시 북구",
+        "is_simulated": False,
+        "version": 1,
+        "impact_count": 3,
+        "high_risk_count": 1,
+        "incident_count": 0,
+    }
+    bundle = {
+        "evidence_bundle_id": UUID("00000000-0000-4000-8000-000000000302"),
+        "version": 1,
+        "query_text": "호우 특보 배수펌프장 전기설비 점검",
+    }
+    rows = [
+        {
+            "evidence_item_id": OFFICIAL_ONE,
+            "evidence_group": "OFFICIAL",
+            "rank": 1,
+            "current_status": "CURRENT",
+            "document_title": "여름철 전기안전 종합대책",
+            "issuing_agency": "한국전기안전공사",
+            "document_number": None,
+            "published_at": None,
+            "excerpt": "배수펌프장 전기설비를 점검한다.",
+            "locator": "제2장",
+        }
+    ]
+
+    _, user_prompt, _ = _build_input(Settings(), case_row, bundle, rows)
+    prompt = json.loads(user_prompt)
+
+    assert prompt["caseFacts"]["caseTitle"] == case_row["title"]
+    assert prompt["caseFacts"]["retrievalQuery"] == bundle["query_text"]
