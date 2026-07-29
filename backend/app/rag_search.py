@@ -15,10 +15,15 @@ from app.ai_control import AiCostGate
 from app.config import Settings
 from app.upstage import UpstageEmbeddingClient
 
-RETRIEVAL_VERSION = "rag-hybrid-rrf-v1"
+RETRIEVAL_VERSION = "rag-hybrid-rrf-v2"
 RRF_K = 60
 MAX_CANDIDATES_PER_CHANNEL = 40
 MAX_SELECTED = 12
+CASE_QUERY_TERMS = {
+    "FIRE": "화재 소방",
+    "WEATHER_WARNING": "기상특보 태풍 호우 폭염",
+    "DISASTER_MESSAGE": "재난 안전 전기사고 감전",
+}
 
 
 @dataclass(slots=True)
@@ -219,10 +224,11 @@ async def _fetch_case_and_index(
 def _query_text(case_row: dict[str, Any]) -> str:
     parts = [
         str(case_row["title"]),
-        str(case_row["case_type"]).replace("_", " "),
         str(case_row.get("region_name") or ""),
-        str(case_row["monitoring_priority"]).replace("_", " "),
-        "전기재해 예방 대응 확인 조치",
+        CASE_QUERY_TERMS.get(
+            str(case_row["case_type"]),
+            str(case_row["case_type"]).replace("_", " "),
+        ),
     ]
     return " ".join(part.strip() for part in parts if part.strip())
 

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import date
 
-from app.rag_search import fuse_candidates, select_context
+from app.rag_search import RETRIEVAL_VERSION, _query_text, fuse_candidates, select_context
 
 
 def candidate(
@@ -56,3 +56,18 @@ def test_vector_only_candidate_below_similarity_threshold_is_removed() -> None:
     )
 
     assert fused == []
+
+
+def test_case_query_prefers_korean_signal_terms_without_priority_noise() -> None:
+    query = _query_text(
+        {
+            "title": "전남 목포시 조선소 화재 발생",
+            "case_type": "FIRE",
+            "region_name": "전라남도",
+            "monitoring_priority": "URGENT",
+        }
+    )
+
+    assert RETRIEVAL_VERSION == "rag-hybrid-rrf-v2"
+    assert query == "전남 목포시 조선소 화재 발생 전라남도 화재 소방"
+    assert "URGENT" not in query
