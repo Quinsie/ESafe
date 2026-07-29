@@ -12,6 +12,7 @@ from app.api.auth import AuthError
 from app.api.auth import router as auth_router
 from app.api.automation import router as automation_router
 from app.api.cases import router as cases_router
+from app.api.documents import router as documents_router
 from app.api.health import router as health_router
 from app.api.home import router as home_router
 from app.api.responses import envelope
@@ -62,6 +63,7 @@ app.include_router(spatial_router)
 app.include_router(similarity_router)
 app.include_router(cases_router)
 app.include_router(workflow_router)
+app.include_router(documents_router)
 
 
 @app.exception_handler(AuthError)

@@ -24,6 +24,10 @@ def test_celery_runtime_is_bound_to_profile_queue() -> None:
 
     assert application.conf.task_default_queue == "demo"
     assert application.conf.task_routes["esafe.*"]["queue"] == "demo"
+    assert (
+        application.conf.task_routes["esafe.generate_document_artifact"]["queue"]
+        == "demo-documents"
+    )
     assert application.conf.broker_url == "redis://redis-demo:6379/0"
     assert application.backend.as_uri() == "redis://redis-demo:6379/1"
     assert logging.getLogger("httpx").level == logging.WARNING
@@ -46,6 +50,7 @@ def test_rag_retrieval_task_is_registered_per_profile() -> None:
 
     assert "esafe.retrieve_case_evidence" in application.tasks
     assert "esafe.generate_case_recommendation" in application.tasks
+    assert "esafe.generate_document_artifact" in application.tasks
 
 
 def test_signal_dispatch_is_ten_minutes_with_bounded_jitter(monkeypatch) -> None:

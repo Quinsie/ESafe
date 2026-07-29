@@ -21,7 +21,12 @@ def create_celery_app(settings: Settings) -> Celery:
     )
     application.conf.update(
         task_default_queue=settings.celery_queue,
-        task_routes={"esafe.*": {"queue": settings.celery_queue}},
+        task_routes={
+            "esafe.generate_document_artifact": {
+                "queue": f"{settings.celery_queue}-documents"
+            },
+            "esafe.*": {"queue": settings.celery_queue},
+        },
         task_serializer="json",
         result_serializer="json",
         accept_content=["json"],
@@ -121,6 +126,20 @@ def create_celery_app(settings: Settings) -> Celery:
                     await redis.aclose()
 
         return asyncio.run(execute())
+
+    @application.task(
+        name="esafe.generate_document_artifact",
+        shared=False,
+        lazy=False,
+    )
+    def generate_document_artifact_task(artifact_id: str) -> dict[str, Any]:
+        from uuid import UUID
+
+        from app.documents import generate_document_artifact
+
+        return asyncio.run(
+            generate_document_artifact(settings, UUID(artifact_id))
+        )
 
     return application
 

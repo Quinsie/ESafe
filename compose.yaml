@@ -7,6 +7,13 @@ x-backend-build: &backend-build
   args:
     ESAFE_BUILD_COMMIT: ${ESAFE_BUILD_COMMIT:-unknown}
 
+x-document-build: &document-build
+  context: .
+  dockerfile: backend/document_runtime/Dockerfile
+  target: runtime
+  args:
+    ESAFE_BUILD_COMMIT: ${ESAFE_BUILD_COMMIT:-unknown}
+
 x-backend-common: &backend-common
   image: esafe-backend:${ESAFE_APP_VERSION:-dev}
   build: *backend-build
@@ -384,6 +391,114 @@ services:
       interval: 20s
       timeout: 10s
       start_period: 25s
+      retries: 5
+
+  document-worker-live:
+    image: esafe-document:${ESAFE_APP_VERSION:-dev}
+    build: *document-build
+    restart: unless-stopped
+    init: true
+    user: "${ESAFE_HOST_UID:-1001}:${ESAFE_HOST_GID:-1001}"
+    command:
+      - celery
+      - -A
+      - app.celery_app:celery_app
+      - worker
+      - --loglevel=INFO
+      - --queues=live-documents
+      - --hostname=document-worker-live@%h
+      - --concurrency=1
+    environment:
+      ESAFE_PROFILE: LIVE
+      ESAFE_BUILD_COMMIT: ${ESAFE_BUILD_COMMIT:-unknown}
+      ESAFE_SESSION_SECRET: ${ESAFE_SESSION_SECRET_LIVE}
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db-live:5432/${LIVE_DATABASE_NAME}
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis-live:6379/0
+      CELERY_BROKER_URL: redis://:${REDIS_PASSWORD}@redis-live:6379/0
+      CELERY_RESULT_BACKEND: redis://:${REDIS_PASSWORD}@redis-live:6379/1
+      CELERY_QUEUE: live
+      DOCUMENT_STORAGE_ROOT: /srv/esafe/storage/documents
+      HOME: /tmp/esafe-home
+    volumes:
+      - ./storage/live:/srv/esafe/storage
+    networks:
+      - live-backend
+    depends_on:
+      db-live:
+        condition: service_healthy
+      migrate-live:
+        condition: service_completed_successfully
+      redis-live:
+        condition: service_healthy
+    shm_size: 512m
+    tmpfs:
+      - /tmp:rw,nosuid,size=512m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - celery -A app.celery_app:celery_app inspect ping --timeout=5
+          --destination=document-worker-live@$$HOSTNAME | grep -q pong
+      interval: 20s
+      timeout: 10s
+      start_period: 35s
+      retries: 5
+
+  document-worker-demo:
+    image: esafe-document:${ESAFE_APP_VERSION:-dev}
+    build: *document-build
+    restart: unless-stopped
+    init: true
+    user: "${ESAFE_HOST_UID:-1001}:${ESAFE_HOST_GID:-1001}"
+    command:
+      - celery
+      - -A
+      - app.celery_app:celery_app
+      - worker
+      - --loglevel=INFO
+      - --queues=demo-documents
+      - --hostname=document-worker-demo@%h
+      - --concurrency=1
+    environment:
+      ESAFE_PROFILE: DEMO
+      ESAFE_BUILD_COMMIT: ${ESAFE_BUILD_COMMIT:-unknown}
+      ESAFE_SESSION_SECRET: ${ESAFE_SESSION_SECRET_DEMO}
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db-demo:5432/${DEMO_DATABASE_NAME}
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis-demo:6379/0
+      CELERY_BROKER_URL: redis://:${REDIS_PASSWORD}@redis-demo:6379/0
+      CELERY_RESULT_BACKEND: redis://:${REDIS_PASSWORD}@redis-demo:6379/1
+      CELERY_QUEUE: demo
+      DOCUMENT_STORAGE_ROOT: /srv/esafe/storage/documents
+      HOME: /tmp/esafe-home
+    volumes:
+      - ./storage/demo:/srv/esafe/storage
+    networks:
+      - demo-backend
+    depends_on:
+      db-demo:
+        condition: service_healthy
+      migrate-demo:
+        condition: service_completed_successfully
+      redis-demo:
+        condition: service_healthy
+    shm_size: 512m
+    tmpfs:
+      - /tmp:rw,nosuid,size=512m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - celery -A app.celery_app:celery_app inspect ping --timeout=5
+          --destination=document-worker-demo@$$HOSTNAME | grep -q pong
+      interval: 20s
+      timeout: 10s
+      start_period: 35s
       retries: 5
 
   scheduler-live:

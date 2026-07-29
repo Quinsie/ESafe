@@ -68,6 +68,20 @@ class Settings(BaseSettings):
         default=None,
         alias="AI_CONTROL_DATABASE_URL",
     )
+    document_storage_root: str = Field(
+        default="/srv/esafe/storage/documents",
+        alias="DOCUMENT_STORAGE_ROOT",
+    )
+    document_pdf_renderer: str = Field(
+        default="/app/document_runtime/render_pdf.mjs",
+        alias="DOCUMENT_PDF_RENDERER",
+    )
+    document_render_timeout_seconds: float = Field(
+        default=90.0,
+        ge=10.0,
+        le=300.0,
+        alias="DOCUMENT_RENDER_TIMEOUT_SECONDS",
+    )
     nfds_monitor_url: str = Field(
         default="https://www.nfds.go.kr/dashboard/monitorData.do",
         alias="NFDS_MONITOR_URL",
