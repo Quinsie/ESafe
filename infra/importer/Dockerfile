@@ -11,7 +11,8 @@ RUN groupadd --gid 10001 esafe \
     && useradd --uid 10001 --gid 10001 --create-home --shell /usr/sbin/nologin esafe
 
 COPY importer/requirements.txt /tmp/requirements.txt
-RUN python -m pip install --requirement /tmp/requirements.txt
+RUN python -m pip install --upgrade pip==26.1.2 \
+    && python -m pip install --requirement /tmp/requirements.txt
 
 COPY --chown=esafe:esafe importer/esafe_importer /app/esafe_importer
 USER 10001:10001
