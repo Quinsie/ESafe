@@ -1,8 +1,11 @@
 # ruff: noqa: E501
 import asyncio
 import math
+from collections.abc import Callable, Coroutine
 from dataclasses import dataclass
 from datetime import date
+from threading import Lock
+from time import monotonic
 from typing import Any
 from uuid import UUID
 
@@ -83,6 +86,52 @@ CASE
     ELSE 0
 END
 """
+
+_CANDIDATE_CACHE_TTL_SECONDS = 60.0
+_CANDIDATE_CACHE_MAX_ENTRIES = 128
+_CandidateCacheKey = tuple[int, UUID, int, int]
+_candidate_cache: dict[_CandidateCacheKey, tuple[float, dict[str, Any]]] = {}
+_candidate_inflight: dict[_CandidateCacheKey, asyncio.Task[dict[str, Any]]] = {}
+_candidate_cache_lock = Lock()
+
+
+def _finish_candidate_task(
+    key: _CandidateCacheKey,
+    task: asyncio.Task[dict[str, Any]],
+) -> None:
+    try:
+        result = task.result()
+    except BaseException:
+        result = None
+    now = monotonic()
+    with _candidate_cache_lock:
+        if _candidate_inflight.get(key) is task:
+            _candidate_inflight.pop(key, None)
+        if result is None:
+            return
+        expired = [cached_key for cached_key, value in _candidate_cache.items() if value[0] <= now]
+        for cached_key in expired:
+            _candidate_cache.pop(cached_key, None)
+        if len(_candidate_cache) >= _CANDIDATE_CACHE_MAX_ENTRIES:
+            _candidate_cache.pop(next(iter(_candidate_cache)))
+        _candidate_cache[key] = (now + _CANDIDATE_CACHE_TTL_SECONDS, result)
+
+
+async def _cached_candidate_result(
+    key: _CandidateCacheKey,
+    loader: Callable[[], Coroutine[Any, Any, dict[str, Any]]],
+) -> dict[str, Any]:
+    now = monotonic()
+    with _candidate_cache_lock:
+        cached = _candidate_cache.get(key)
+        if cached is not None and cached[0] > now:
+            return cached[1]
+        task = _candidate_inflight.get(key)
+        if task is None:
+            task = asyncio.create_task(loader())
+            _candidate_inflight[key] = task
+            task.add_done_callback(lambda completed: _finish_candidate_task(key, completed))
+    return await asyncio.shield(task)
 
 
 @dataclass(frozen=True)
@@ -486,7 +535,7 @@ async def incident_search(
     return await asyncio.wait_for(query(), timeout=max(timeout_seconds, 1.5))
 
 
-async def candidate_buildings(
+async def _load_candidate_buildings(
     engine: AsyncEngine,
     reference_incident_id: UUID,
     page: int,
@@ -635,6 +684,22 @@ async def candidate_buildings(
         }
 
     return await asyncio.wait_for(query(), timeout=max(timeout_seconds, 2.5))
+
+
+async def candidate_buildings(
+    engine: AsyncEngine,
+    reference_incident_id: UUID,
+    page: int,
+    page_size: int,
+    timeout_seconds: float,
+) -> dict[str, Any]:
+    key = (id(engine), reference_incident_id, page, page_size)
+    return await _cached_candidate_result(
+        key,
+        lambda: _load_candidate_buildings(
+            engine, reference_incident_id, page, page_size, timeout_seconds
+        ),
+    )
 
 
 async def comparison(

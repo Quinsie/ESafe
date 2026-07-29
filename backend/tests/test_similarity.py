@@ -1,14 +1,22 @@
+import asyncio
 from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock
 from uuid import uuid4
 
+import pytest
 from fastapi.testclient import TestClient
 
 from app.api.auth import require_session
 from app.auth import AuthenticatedSession
 from app.main import app
 from app.security import token_hash
-from app.similarity import classify_building_use, condition_match
+from app.similarity import (
+    _cached_candidate_result,
+    _candidate_cache,
+    _candidate_inflight,
+    classify_building_use,
+    condition_match,
+)
 
 
 def _session() -> AuthenticatedSession:
@@ -36,6 +44,33 @@ def test_condition_match_separates_facility_and_geography() -> None:
 
     province_only = condition_match("공장", "전라남도", "나주시", "창고시설", "전라남도", "목포시")
     assert province_only["score"] == 20
+
+
+@pytest.mark.asyncio
+async def test_candidate_cache_coalesces_concurrent_identical_queries() -> None:
+    key = (991_337, uuid4(), 1, 20)
+    _candidate_cache.clear()
+    _candidate_inflight.clear()
+    calls = 0
+
+    async def loader() -> dict[str, object]:
+        nonlocal calls
+        calls += 1
+        await asyncio.sleep(0.01)
+        return {"items": [{"buildingId": "one"}]}
+
+    try:
+        results = await asyncio.gather(
+            *[_cached_candidate_result(key, loader) for _ in range(10)]
+        )
+        await asyncio.sleep(0)
+        cached = await _cached_candidate_result(key, loader)
+        assert calls == 1
+        assert all(result == cached for result in results)
+        assert key not in _candidate_inflight
+    finally:
+        _candidate_cache.clear()
+        _candidate_inflight.clear()
 
 
 def test_similarity_endpoints_require_authentication() -> None:
