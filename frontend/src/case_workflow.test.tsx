@@ -72,7 +72,13 @@ const evidence = {
       rank: 1,
       fusedScore: 0.08,
       currentStatus: "CURRENT",
-      selectionReason: "공식 현행 대응 근거",
+      selectionReason: {
+        rrfK: 60,
+        authorityWeight: 1.25,
+        freshnessWeight: 1,
+        regionWeight: 1.15,
+        vectorSimilarity: 0.823,
+      },
       excerpt: "현장 접근 전 전원 차단 여부와 소방 활동 안전 조건을 확인한다.",
       locator: "제3장 > 초동조치",
       pageOrSection: "제3장",
@@ -321,6 +327,11 @@ describe("case workflow screens", () => {
     expect(screen.getByText("전기재해 대응 매뉴얼")).toBeVisible();
     expect(screen.getByText("제3장 > 초동조치")).toBeVisible();
     expect(screen.getByText(/현장 접근 전 전원 차단 여부/)).toBeVisible();
+    expect(
+      screen.getByText(
+        "하이브리드 RRF(k=60) · 공신력 1.25배 · 최신성 1.00배 · 지역성 1.15배 · 의미 유사도 82.3%",
+      ),
+    ).toBeVisible();
     expect(screen.getByText("직접 인용 충족률")).toBeVisible();
     expect(screen.getByText("100%")).toBeVisible();
     expect(screen.getByRole("link", { name: "과업 열기" })).toHaveAttribute(

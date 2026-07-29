@@ -40,7 +40,13 @@ interface EvidenceItem {
   rank: number;
   fusedScore: number;
   currentStatus: string;
-  selectionReason: string;
+  selectionReason: {
+    rrfK: number;
+    authorityWeight: number;
+    freshnessWeight: number;
+    regionWeight: number;
+    vectorSimilarity: number | null;
+  };
   excerpt: string;
   locator: string;
   pageOrSection: string | null;
@@ -286,6 +292,20 @@ function WorkPill({ status }: { status: WorkStatus }) {
   );
 }
 
+function selectionReasonLabel(reason: EvidenceItem["selectionReason"]): string {
+  const similarity =
+    reason.vectorSimilarity === null
+      ? "키워드 일치"
+      : `의미 유사도 ${(reason.vectorSimilarity * 100).toFixed(1)}%`;
+  return [
+    `하이브리드 RRF(k=${reason.rrfK})`,
+    `공신력 ${reason.authorityWeight.toFixed(2)}배`,
+    `최신성 ${reason.freshnessWeight.toFixed(2)}배`,
+    `지역성 ${reason.regionWeight.toFixed(2)}배`,
+    similarity,
+  ].join(" · ");
+}
+
 function EvidenceCard({ item }: { item: EvidenceItem }) {
   return (
     <article className="evidence-card">
@@ -308,7 +328,7 @@ function EvidenceCard({ item }: { item: EvidenceItem }) {
         </div>
         <div>
           <dt>선정 근거</dt>
-          <dd>{item.selectionReason}</dd>
+          <dd>{selectionReasonLabel(item.selectionReason)}</dd>
         </div>
       </dl>
     </article>
