@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any, Final
 from urllib.parse import urlencode
+from zoneinfo import ZoneInfo
 
 import httpx
 
@@ -15,6 +16,7 @@ from app.signals.nfds import nfds_records, parse_nfds
 NFDS_LICENSE_NOTE: Final = "국가화재정보시스템 전국119상황실 화면 내부 요청"
 KMA_LICENSE_NOTE: Final = "기상청 기상특보 조회서비스 공공데이터포털 OpenAPI"
 DISASTER_LICENSE_NOTE: Final = "재난안전데이터 공유플랫폼 공개 웹 목록 임시 수집"
+KST: Final = ZoneInfo("Asia/Seoul")
 
 
 class SourceRequestError(RuntimeError):
@@ -190,19 +192,29 @@ def _kma_external_id(item: dict[str, object]) -> str:
     return f"{item.get('stnId', '')}:{item.get('tmFc', '')}:{item.get('tmSeq', '')}"
 
 
+def _kma_query_window(now: datetime | None = None) -> tuple[str, str]:
+    instant = now or datetime.now(UTC)
+    today = instant.astimezone(KST).date()
+    available_through = min(today, instant.astimezone(UTC).date())
+    return (
+        (today - timedelta(days=6)).strftime("%Y%m%d"),
+        available_through.strftime("%Y%m%d"),
+    )
+
+
 async def fetch_kma_warnings(
     settings: Settings,
     client: httpx.AsyncClient,
     known_external_ids: frozenset[str] = frozenset(),
 ) -> SourceBatch:
-    today = datetime.now(UTC).astimezone().date()
+    from_tm_fc, to_tm_fc = _kma_query_window()
     parameters: dict[str, object] = {
         "pageNo": 1,
         "numOfRows": 1000,
         "dataType": "JSON",
         "stnId": 108,
-        "fromTmFc": (today - timedelta(days=6)).strftime("%Y%m%d"),
-        "toTmFc": today.strftime("%Y%m%d"),
+        "fromTmFc": from_tm_fc,
+        "toTmFc": to_tm_fc,
     }
     list_response = await _request(
         client,

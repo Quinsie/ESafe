@@ -1,3 +1,5 @@
+from datetime import UTC, datetime
+
 import httpx
 import pytest
 
@@ -12,6 +14,7 @@ from app.signals import (
 )
 from app.signals.adapters import (
     SourcePayloadError,
+    _kma_query_window,
     fetch_disaster_messages,
     fetch_kma_warnings,
     fetch_nfds,
@@ -30,6 +33,13 @@ def _settings() -> Settings:
             "KMA_WARNING_BASE_URL": "https://kma.test/WthrWrnInfoService",
             "DISASTER_MESSAGE_URL": "https://safety.test/disasterNotification",
         }
+    )
+
+
+def test_kma_query_window_uses_korean_calendar_after_utc_boundary() -> None:
+    assert _kma_query_window(datetime(2026, 7, 29, 15, 5, tzinfo=UTC)) == (
+        "20260724",
+        "20260729",
     )
 
 
