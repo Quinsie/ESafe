@@ -6,7 +6,14 @@ import type { ProfileRuntime } from "./profile";
 import { AppLink, navigateInternal } from "./router";
 import "./documents.css";
 
-type DocumentVariant = "INCIDENT_REPORT" | "CRISIS_ASSESSMENT" | "BASIC_NOTICE" | "BASIC_PLAN";
+type DocumentVariant =
+  | "INCIDENT_REPORT"
+  | "CRISIS_ASSESSMENT"
+  | "BASIC_NOTICE"
+  | "BASIC_PLAN"
+  | "REGION_ANALYSIS"
+  | "BUILDING_ANALYSIS"
+  | "INSPECTION_REQUEST";
 type DocumentFamily = "SITUATION_REPORT" | "OFFICIAL_NOTICE" | "RESPONSE_PLAN";
 type DocumentStatus = "DRAFT" | "APPROVAL_PENDING" | "APPROVED" | "ON_HOLD" | "DISCARDED";
 type EvidenceStatus = "SUFFICIENT" | "INSUFFICIENT" | "CONFLICT";
@@ -16,7 +23,7 @@ type ArtifactStage = "REVIEW" | "FINAL";
 
 interface DocumentPayload {
   schemaVersion: 1;
-  caseId: string;
+  caseId: string | null;
   caseNumber: string;
   variant: DocumentVariant;
   document: { title: string; date: string; year: string; number: string };
@@ -182,6 +189,9 @@ const variantLabels: Record<DocumentVariant, string> = {
   CRISIS_ASSESSMENT: "위기상황판단",
   BASIC_NOTICE: "한국전기안전공사 공문",
   BASIC_PLAN: "대응 계획서",
+  REGION_ANALYSIS: "지역 위험 분석 보고서",
+  BUILDING_ANALYSIS: "건물 위험 분석 보고서",
+  INSPECTION_REQUEST: "현장점검 요청 공문",
 };
 
 const familyLabels: Record<DocumentFamily, string> = {

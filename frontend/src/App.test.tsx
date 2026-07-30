@@ -485,6 +485,7 @@ describe("App authentication boundary", () => {
     expect(screen.getByText("최상위 위험")).toBeVisible();
     expect(screen.getByText("철근콘크리트")).toBeVisible();
     expect(screen.getByText("3건")).toBeVisible();
+    expect(screen.getByRole("button", { name: "현장점검 요청 작성" })).toBeVisible();
     expect(screen.getByText("건물·위험도 기준 데이터에 별도 품질 경고가 없습니다.")).toBeVisible();
   });
 
@@ -498,7 +499,7 @@ describe("App authentication boundary", () => {
     expect(screen.getByText("근거 부족 · 검토 필요")).toBeVisible();
     expect(screen.getByText("HWPX + PDF")).toBeVisible();
     expect(screen.getAllByText("미입력").length).toBe(3);
-    expect(screen.getByRole("link", { name: "Case에서 문서 초안 만들기" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "분석 보고서 초안 만들기" })).toBeVisible();
     expect(screen.queryByText(/S7 문서 흐름/)).toBeNull();
   });
 

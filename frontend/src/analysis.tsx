@@ -1,8 +1,49 @@
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import { apiRequest } from "./api";
 import type { ProfileRuntime } from "./profile";
-import { AppLink, currentInternalLocation, safeReturnTo } from "./router";
+import { AppLink, currentInternalLocation, navigateInternal, safeReturnTo } from "./router";
+
+type StandaloneDocumentVariant = "REGION_ANALYSIS" | "BUILDING_ANALYSIS" | "INSPECTION_REQUEST";
+
+function StandaloneDocumentButton({
+  runtime,
+  variant,
+  targetId,
+  className,
+  children,
+}: {
+  runtime: ProfileRuntime;
+  variant: StandaloneDocumentVariant;
+  targetId: string;
+  className: string;
+  children: ReactNode;
+}) {
+  const create = useMutation({
+    mutationFn: () =>
+      apiRequest<{ documentDraftId: string }>(runtime, "/standalone-documents", {
+        method: "POST",
+        headers: { "Idempotency-Key": `standalone-document-${crypto.randomUUID()}` },
+        body: JSON.stringify({ variant, targetId }),
+      }),
+    onSuccess: ({ data }) => navigateInternal(runtime, `/documents/${data.documentDraftId}/edit`),
+  });
+  return (
+    <div className="standalone-document-action">
+      <button
+        className={className}
+        disabled={create.isPending}
+        onClick={() => create.mutate()}
+        type="button"
+      >
+        {create.isPending ? "초안 만드는 중…" : children}
+      </button>
+      {create.isError ? (
+        <small role="alert">문서 초안을 만들지 못했습니다. 다시 시도해 주세요.</small>
+      ) : null}
+    </div>
+  );
+}
 
 interface RiskValue {
   finalScore: number;
@@ -655,14 +696,14 @@ function BuildingDetail({
           >
             유사 화재 검색
           </AppLink>
-          <AppLink
+          <StandaloneDocumentButton
             className="outline-action"
-            currentPath={currentPath}
             runtime={runtime}
-            to={`/outputs/new?building=${data.buildingId}&type=inspection-request`}
+            targetId={data.buildingId}
+            variant="INSPECTION_REQUEST"
           >
             현장점검 요청 작성
-          </AppLink>
+          </StandaloneDocumentButton>
           <AppLink
             className="primary-action"
             currentPath={currentPath}
@@ -890,14 +931,14 @@ function ReportPreview({
             근거가 부족해도 초안은 만들되 문서와 화면에 경고를 유지합니다. 허위 인용은 생성하지
             않습니다.
           </div>
-          <AppLink
+          <StandaloneDocumentButton
             className="primary-action"
-            currentPath={currentPath}
             runtime={runtime}
-            to="/cases"
+            targetId={targetId}
+            variant={regionData ? "REGION_ANALYSIS" : "BUILDING_ANALYSIS"}
           >
-            Case에서 문서 초안 만들기
-          </AppLink>
+            분석 보고서 초안 만들기
+          </StandaloneDocumentButton>
           <AppLink
             className="outline-action"
             currentPath={currentPath}
@@ -906,7 +947,7 @@ function ReportPreview({
           >
             문서·산출물 보관함 보기
           </AppLink>
-          <small>문서 초안은 연결할 사건 Case를 선택한 뒤 만들 수 있습니다.</small>
+          <small>재난 Case가 없어도 현재 분석 대상을 기준으로 독립 문서를 만듭니다.</small>
         </aside>
       </div>
     </main>

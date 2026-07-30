@@ -17,6 +17,7 @@ from app.document_content import DocumentPayload, DocumentVariant
 from app.documents import (
     clone_document_draft,
     create_document_draft,
+    create_standalone_document_draft,
     document_artifact_download,
     document_detail,
     document_library,
@@ -35,6 +36,13 @@ class CreateDocumentBody(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     variant: DocumentVariant
+
+
+class CreateStandaloneDocumentBody(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    variant: Literal["REGION_ANALYSIS", "BUILDING_ANALYSIS", "INSPECTION_REQUEST"]
+    target_id: str = Field(alias="targetId", min_length=1, max_length=100)
 
 
 class UpdateDocumentBody(BaseModel):
@@ -104,6 +112,33 @@ async def post_document(
             user_id=session.user_id,
             request_id=UUID(request.state.request_id),
             idempotency_key=idempotency_key,
+        )
+        _queue_artifacts(request, detail)
+    except WorkflowContractError as error:
+        return _error(request, error)
+    return envelope(request, detail | {"reused": reused})
+
+
+@router.post("/standalone-documents", status_code=202)
+async def post_standalone_document(
+    request: Request,
+    session: WriteSession,
+    body: CreateStandaloneDocumentBody,
+    idempotency_key: Annotated[
+        str | None, Header(alias="Idempotency-Key")
+    ] = None,
+) -> Any:
+    settings = request.app.state.settings
+    try:
+        detail, reused = await create_standalone_document_draft(
+            request.app.state.db_engine,
+            profile=settings.profile,
+            variant=body.variant,
+            target_id=body.target_id,
+            user_id=session.user_id,
+            request_id=UUID(request.state.request_id),
+            idempotency_key=idempotency_key,
+            timeout_seconds=settings.health_timeout_seconds,
         )
         _queue_artifacts(request, detail)
     except WorkflowContractError as error:

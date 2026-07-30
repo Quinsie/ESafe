@@ -21,6 +21,7 @@ from app.document_content import (
     DocumentPayload,
     DocumentVariant,
     build_initial_document_payload,
+    build_standalone_document_payload,
     canonical_payload_hash,
     hwpx_values,
     missing_administrative_fields,
@@ -32,6 +33,7 @@ from app.document_templates import (
     render_hwpx,
     sha256_file,
 )
+from app.spatial import building_detail, region_detail
 from app.workflow import WorkflowContractError
 
 DOCUMENT_ASSET_ROOT = Path(__file__).parent / "assets" / "document_templates"
@@ -599,6 +601,189 @@ async def create_document_draft(
                         "status": "DRAFT",
                         "variant": variant,
                         "version": 1,
+                        "evidenceStatus": payload.evidence.status,
+                    }
+                ),
+                "request_id": request_id,
+                "idempotency_key": audit_key,
+                "output_sha256": content_sha256,
+            },
+        )
+        detail = await _current_document_detail(connection, document_draft_id)
+        if detail is None:
+            raise RuntimeError("DOCUMENT_INSERT_NOT_VISIBLE")
+        return detail, False
+
+
+async def create_standalone_document_draft(
+    engine: AsyncEngine,
+    *,
+    profile: str,
+    variant: DocumentVariant,
+    target_id: str,
+    user_id: UUID,
+    request_id: UUID,
+    idempotency_key: str | None,
+    timeout_seconds: float,
+) -> tuple[dict[str, Any], bool]:
+    allowed = {"REGION_ANALYSIS", "BUILDING_ANALYSIS", "INSPECTION_REQUEST"}
+    if variant not in allowed:
+        raise WorkflowContractError(
+            422,
+            "INVALID_STANDALONE_VARIANT",
+            "독립 문서 종류가 올바르지 않습니다.",
+        )
+    if variant == "REGION_ANALYSIS":
+        source = await region_detail(engine, target_id, timeout_seconds)
+        if source is None:
+            raise WorkflowContractError(404, "REGION_NOT_FOUND", "지역을 찾을 수 없습니다.")
+        distribution = source["distribution"]
+        target = {
+            "name": source["fullName"],
+            "regionName": source["fullName"],
+            "buildingCount": distribution["buildingCount"],
+            "top10Count": distribution["top10Count"],
+            "activeCaseCount": source["currentSignals"]["activeCaseCount"],
+            "topBuildings": [
+                (
+                    f"{item['name']} · 광주·전남 "
+                    f"{item['risk']['regionalRank']:,}위 · "
+                    f"상위 {item['risk']['topPercentile']:.2f}%"
+                )
+                for item in source["topBuildings"][:10]
+            ],
+        }
+    else:
+        try:
+            building_id = UUID(target_id)
+        except ValueError as error:
+            raise WorkflowContractError(
+                422,
+                "INVALID_BUILDING_ID",
+                "건물 식별자가 올바르지 않습니다.",
+            ) from error
+        source = await building_detail(engine, building_id, timeout_seconds)
+        if source is None:
+            raise WorkflowContractError(404, "BUILDING_NOT_FOUND", "건물을 찾을 수 없습니다.")
+        risk = source["risk"]
+        facility = source["facilitySummary"]
+        target = {
+            "name": source["name"],
+            "address": source["roadAddress"] or source["lotAddress"],
+            "regionName": source["region"]["fullName"],
+            "regionalRank": risk["regionalRank"],
+            "topPercentile": risk["topPercentile"],
+            "finalScore": risk["finalScore"],
+            "riskBandLabel": {
+                "TOP_1": "최상위 위험",
+                "HIGH_1_10": "고위험",
+                "WATCH_10_25": "관심",
+                "GENERAL": "일반",
+            }.get(risk["riskBand"], risk["riskBand"]),
+            "facilityCount": facility["linkedFacilityCount"],
+            "activeCaseCount": source["currentSignals"]["activeCaseCount"],
+            "use": source["attributes"]["mainUseName"] or "",
+        }
+    payload = build_standalone_document_payload(
+        variant=cast(Any, variant),
+        target=target,
+        now=datetime.now(UTC),
+    )
+    audit_key = _idempotency_key("create-standalone", profile, idempotency_key)
+    async with engine.begin() as connection:
+        existing = await _existing_idempotent_document(connection, audit_key)
+        if existing is not None:
+            return existing, True
+        document_draft_id = uuid4()
+        document_version_id = uuid4()
+        family = VARIANT_FAMILIES[variant]
+        template_key, template_sha256 = _template_metadata(variant)
+        content_sha256 = canonical_payload_hash(payload)
+        warning = payload.review.warning or None
+        await connection.execute(
+            text(
+                """
+                INSERT INTO document_draft (
+                    document_draft_id, case_id, family, variant, title,
+                    status, current_version, created_by
+                )
+                VALUES (
+                    :document_draft_id, NULL, :family, :variant, :title,
+                    'DRAFT', 1, :user_id
+                )
+                """
+            ),
+            {
+                "document_draft_id": document_draft_id,
+                "family": family,
+                "variant": variant,
+                "title": payload.document.title,
+                "user_id": user_id,
+            },
+        )
+        await connection.execute(
+            text(
+                """
+                INSERT INTO document_version (
+                    document_version_id, document_draft_id, version, status,
+                    structured_payload, evidence_status, warning,
+                    content_sha256, template_key, template_version,
+                    template_sha256, created_by
+                )
+                VALUES (
+                    :document_version_id, :document_draft_id, 1, 'DRAFT',
+                    CAST(:structured_payload AS jsonb), :evidence_status, :warning,
+                    :content_sha256, :template_key, :template_version,
+                    :template_sha256, :user_id
+                )
+                """
+            ),
+            {
+                "document_version_id": document_version_id,
+                "document_draft_id": document_draft_id,
+                "structured_payload": json.dumps(
+                    payload.model_dump(mode="json", by_alias=True),
+                    ensure_ascii=False,
+                ),
+                "evidence_status": payload.evidence.status,
+                "warning": warning,
+                "content_sha256": content_sha256,
+                "template_key": template_key,
+                "template_version": TEMPLATE_VERSION,
+                "template_sha256": template_sha256,
+                "user_id": user_id,
+            },
+        )
+        await _insert_artifacts(connection, document_version_id, "REVIEW")
+        await connection.execute(
+            text(
+                """
+                INSERT INTO audit_event (
+                    audit_event_id, profile, actor_type, actor_user_id,
+                    action, target_type, target_id, target_version,
+                    after_state, reason, correlation_id, idempotency_key,
+                    output_sha256
+                )
+                VALUES (
+                    :audit_event_id, :profile, 'USER', :user_id,
+                    'STANDALONE_DOCUMENT_DRAFT_CREATED', 'DOCUMENT_DRAFT',
+                    :target_id, 1, CAST(:after_state AS jsonb),
+                    '{}'::jsonb, :request_id, :idempotency_key,
+                    :output_sha256
+                )
+                """
+            ),
+            {
+                "audit_event_id": uuid4(),
+                "profile": profile,
+                "user_id": user_id,
+                "target_id": str(document_draft_id),
+                "after_state": json.dumps(
+                    {
+                        "status": "DRAFT",
+                        "variant": variant,
+                        "version": 1,
+                        "sourceTargetId": target_id,
                         "evidenceStatus": payload.evidence.status,
                     }
                 ),

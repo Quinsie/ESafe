@@ -15,6 +15,9 @@ DocumentVariant = Literal[
     "CRISIS_ASSESSMENT",
     "BASIC_NOTICE",
     "BASIC_PLAN",
+    "REGION_ANALYSIS",
+    "BUILDING_ANALYSIS",
+    "INSPECTION_REQUEST",
 ]
 EvidenceStatus = Literal["SUFFICIENT", "INSUFFICIENT", "CONFLICT"]
 ArtifactStage = Literal["REVIEW", "FINAL"]
@@ -26,18 +29,27 @@ VARIANT_TEMPLATE_KEYS: dict[DocumentVariant, str] = {
     "CRISIS_ASSESSMENT": "crisis-assessment",
     "BASIC_NOTICE": "official-notice",
     "BASIC_PLAN": "response-plan",
+    "REGION_ANALYSIS": "incident-report",
+    "BUILDING_ANALYSIS": "incident-report",
+    "INSPECTION_REQUEST": "official-notice",
 }
 VARIANT_FAMILIES: dict[DocumentVariant, str] = {
     "INCIDENT_REPORT": "SITUATION_REPORT",
     "CRISIS_ASSESSMENT": "SITUATION_REPORT",
     "BASIC_NOTICE": "OFFICIAL_NOTICE",
     "BASIC_PLAN": "RESPONSE_PLAN",
+    "REGION_ANALYSIS": "SITUATION_REPORT",
+    "BUILDING_ANALYSIS": "SITUATION_REPORT",
+    "INSPECTION_REQUEST": "OFFICIAL_NOTICE",
 }
 VARIANT_TITLES: dict[DocumentVariant, str] = {
     "INCIDENT_REPORT": "전기재해 사고·상황 보고서",
     "CRISIS_ASSESSMENT": "위기상황판단 평가보고서",
     "BASIC_NOTICE": "전기재해 예방 대응 협조 요청",
     "BASIC_PLAN": "전기재해 예방 대응 계획",
+    "REGION_ANALYSIS": "지역 전기재해 예방 위험 분석 보고서",
+    "BUILDING_ANALYSIS": "건물 전기재해 예방 위험 분석 보고서",
+    "INSPECTION_REQUEST": "전기설비 현장점검 협조 요청",
 }
 EVIDENCE_WARNINGS: dict[EvidenceStatus, str] = {
     "SUFFICIENT": "",
@@ -164,8 +176,8 @@ class DocumentPayload(BaseModel):
     )
 
     schema_version: Literal[1] = Field(default=1, alias="schemaVersion")
-    case_id: str = Field(alias="caseId", min_length=36, max_length=36)
-    case_number: ShortText = Field(alias="caseNumber")
+    case_id: str | None = Field(default=None, alias="caseId", min_length=36, max_length=36)
+    case_number: ShortText = Field(default="", alias="caseNumber")
     variant: DocumentVariant
     document: DocumentIdentity
     author: AuthorFields
@@ -357,6 +369,158 @@ def build_initial_document_payload(
     )
 
 
+def build_standalone_document_payload(
+    *,
+    variant: Literal["REGION_ANALYSIS", "BUILDING_ANALYSIS", "INSPECTION_REQUEST"],
+    target: dict[str, Any],
+    now: datetime,
+) -> DocumentPayload:
+    target_name = str(target["name"])
+    address = str(target.get("address") or target.get("regionName") or "")
+    region_name = str(target.get("regionName") or target_name)
+    building_count = int(target.get("buildingCount") or 0)
+    top10_count = int(target.get("top10Count") or 0)
+    active_case_count = int(target.get("activeCaseCount") or 0)
+    rank = target.get("regionalRank")
+    percentile = target.get("topPercentile")
+    score = target.get("finalScore")
+    risk_band = str(target.get("riskBandLabel") or "")
+    facility_count = int(target.get("facilityCount") or 0)
+    common_warning = "대응 근거 부족·추가 확인 필요"
+
+    if variant == "REGION_ANALYSIS":
+        title = f"{target_name} 전기재해 예방 위험 분석 보고서"
+        summary = (
+            f"{target_name}의 모델 대상 건물 {building_count:,}개를 광주·전남 전체 "
+            f"상대순위와 네 위험구간으로 분석했습니다."
+        )
+        risk_summary = f"상위 10% 건물 {top10_count:,}개"
+        actions = [
+            str(item)
+            for item in target.get("topBuildings", [])
+            if str(item).strip()
+        ]
+        plan = [
+            "상위 위험 건물의 기준정보와 최근 점검 이력을 확인합니다.",
+            "활성 재난 신호가 있는 경우 해당 Case의 대응 업무를 별도로 확인합니다.",
+        ]
+        facility_name = target_name
+        facility_detail = f"현재 연결된 활성 Case {active_case_count:,}건"
+        incident_type = "지역 위험 분석"
+    else:
+        title = (
+            f"{target_name} 전기재해 예방 위험 분석 보고서"
+            if variant == "BUILDING_ANALYSIS"
+            else f"{target_name} 전기설비 현장점검 협조 요청"
+        )
+        rank_text = f"광주·전남 {int(rank):,}위" if rank is not None else "순위 확인 필요"
+        percentile_text = (
+            f"상위 {float(percentile):.2f}%" if percentile is not None else ""
+        )
+        score_text = f"상대점수 {float(score):.6f}" if score is not None else ""
+        risk_summary = " · ".join(
+            item for item in (risk_band, rank_text, percentile_text, score_text) if item
+        )
+        summary = (
+            f"{target_name}은(는) {risk_summary}입니다. 이 값은 현장 확인 우선순위를 "
+            "정하기 위한 상대값이며 사고 발생확률이 아닙니다."
+        )
+        actions = [
+            "건축물 및 연결 전기설비의 현장 상태를 확인합니다.",
+            "최근 점검 이후 설비 변경과 이상 징후를 확인합니다.",
+            "점검 결과와 필요한 후속조치를 시스템에 기록합니다.",
+        ]
+        plan = list(actions)
+        facility_name = target_name
+        facility_detail = (
+            f"연결 설비 {facility_count:,}건 · 현재 연결된 활성 Case "
+            f"{active_case_count:,}건"
+        )
+        incident_type = "건물 위험 분석" if variant == "BUILDING_ANALYSIS" else "현장점검 요청"
+
+    notice_opening = (
+        f"{target_name}의 전기재해 예방을 위한 현장점검 협조를 요청드립니다."
+        if variant == "INSPECTION_REQUEST"
+        else ""
+    )
+    return DocumentPayload.model_validate(
+        {
+            "schemaVersion": 1,
+            "caseId": None,
+            "caseNumber": "",
+            "variant": variant,
+            "document": {
+                "title": title,
+                "date": now.date().isoformat(),
+                "year": str(now.year),
+                "number": "",
+            },
+            "author": {"name": "", "department": "", "approver": ""},
+            "contact": {"phone": "", "email": "", "block": ""},
+            "incident": {
+                "type": incident_type,
+                "occurredAt": now.date().isoformat(),
+                "location": address or region_name,
+                "cause": "",
+                "summary": summary,
+                "detail": facility_detail,
+                "damage": "해당 없음 · 예방 분석 및 점검 목적",
+                "agencies": "",
+            },
+            "facility": {
+                "name": facility_name,
+                "address": address,
+                "use": str(target.get("use") or ""),
+                "risk": risk_summary,
+                "region": region_name,
+                "detail": facility_detail,
+            },
+            "analysis": {
+                "result": summary,
+                "uncertainties": ["현장 상태와 최신 점검 이력은 사용자 확인이 필요합니다."],
+                "conflicts": [],
+            },
+            "monitoring": {
+                "summary": f"현재 연결된 활성 Case {active_case_count:,}건",
+                "signals": [],
+            },
+            "response": {
+                "summary": summary,
+                "priority": risk_band or "NORMAL",
+                "actions": actions,
+                "evidence": [],
+                "plan": plan,
+                "recipients": [],
+                "coordination": "",
+                "approvalProcedure": "",
+                "reportingProcedure": "",
+                "reportingTiming": "",
+                "emergencyPlan": "",
+            },
+            "evidence": {"status": "INSUFFICIENT", "references": []},
+            "notice": {
+                "recipient": "",
+                "deliveryRoute": "",
+                "opening": notice_opening,
+                "grounds": [
+                    "v27.1 · 2026-03 · 향후 60일 광주·전남 상대위험 기준",
+                    risk_summary,
+                ],
+                "request": actions if variant == "INSPECTION_REQUEST" else [],
+                "deadline": "",
+            },
+            "attachments": {
+                "items": (
+                    [f"붙임 1. {target_name} 위험 분석 요약 1부."]
+                    if variant == "INSPECTION_REQUEST"
+                    else []
+                )
+            },
+            "review": {"warning": common_warning},
+        }
+    )
+
+
 def _lines(values: list[str], *, empty: str = "") -> str:
     cleaned = [value.strip() for value in values if value.strip()]
     return "\n".join(f"{index}. {value}" for index, value in enumerate(cleaned, 1)) or empty
@@ -427,7 +591,7 @@ def missing_administrative_fields(payload: DocumentPayload) -> list[str]:
         "문서번호": payload.document.number,
         "전화번호": payload.contact.phone,
     }
-    if payload.variant == "BASIC_NOTICE":
+    if payload.variant in {"BASIC_NOTICE", "INSPECTION_REQUEST"}:
         candidates["수신기관"] = payload.notice.recipient
     return [label for label, value in candidates.items() if not value.strip()]
 
@@ -755,13 +919,16 @@ def _plan_body(payload: DocumentPayload) -> str:
 
 
 def render_document_html(payload: DocumentPayload, stage: ArtifactStage) -> str:
-    if payload.variant == "INCIDENT_REPORT":
+    if payload.variant in {"INCIDENT_REPORT", "REGION_ANALYSIS", "BUILDING_ANALYSIS"}:
         return _incident_report_html(payload, stage)
     body_by_variant = {
         "INCIDENT_REPORT": _report_body,
         "CRISIS_ASSESSMENT": _crisis_body,
         "BASIC_NOTICE": _notice_body,
         "BASIC_PLAN": _plan_body,
+        "REGION_ANALYSIS": _report_body,
+        "BUILDING_ANALYSIS": _report_body,
+        "INSPECTION_REQUEST": _notice_body,
     }
     warning = ""
     if stage == "REVIEW" and payload.review.warning:

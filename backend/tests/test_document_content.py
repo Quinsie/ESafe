@@ -9,6 +9,7 @@ from app.document_content import (
     VARIANT_TEMPLATE_KEYS,
     DocumentPayload,
     build_initial_document_payload,
+    build_standalone_document_payload,
     canonical_payload_hash,
     hwpx_values,
     missing_administrative_fields,
@@ -159,6 +160,71 @@ def test_incident_pdf_html_uses_hwpx_layout_contract() -> None:
     assert "Noto Serif CJK KR" in html
     assert "background: #eef4fa" not in html
     assert payload.review.warning in html
+
+
+@pytest.mark.parametrize(
+    ("variant", "target", "title_part"),
+    [
+        (
+            "REGION_ANALYSIS",
+            {
+                "name": "광주광역시 북구",
+                "regionName": "광주광역시 북구",
+                "buildingCount": 27585,
+                "top10Count": 5953,
+                "activeCaseCount": 0,
+                "topBuildings": ["문흥동 공간아파트 · 광주·전남 1위"],
+            },
+            "지역",
+        ),
+        (
+            "BUILDING_ANALYSIS",
+            {
+                "name": "문흥동 공간아파트",
+                "address": "광주광역시 북구",
+                "regionName": "광주광역시 북구",
+                "regionalRank": 1,
+                "topPercentile": 0.01,
+                "finalScore": 0.99,
+                "riskBandLabel": "최상위 위험",
+                "facilityCount": 3,
+            },
+            "건물",
+        ),
+        (
+            "INSPECTION_REQUEST",
+            {
+                "name": "문흥동 공간아파트",
+                "address": "광주광역시 북구",
+                "regionName": "광주광역시 북구",
+                "regionalRank": 1,
+                "topPercentile": 0.01,
+                "finalScore": 0.99,
+                "riskBandLabel": "최상위 위험",
+                "facilityCount": 3,
+            },
+            "현장점검",
+        ),
+    ],
+)
+def test_standalone_payload_uses_real_template_without_case(
+    variant: str,
+    target: dict[str, object],
+    title_part: str,
+) -> None:
+    payload = build_standalone_document_payload(
+        variant=variant,  # type: ignore[arg-type]
+        target=target,
+        now=NOW,
+    )
+
+    assert payload.case_id is None
+    assert payload.case_number == ""
+    assert title_part in payload.document.title
+    assert payload.evidence.status == "INSUFFICIENT"
+    assert set(hwpx_values(payload, "REVIEW")) == set(
+        TEMPLATE_BY_KEY[VARIANT_TEMPLATE_KEYS[payload.variant]].token_names
+    )
 
 
 @pytest.mark.parametrize("variant", list(VARIANT_TEMPLATE_KEYS))
