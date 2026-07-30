@@ -16,7 +16,7 @@ from zipfile import ZIP_STORED, BadZipFile, ZipFile, ZipInfo
 from lxml import etree
 
 HWPX_MIMETYPE = b"application/hwp+zip"
-TEMPLATE_VERSION = "2026-07-30-v3"
+TEMPLATE_VERSION = "2026-07-30-v4"
 MAX_MEMBER_BYTES = 64 * 1024 * 1024
 MAX_PACKAGE_BYTES = 256 * 1024 * 1024
 REQUIRED_MEMBERS = frozenset(
