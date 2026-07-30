@@ -23,6 +23,19 @@ class RepositoryBoundaryTests(unittest.TestCase):
         self.assertIsNotNone(forbidden_path_reason(PurePosixPath(".env")))
         self.assertIsNotNone(forbidden_path_reason(PurePosixPath(".env.live")))
 
+    def test_only_trusted_required_workflow_is_allowed(self) -> None:
+        self.assertIsNone(
+            forbidden_path_reason(
+                PurePosixPath(".github/workflows/trusted-required-gates.yml")
+            )
+        )
+        self.assertIsNotNone(
+            forbidden_path_reason(PurePosixPath(".github/workflows/required-gates.yml"))
+        )
+        self.assertIsNotNone(
+            forbidden_path_reason(PurePosixPath(".github/workflows/spoof.yml"))
+        )
+
 
 class SecretScannerTests(unittest.TestCase):
     def test_placeholders_and_references_are_allowed(self) -> None:

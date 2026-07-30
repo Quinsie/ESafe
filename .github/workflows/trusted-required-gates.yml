@@ -1,7 +1,7 @@
-name: ESafe Required Checks
+name: ESafe Trusted Required Checks
 
 on:
-  pull_request:
+  pull_request_target:
     branches:
       - main
     types:
@@ -29,17 +29,25 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: Check out the complete history
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
+          ref: ${{ github.event.pull_request.base.sha || github.sha }}
+          path: .trusted-ci
+      - name: Check out the candidate history
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          path: source
           fetch-depth: 0
       - name: Verify policy checker
-        run: python scripts/ci/test_repository_policy.py
+        run: cd source && python ../.trusted-ci/scripts/ci/test_repository_policy.py
       - name: Verify repository policy
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           PR_TITLE: ${{ github.event.pull_request.title }}
         run: >-
-          python scripts/ci/repository_policy.py
+          cd source &&
+          python ../.trusted-ci/scripts/ci/repository_policy.py
           --base-sha "$BASE_SHA"
           --pr-title "$PR_TITLE"
 
@@ -48,7 +56,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - name: Build the backend test target
         run: docker build --target test --tag esafe-backend-test:${{ github.sha }} --file backend/Dockerfile .
 
@@ -57,7 +67,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - name: Build the frontend test target
         run: docker build --target test --tag esafe-frontend-test:${{ github.sha }} --file frontend/Dockerfile .
 
@@ -66,7 +78,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - name: Build the importer test target
         run: docker build --target test --tag esafe-importer-test:${{ github.sha }} --file infra/importer/Dockerfile .
 
@@ -75,12 +89,14 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - name: Validate the deployment model
         run: docker compose --env-file .env.example config --quiet
 
   required:
-    name: ESafe Required Gate
+    name: ESafe Trusted Required Gate
     if: ${{ always() }}
     needs:
       - policy
