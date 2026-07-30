@@ -23,6 +23,7 @@ def create_celery_app(settings: Settings) -> Celery:
         task_default_queue=settings.celery_queue,
         task_routes={
             "esafe.generate_document_artifact": {"queue": f"{settings.celery_queue}-documents"},
+            "esafe.analyze_sld": {"queue": f"{settings.celery_queue}-sld"},
             "esafe.*": {"queue": settings.celery_queue},
         },
         task_serializer="json",
@@ -149,6 +150,18 @@ def create_celery_app(settings: Settings) -> Celery:
         from app.documents import generate_document_artifact
 
         return asyncio.run(generate_document_artifact(settings, UUID(artifact_id)))
+
+    @application.task(
+        name="esafe.analyze_sld",
+        shared=False,
+        lazy=False,
+    )
+    def analyze_sld_task(analysis_id: str) -> dict[str, Any]:
+        from uuid import UUID
+
+        from app.sld_analysis import run_sld_analysis
+
+        return asyncio.run(run_sld_analysis(settings, UUID(analysis_id)))
 
     @application.task(
         name="esafe.run_inspection_simulation",

@@ -121,6 +121,7 @@ def build_parser() -> argparse.ArgumentParser:
             "probe-upstage-embedding",
             "probe-upstage-chat",
             "build-rag-embeddings",
+            "clear-demo-sld-history",
         ),
     )
     return parser
@@ -198,6 +199,28 @@ def main(argv: Sequence[str] | None = None) -> None:
         print(json.dumps(result, ensure_ascii=False, sort_keys=True))
     elif args.command == "build-rag-embeddings":
         result = asyncio.run(build_embedding_bundle(get_settings()))
+        print(json.dumps(result, ensure_ascii=False, sort_keys=True))
+    elif args.command == "clear-demo-sld-history":
+        from pathlib import Path
+
+        from app.sld_analysis import clear_building_analysis_history
+        from app.sld_documents import DEMO_FIRE_BUILDING_SOURCE_KEY
+
+        settings = get_settings()
+        engine = create_async_engine(settings.database_url, pool_pre_ping=True)
+
+        async def clear_history() -> dict[str, object]:
+            try:
+                return await clear_building_analysis_history(
+                    engine,
+                    profile=settings.profile,
+                    storage_root=Path(settings.sld_storage_root),
+                    source_building_key=DEMO_FIRE_BUILDING_SOURCE_KEY,
+                )
+            finally:
+                await engine.dispose()
+
+        result = asyncio.run(clear_history())
         print(json.dumps(result, ensure_ascii=False, sort_keys=True))
 
 

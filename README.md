@@ -56,11 +56,17 @@ docker compose config --quiet
 - `ESAFE_SESSION_SECRET_LIVE`, `ESAFE_SESSION_SECRET_DEMO`: 프로필별 독립 세션 서명값
 - `UPSTAGE_API_KEY`: Solar Pro 3 및 Solar Embedding 2 호출 키
 - `DATA_GO_KR_SERVICE_KEY`: 기상특보·재난문자 공공 API 인증키
+- `NAVER_MAPS_NCP_KEY_ID`: NAVER Maps JavaScript API의 ncpKeyId. Cloud 콘솔의 Web 서비스 URL에는 포트와 경로를 제외한 `http://127.0.0.1`, `http://localhost` 및 실제 공개 origin을 등록
 - `NFDS_ENABLED`: `false`이면 다음 관련 서비스 재시작부터 NFDS 외부 호출만 중단
 - `ESAFE_COOKIE_SECURE`: Quick Tunnel 공개 배포에서는 반드시 `true`; 로컬 HTTP 전용 격리 환경에서만 `false`
 - `UPSTAGE_CHAT_TIMEOUT_SECONDS`: 비동기 대응안 생성의 provider 응답 제한시간
+- `UPSTAGE_DOCUMENT_MODEL`, `UPSTAGE_DOCUMENT_TIMEOUT_SECONDS`: 단선결선도 전용
+  Upstage OCR 모델과 응답 제한시간
+- `SLD_MAX_UPLOAD_BYTES`: 건물상세 단선결선도 업로드 크기 제한(기본 25MB)
+- `SLD_MAX_REGION_OCR_CROPS`, `SLD_REGION_RENDER_DPI`, `SLD_REGION_CROP_UPSCALE`:
+  단선결선도 외함 Crop의 최대 수, 원본 렌더 DPI(기본 300), OCR용 확대 배율(기본 2배)
 
-키와 내부 비용 설정은 브라우저·사용자 API·로그에 노출하지 않는다. 개인정보가 포함된 자료는 서버 내부 비식별 검증을 통과한 사본만 Upstage에 전송한다. Quick Tunnel을 시작하기 전에 `ESAFE_COOKIE_SECURE=true`인지 확인한다.
+비밀키와 내부 비용 설정은 브라우저·사용자 API·로그에 노출하지 않는다. `NAVER_MAPS_NCP_KEY_ID`는 브라우저 SDK 로드에 쓰는 공개 식별자이므로 허용 Web 서비스 URL로 사용처를 제한한다. NAVER Client Secret은 JavaScript 지도 SDK에 사용하지 않으며 저장소나 브라우저에 넣지 않는다. 개인정보가 포함된 자료는 서버 내부 비식별 검증을 통과한 사본만 Upstage에 전송한다. Quick Tunnel을 시작하기 전에 `ESAFE_COOKIE_SECURE=true`인지 확인한다.
 
 ### 공용 로그인 비밀번호 교체
 
@@ -178,12 +184,13 @@ docker compose logs --tail=100 worker-live scheduler-live
 ### 2. 위험지도와 분석
 
 1. `위험 지도`에서 광주시·전남도 → 시·군·구 → 읍·면·동 → 건물 순으로 확대한다. 다음 단계가 나타나면 이전 단계의 색칠은 사라져 지도가 겹치지 않는다.
-2. 행정구역을 누르면 바로 확대되지 않고 현재 단계에서 선택·강조된다. 상세 카드의 단계별 확대 버튼 또는 지도 휠 확대를 사용해 다음 단계로 이동한다.
-3. 건물을 지도나 목록에서 선택하면 양쪽 선택 상태가 동기화된다. 지도는 건물을 중앙에 두고 실제 외곽을 포함하는 파란 원을 표시하며, 목록은 해당 행으로 이동해 강조를 유지한다.
+2. NAVER 지도에서 확대·축소와 일반/위성 지도 유형을 사용할 수 있다. 행정구역을 선택한 뒤 상세 카드의 단계별 확대 버튼 또는 지도 휠 확대를 사용해 다음 단계로 이동한다.
+3. 건물을 지도나 목록에서 선택하면 양쪽 선택 상태가 동기화된다. `거리뷰` 또는 선택 건물의 `거리뷰 열기`로 주변 300m 이내 파노라마를 지도 안에서 확인한다.
 4. 모든 행정단계의 `지역 분석 보기`는 지역 상세로, 건물 단계의 `건물 분석 보기`는 건물 상세로 이동한다.
 5. `위험 분석`에서는 광역시·도, 시·군·구, 읍·면·동, 건물 순위를 전환해 확인한다. 지역은 상위 10% 건물 수, 건물은 광주·전남 모델 순위를 기준으로 한다.
 6. 분석 화면에서 상대점수, 광주·전남 순위, 상위 백분위, 연결 시설을 확인한다.
-7. `과거 사고사례`, `유사 위험시설`, `후보 시설 비교`에서 조건별 참고사례를 확인한다. 유사도는 확률이나 인과관계가 아니다.
+7. 보고서 보기는 동일 사실을 읽기 쉬운 분석 보고 형태로 제시한다.
+8. `과거 사고사례`, `유사 위험시설`, `후보 시설 비교`에서 조건별 참고사례를 확인한다. 유사도는 확률이나 인과관계가 아니다.
 
 ### 3. 점검계획
 

@@ -86,10 +86,10 @@ const caseDetail = {
     impactScopeId: "00000000-0000-4000-8000-000000000601",
     scopeType: "RADIUS",
     center: { type: "Point", coordinates: [126.86, 35.22] },
-    radiusM: 1000,
+    radiusM: 100,
     regionCodes: ["29170"],
     precisionWarning: null,
-    ruleVersion: "case-impact-v1",
+    ruleVersion: "case-impact-v3-fire-building-100m",
     calculatedAt: "2026-07-29T01:20:00Z",
   },
   workItemCount: 0,
@@ -105,14 +105,14 @@ const caseDetail = {
 
 const impact = {
   summary: {
-    impactBuildings: 905,
-    highRiskBuildings: 88,
+    impactBuildings: 2,
+    highRiskBuildings: 2,
     incidentBuildings: 1,
   },
   scope: {
     impactScopeId: "00000000-0000-4000-8000-000000000601",
     scopeType: "RADIUS",
-    radiusM: 1000,
+    radiusM: 100,
     regionCodes: ["29170"],
     precisionWarning: null,
   },
@@ -125,6 +125,18 @@ const impact = {
       roadAddress: "광주광역시 북구 첨단과기로 1",
       lotAddress: "광주광역시 북구 오룡동 1",
       centroid: [126.86, 35.22],
+      geometry: {
+        type: "Polygon",
+        coordinates: [
+          [
+            [126.8599, 35.2199],
+            [126.8601, 35.2199],
+            [126.8601, 35.2201],
+            [126.8599, 35.2201],
+            [126.8599, 35.2199],
+          ],
+        ],
+      },
       matchReason: "EXACT",
       distanceM: 0,
       isIncidentBuilding: true,
@@ -149,8 +161,20 @@ const impact = {
       roadAddress: "광주광역시 북구 첨단과기로 3",
       lotAddress: "광주광역시 북구 오룡동 2",
       centroid: [126.861, 35.221],
+      geometry: {
+        type: "Polygon",
+        coordinates: [
+          [
+            [126.8608, 35.2208],
+            [126.8612, 35.2208],
+            [126.8612, 35.2212],
+            [126.8608, 35.2212],
+            [126.8608, 35.2208],
+          ],
+        ],
+      },
       matchReason: "RADIUS",
-      distanceM: 165,
+      distanceM: 40,
       isIncidentBuilding: false,
       isHighRisk: true,
       priorityOrder: 2,
@@ -167,14 +191,14 @@ const impact = {
     },
   ],
   filters: {
-    riskThreshold: 10,
+    riskThreshold: null,
     incidentOnly: false,
     search: null,
-    sort: "priority",
+    sort: "distance",
   },
   page: 1,
   pageSize: 100,
-  total: 88,
+  total: 2,
 };
 
 const timeline = {
@@ -303,12 +327,13 @@ describe("case management screens", () => {
 
     expect(await screen.findByRole("heading", { name: "광주 북구 공장 화재 출동" })).toBeVisible();
     expect(screen.getByRole("heading", { name: "사건 위치·영향 건물" })).toBeVisible();
-    expect(screen.getByRole("heading", { name: "관제 우선 건물" })).toBeVisible();
+    expect(screen.getByRole("heading", { name: "화재 주변 건물" })).toBeVisible();
     expect(screen.getByText("첨단산단 제1공장")).toBeVisible();
-    expect(screen.getAllByText("사건 건물").length).toBeGreaterThan(0);
+    expect(screen.getByText("100m 주변 건물")).toBeVisible();
+    expect(screen.getByText("반경 100m · 전체")).toBeVisible();
     expect(screen.getByText("원천 응답 수신")).toBeVisible();
     expect(
-      screen.getByText("브라우저 지도 대신 오른쪽의 실제 영향 건물 목록을 사용합니다."),
+      screen.getByText("브라우저 지도 대신 오른쪽의 100m 이내 건물 목록을 사용합니다."),
     ).toBeVisible();
     expect(screen.getByText(/final_score는 발생확률이 아닙니다/)).toBeVisible();
     expect(screen.getByRole("link", { name: "근거 기반 대응 절차" })).toHaveAttribute(

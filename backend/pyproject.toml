@@ -7,6 +7,7 @@ asyncio_mode = "auto"
 [tool.ruff]
 target-version = "py312"
 line-length = 100
+extend-exclude = ["app/sld_grammar"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM", "ASYNC"]
@@ -21,8 +22,17 @@ no_implicit_optional = true
 warn_redundant_casts = true
 warn_unused_ignores = true
 warn_return_any = true
-exclude = ["tests"]
+exclude = ["tests", "app/sld_grammar"]
 
 [[tool.mypy.overrides]]
-module = ["celery", "celery.*", "lxml", "lxml.*"]
+module = [
+    "celery",
+    "celery.*",
+    "cv2",
+    "fitz",
+    "lxml",
+    "lxml.*",
+    "openpyxl",
+    "openpyxl.*",
+]
 ignore_missing_imports = true

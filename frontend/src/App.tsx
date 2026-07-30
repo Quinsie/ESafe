@@ -24,6 +24,9 @@ const SimilarityAnalysis = lazy(() =>
 const CaseManagement = lazy(() =>
   import("./cases").then((module) => ({ default: module.CaseManagement })),
 );
+const DataExtract = lazy(() =>
+  import("./data_extract").then((module) => ({ default: module.DataExtract })),
+);
 const CaseWorkflow = lazy(() =>
   import("./case_workflow").then((module) => ({ default: module.CaseWorkflow })),
 );
@@ -66,6 +69,7 @@ const navigation = [
   { group: "OVERVIEW", label: "위험 지도", to: "/map" },
   { group: "OVERVIEW", label: "위험 분석", to: "/regions" },
   { group: "OVERVIEW", label: "점검 계획", to: "/inspections/simulations/new" },
+  { group: "OVERVIEW", label: "자료 추출", to: "/data-extract" },
   { group: "OVERVIEW", label: "재난 대응", to: "/cases" },
   { group: "WORKFLOW", label: "검토·승인", to: "/approvals" },
   { group: "WORKFLOW", label: "자동화 기록", to: "/automation/runs" },
@@ -76,6 +80,7 @@ const routeTitles: Record<string, string> = {
   "/map": "위험 지도",
   "/regions": "위험 분석",
   "/inspections/simulations/new": "점검 계획",
+  "/data-extract": "자료 추출",
   "/cases": "재난 대응",
   "/approvals": "검토·승인",
   "/automation/runs": "자동화 기록",
@@ -427,6 +432,18 @@ function AuthenticatedShell({
           }
         >
           <SpatialAnalysis currentPath={currentPath} runtime={runtime} />
+        </Suspense>
+      ) : currentPath === "/data-extract" ? (
+        <Suspense
+          fallback={
+            <main className="page" id="main-content">
+              <div className="auth-loading" role="status">
+                자료 추출 화면을 준비하고 있습니다.
+              </div>
+            </main>
+          }
+        >
+          <DataExtract runtime={runtime} />
         </Suspense>
       ) : currentPath.startsWith("/similar/") ? (
         <Suspense

@@ -13,6 +13,7 @@ from app.spatial import (
     MIN_NEIGHBORHOOD_ZOOM,
     SpatialContractError,
     building_detail,
+    building_features,
     building_tile,
     parse_bbox,
     parse_region_bbox,
@@ -36,34 +37,11 @@ def _spatial_error(request: Request, error: SpatialContractError) -> JSONRespons
 @router.get("/map/config")
 async def map_config(request: Request, _: Session) -> dict[str, object]:
     settings = request.app.state.settings
-    vworld_url = settings.vworld_tile_url
-    providers: list[dict[str, object]] = []
-    if vworld_url:
-        providers.append(
-            {
-                "id": "vworld",
-                "name": "VWorld",
-                "urlTemplate": vworld_url,
-                "attribution": "공간정보 오픈플랫폼 VWorld",
-                "priority": 1,
-            }
-        )
-    providers.append(
-        {
-            "id": "osm",
-            "name": "OpenStreetMap",
-            "urlTemplate": "https://tile.openstreetmap.org/{z}/{x}/{y}.png",
-            "attribution": "© OpenStreetMap contributors",
-            "priority": 2,
-        }
-    )
     return envelope(
         request,
         {
-            "providers": providers,
-            "preferredProvider": "vworld" if vworld_url else "osm",
-            "fallbackActive": not bool(vworld_url),
-            "fallbackReason": None if vworld_url else "VWORLD_NOT_CONFIGURED",
+            "naverMapsNcpKeyId": settings.naver_maps_ncp_key_id,
+            "naverMapsConfigured": bool(settings.naver_maps_ncp_key_id),
             "buildingZoom": {"minimum": MIN_BUILDING_ZOOM, "maximum": MAX_BUILDING_ZOOM},
             "neighborhoodZoom": {"minimum": MIN_NEIGHBORHOOD_ZOOM, "maximum": MIN_BUILDING_ZOOM},
         },
@@ -110,6 +88,29 @@ async def map_neighborhoods(
             None,
             settings.health_timeout_seconds,
             parsed,
+        )
+    except SpatialContractError as error:
+        return _spatial_error(request, error)
+    return envelope(request, data)
+
+
+@router.get("/map/building-features")
+async def map_building_features(
+    request: Request,
+    _: Session,
+    bbox: str,
+    zoom: float,
+    limit: Annotated[int, Query(ge=1, le=3000)] = 2000,
+) -> Any:
+    settings = request.app.state.settings
+    try:
+        parsed = parse_bbox(bbox, zoom)
+        data = await building_features(
+            request.app.state.db_engine,
+            parsed,
+            zoom,
+            limit,
+            settings.health_timeout_seconds,
         )
     except SpatialContractError as error:
         return _spatial_error(request, error)

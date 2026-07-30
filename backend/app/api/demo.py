@@ -34,9 +34,10 @@ class VersionBody(BaseModel):
 
 class ResetBody(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
-
     expected_version: int | None = Field(default=None, alias="expectedVersion", ge=1)
-    active_expected_version: int | None = Field(default=None, alias="activeExpectedVersion", ge=1)
+    active_expected_version: int | None = Field(
+        default=None, alias="activeExpectedVersion", ge=1
+    )
     confirmed: bool = False
 
 

@@ -12,12 +12,21 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 REFERENCE_MONTH = "2026-03-01"
 HORIZON_DAYS = 60
 LINEAGE_VERSION = "v27.1-focus-2026-03-60d"
-MIN_BUILDING_ZOOM = 14
+MIN_BUILDING_ZOOM = 16
 MAX_BUILDING_ZOOM = 20
 MIN_NEIGHBORHOOD_ZOOM = 11.5
 MAX_NEIGHBORHOOD_SPAN = 1.5
 _MAX_VIEWPORT_SPAN = 0.35
 _RISK_BANDS = frozenset({"TOP_1", "HIGH_1_10", "WATCH_10_25", "GENERAL"})
+
+
+def _risk_reference() -> dict[str, Any]:
+    return {
+        "referenceMonth": "2026-03",
+        "horizonDays": HORIZON_DAYS,
+        "lineageVersion": LINEAGE_VERSION,
+        "isProbability": False,
+    }
 
 
 @dataclass(frozen=True)
@@ -88,15 +97,6 @@ def _risk(row: Any) -> dict[str, Any]:
         "regionalRank": int(row["regional_rank"]),
         "topPercentile": float(row["top_percentile"]),
         "riskBand": row["risk_band"],
-        "isProbability": False,
-    }
-
-
-def _risk_reference() -> dict[str, Any]:
-    return {
-        "referenceMonth": "2026-03",
-        "horizonDays": HORIZON_DAYS,
-        "lineageVersion": LINEAGE_VERSION,
         "isProbability": False,
     }
 
@@ -269,6 +269,84 @@ async def building_tile(
                 )
             ).scalar_one()
         return bytes(value or b"")
+
+    return await asyncio.wait_for(query(), timeout=max(timeout_seconds, 2.5))
+
+
+async def building_features(
+    engine: AsyncEngine,
+    bbox: BoundingBox,
+    zoom: float,
+    limit: int,
+    timeout_seconds: float,
+) -> dict[str, Any]:
+    params = {
+        "west": bbox.west,
+        "south": bbox.south,
+        "east": bbox.east,
+        "north": bbox.north,
+        "zoom": zoom,
+        "limit": limit + 1,
+    }
+
+    async def query() -> dict[str, Any]:
+        async with engine.connect() as connection:
+            rows = (
+                await connection.execute(
+                    text(
+                        """
+                        SELECT b.building_id, b.region_code,
+                               coalesce(nullif(b.building_name, ''), b.lot_address) AS label,
+                               ST_AsGeoJSON(
+                                   ST_SimplifyPreserveTopology(
+                                       b.geometry,
+                                       CASE WHEN :zoom >= 17 THEN 0.000001 ELSE 0.000003 END
+                                   ),
+                                   7
+                               ) AS geometry,
+                               r.final_score, r.regional_rank, r.top_percentile, r.risk_band
+                        FROM building b
+                        JOIN building_risk_snapshot r ON r.building_id = b.building_id
+                        WHERE b.geometry_status = 'VALID'
+                          AND b.geometry && ST_MakeEnvelope(:west, :south, :east, :north, 4326)
+                          AND ST_Intersects(
+                              b.geometry,
+                              ST_MakeEnvelope(:west, :south, :east, :north, 4326)
+                          )
+                          AND r.reference_month = DATE '2026-03-01'
+                          AND r.horizon_days = 60
+                          AND r.lineage_version = 'v27.1-focus-2026-03-60d'
+                          AND EXISTS (SELECT 1 FROM reference_dataset_state WHERE state_id = true)
+                        ORDER BY r.regional_rank, b.building_id
+                        LIMIT :limit
+                        """
+                    ),
+                    params,
+                )
+            ).mappings().all()
+        truncated = len(rows) > limit
+        return {
+            "type": "FeatureCollection",
+            "features": [
+                {
+                    "type": "Feature",
+                    "id": str(row["building_id"]),
+                    "geometry": _geojson(row["geometry"]),
+                    "properties": {
+                        "buildingId": str(row["building_id"]),
+                        "regionCode": row["region_code"],
+                        "label": row["label"],
+                        "finalScore": float(row["final_score"]),
+                        "regionalRank": int(row["regional_rank"]),
+                        "topPercentile": float(row["top_percentile"]),
+                        "riskBand": row["risk_band"],
+                    },
+                }
+                for row in rows[:limit]
+            ],
+            "truncated": truncated,
+            "limit": limit,
+        }
 
     return await asyncio.wait_for(query(), timeout=max(timeout_seconds, 2.5))
 

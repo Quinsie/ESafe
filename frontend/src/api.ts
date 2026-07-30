@@ -45,7 +45,7 @@ export async function apiRequest<T>(
 ): Promise<ApiEnvelope<T>> {
   const headers = new Headers(init.headers);
   headers.set("Accept", "application/json");
-  if (init.body !== undefined) {
+  if (init.body !== undefined && !(init.body instanceof FormData)) {
     headers.set("Content-Type", "application/json");
   }
   const method = (init.method ?? "GET").toUpperCase();

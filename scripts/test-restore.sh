@@ -101,7 +101,7 @@ live_contract=$(
       (SELECT count(*) FROM building) || ':' ||
       (SELECT count(*) FROM rag_chunk)"
 )
-test "$live_contract" = "20260729_0016:217238:14311"
+test "$live_contract" = "20260730_0019:217238:14311"
 
 restore_database DEMO /backup/demo.dump
 demo_contract=$(
@@ -111,7 +111,7 @@ demo_contract=$(
       (SELECT count(*) FROM building) || ':' ||
       (SELECT count(*) FROM demo_scenario)"
 )
-test "$demo_contract" = "20260729_0016:217238:6"
+test "$demo_contract" = "20260730_0019:217238:6"
 
 restore_database CONTROL /backup/control.dump
 control_tables=$(
