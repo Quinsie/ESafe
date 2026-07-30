@@ -1,0 +1,125 @@
+name: ESafe Trusted Required Checks
+
+on:
+  pull_request_target:
+    branches:
+      - main
+    types:
+      - opened
+      - synchronize
+      - reopened
+      - ready_for_review
+      - edited
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: esafe-required-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  policy:
+    name: Repository and privacy policy
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out the complete history
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.base.sha || github.sha }}
+          path: .trusted-ci
+      - name: Check out the candidate history
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          path: source
+          fetch-depth: 0
+      - name: Verify policy checker
+        run: cd source && python ../.trusted-ci/scripts/ci/test_repository_policy.py
+      - name: Verify repository policy
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: >-
+          cd source &&
+          python ../.trusted-ci/scripts/ci/repository_policy.py
+          --base-sha "$BASE_SHA"
+          --pr-title "$PR_TITLE"
+
+  backend:
+    name: Backend static analysis and tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Build the backend test target
+        run: docker build --target test --tag esafe-backend-test:${{ github.sha }} --file backend/Dockerfile .
+
+  frontend:
+    name: Frontend lint, types, tests, and build
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Build the frontend test target
+        run: docker build --target test --tag esafe-frontend-test:${{ github.sha }} --file frontend/Dockerfile .
+
+  importer:
+    name: Importer static analysis and tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Build the importer test target
+        run: docker build --target test --tag esafe-importer-test:${{ github.sha }} --file infra/importer/Dockerfile .
+
+  compose:
+    name: Compose contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Validate the deployment model
+        run: docker compose --env-file .env.example config --quiet
+
+  required:
+    name: ESafe Trusted Required Gate
+    if: ${{ always() }}
+    needs:
+      - policy
+      - backend
+      - frontend
+      - importer
+      - compose
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require every gate
+        env:
+          POLICY_RESULT: ${{ needs.policy.result }}
+          BACKEND_RESULT: ${{ needs.backend.result }}
+          FRONTEND_RESULT: ${{ needs.frontend.result }}
+          IMPORTER_RESULT: ${{ needs.importer.result }}
+          COMPOSE_RESULT: ${{ needs.compose.result }}
+        run: |
+          printf 'policy=%s backend=%s frontend=%s importer=%s compose=%s\n' \
+            "$POLICY_RESULT" "$BACKEND_RESULT" "$FRONTEND_RESULT" \
+            "$IMPORTER_RESULT" "$COMPOSE_RESULT"
+          test "$POLICY_RESULT" = success
+          test "$BACKEND_RESULT" = success
+          test "$FRONTEND_RESULT" = success
+          test "$IMPORTER_RESULT" = success
+          test "$COMPOSE_RESULT" = success
