@@ -45,11 +45,25 @@ def _copy_with_changed_member(
 def test_committed_template_set_is_valid_and_privacy_clean() -> None:
     manifest = validate_template_set(TEMPLATE_DIR)
 
-    assert manifest["templateVersion"] == "2026-07-30-v2"
+    assert manifest["templateVersion"] == "2026-07-30-v3"
     assert [item["key"] for item in manifest["templates"]] == [
         definition.key for definition in TEMPLATE_DEFINITIONS
     ]
     assert (TEMPLATE_DIR / "incident-report.hwpx").read_bytes().startswith(b"PK")
+
+
+def test_incident_report_dynamic_paragraphs_have_no_hanging_indent() -> None:
+    with ZipFile(TEMPLATE_DIR / "incident-report.hwpx") as package:
+        header = etree.fromstring(package.read("Contents/header.xml"))
+
+    for style_id in ("33", "36", "39"):
+        styles = header.xpath(
+            f"//*[local-name()='paraPr' and @id='{style_id}']"
+        )
+        assert len(styles) == 1
+        intents = styles[0].xpath(".//*[local-name()='intent']")
+        assert intents
+        assert {intent.get("value") for intent in intents} == {"0"}
 
 
 def test_render_hwpx_replaces_all_tokens_and_preserves_package(

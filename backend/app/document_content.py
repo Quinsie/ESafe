@@ -521,8 +521,20 @@ def build_standalone_document_payload(
     )
 
 
+def _list_lines(values: list[str]) -> list[str]:
+    """Split pasted multiline values into independent logical list items."""
+    cleaned: list[str] = []
+    for value in values:
+        cleaned.extend(
+            line.strip()
+            for line in value.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+            if line.strip()
+        )
+    return cleaned
+
+
 def _lines(values: list[str], *, empty: str = "") -> str:
-    cleaned = [value.strip() for value in values if value.strip()]
+    cleaned = _list_lines(values)
     return "\n".join(f"{index}. {value}" for index, value in enumerate(cleaned, 1)) or empty
 
 
@@ -634,7 +646,7 @@ def _incident_line(label: str, value: str) -> str:
 
 
 def _incident_numbered_lines(values: list[str]) -> str:
-    cleaned = [value.strip() for value in values if value.strip()]
+    cleaned = _list_lines(values)
     if not cleaned:
         return '<p class="incident-line incident-empty">&nbsp;</p>'
     return "".join(
