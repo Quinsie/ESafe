@@ -155,6 +155,11 @@ def test_incident_pdf_html_uses_hwpx_layout_contract() -> None:
 
     assert '@page { size: A4; margin: 10mm 20mm; }' in html
     assert 'class="incident-approval-grid"' in html
+    assert 'aria-label="결재 정보"' in html
+    assert "상황요원" in html
+    assert "상황실장" in html
+    assert "부장" in html
+    assert "처장" in html
     assert 'class="incident-facility"' in html
     assert "2. 시설 현황" in html
     assert "Noto Serif CJK KR" in html

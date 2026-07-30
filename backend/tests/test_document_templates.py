@@ -45,7 +45,7 @@ def _copy_with_changed_member(
 def test_committed_template_set_is_valid_and_privacy_clean() -> None:
     manifest = validate_template_set(TEMPLATE_DIR)
 
-    assert manifest["templateVersion"] == "2026-07-29-v1"
+    assert manifest["templateVersion"] == "2026-07-30-v2"
     assert [item["key"] for item in manifest["templates"]] == [
         definition.key for definition in TEMPLATE_DEFINITIONS
     ]
@@ -71,15 +71,22 @@ def test_render_hwpx_replaces_all_tokens_and_preserves_package(
     )
 
     assert validation.token_names == ()
+    with ZipFile(TEMPLATE_DIR / definition.file_name) as template_package:
+        template_section = etree.fromstring(
+            template_package.read("Contents/section0.xml")
+        )
     with ZipFile(output_path) as package:
         assert package.infolist()[0].filename == "mimetype"
         assert package.infolist()[0].compress_type == ZIP_STORED
-        assert (
-            b"linesegarray" not in package.read("Contents/section0.xml")
-        )
         assert package.read("mimetype") == HWPX_MIMETYPE
         section = etree.fromstring(package.read("Contents/section0.xml"))
         text = "".join(section.itertext())
+    template_layouts = template_section.xpath("//*[local-name()='linesegarray']")
+    rendered_layouts = section.xpath("//*[local-name()='linesegarray']")
+    assert template_layouts
+    assert len(rendered_layouts) == len(template_layouts)
+    assert all(len(layout) == 0 for layout in rendered_layouts)
+    assert not section.xpath("//*[local-name()='lineseg']")
     assert "값 <0> & 확인" in text
     assert "010-1234-5678" in text
     assert "{{" not in text

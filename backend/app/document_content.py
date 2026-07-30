@@ -693,19 +693,31 @@ body {{
 }}
 .incident-approval-grid {{
   display: grid;
-  width: 127.5mm;
-  height: 25.3mm;
+  width: 92mm;
+  height: 20mm;
   margin: 2.5mm 0 0 auto;
-  grid-template-columns: 7.4mm 15.4mm 7.4mm repeat(4, 21mm);
-  grid-template-rows: 2.75mm 2.75mm 8.1mm 11.7mm;
+  grid-template-columns: 10mm repeat(4, 1fr);
+  grid-template-rows: 7mm 13mm;
   border-top: 0.12mm solid #000;
   border-left: 0.12mm solid #000;
+  font-family: "Noto Sans CJK KR", "Malgun Gothic", sans-serif;
+  font-size: 9pt;
+  line-height: 1.2;
 }}
 .incident-approval-grid span {{
+  display: flex;
+  align-items: center;
+  justify-content: center;
   border-right: 0.12mm solid #000;
   border-bottom: 0.12mm solid #000;
 }}
-.incident-approval-grid .r2 {{ grid-row: span 2; }}
+.incident-approval-grid .approval-label {{
+  grid-row: 1 / 3;
+  font-weight: 800;
+  writing-mode: vertical-rl;
+  letter-spacing: 0.18em;
+}}
+.incident-approval-grid .approval-role {{ font-weight: 700; }}
 .incident-date {{
   margin: 1.8mm 0 2.8mm;
   text-align: center;
@@ -770,12 +782,11 @@ body {{
 <body>
 <article class="incident-report">
   <h1 class="incident-title"><span>{_escaped(payload.document.title)}</span></h1>
-  <div class="incident-approval-grid" aria-label="결재 정보 빈칸">
-    <span class="r2"></span><span></span><span class="r2"></span>
-    <span class="r2"></span><span class="r2"></span><span class="r2"></span>
-    <span class="r2"></span><span></span><span></span><span></span>
-    <span></span><span></span><span></span><span></span><span></span>
-    <span></span><span></span><span></span><span></span><span></span>
+  <div class="incident-approval-grid" aria-label="결재 정보">
+    <span class="approval-label">결재</span>
+    <span class="approval-role">상황요원</span><span class="approval-role">상황실장</span>
+    <span class="approval-role">부장</span><span class="approval-role">처장</span>
+    <span></span><span></span><span></span><span></span>
   </div>
   <p class="incident-date">{_escaped(payload.document.date)}</p>
   <section class="incident-section">

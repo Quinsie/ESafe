@@ -1,12 +1,12 @@
 {
   "schemaVersion": 1,
-  "templateVersion": "2026-07-29-v1",
+  "templateVersion": "2026-07-30-v2",
   "templates": [
     {
       "key": "incident-report",
       "memberCount": 11,
-      "sha256": "814fccdf02de76f178b866962f5690ebf6c68c75431f5945db80946209f5fe66",
-      "sizeBytes": 12555,
+      "sha256": "ff63a00b4a629497600827afd43e87c6edb9b4674acda4dc6cf15fe2ef87a901",
+      "sizeBytes": 12598,
       "textNodeCount": 50,
       "tokenNames": [
         "attachments.list",
