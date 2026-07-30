@@ -45,7 +45,7 @@ def _copy_with_changed_member(
 def test_committed_template_set_is_valid_and_privacy_clean() -> None:
     manifest = validate_template_set(TEMPLATE_DIR)
 
-    assert manifest["templateVersion"] == "2026-07-30-v3"
+    assert manifest["templateVersion"] == "2026-07-30-v4"
     assert [item["key"] for item in manifest["templates"]] == [
         definition.key for definition in TEMPLATE_DEFINITIONS
     ]
@@ -64,6 +64,46 @@ def test_incident_report_dynamic_paragraphs_have_no_hanging_indent() -> None:
         intents = styles[0].xpath(".//*[local-name()='intent']")
         assert intents
         assert {intent.get("value") for intent in intents} == {"0"}
+
+
+def test_incident_report_separates_dynamic_section_fields() -> None:
+    with ZipFile(TEMPLATE_DIR / "incident-report.hwpx") as package:
+        section = etree.fromstring(package.read("Contents/section0.xml"))
+
+    def paragraph_with(token: str) -> etree._Element:
+        matches = section.xpath(
+            "//*[local-name()='t'][contains(text(), $token)]",
+            token=token,
+        )
+        assert len(matches) == 1
+        return matches[0].getparent().getparent()
+
+    def previous_with_text(paragraph: etree._Element) -> etree._Element:
+        candidate = paragraph.getprevious()
+        while candidate is not None and not "".join(candidate.itertext()).strip():
+            candidate = candidate.getprevious()
+        assert candidate is not None
+        return candidate
+
+    overview = paragraph_with("{{incident.summary}}")
+    detail = paragraph_with("{{incident.detail}}")
+    address = paragraph_with("{{facility.address}}")
+    facility_use = paragraph_with("{{facility.use}}")
+    region = paragraph_with("{{facility.region}}")
+    facility_detail = paragraph_with("{{facility.detail}}")
+    references = paragraph_with("{{evidence.references}}")
+
+    assert "{{incident.detail}}" not in "".join(overview.itertext())
+    assert "{{incident.summary}}" not in "".join(detail.itertext())
+    assert "\uc0c1\ud669\uac1c\uc694:" in "".join(overview.itertext())
+    assert "{{facility.use}}" not in "".join(address.itertext())
+    assert "{{facility.detail}}" not in "".join(region.itertext())
+    assert len({id(address), id(facility_use), id(region), id(facility_detail)}) == 4
+    reference_heading = previous_with_text(references)
+    section_one = previous_with_text(paragraph_with("{{incident.occurredAt}}"))
+    assert reference_heading.xpath("./*[local-name()='run']")[0].get("charPrIDRef") == (
+        section_one.xpath("./*[local-name()='run']")[0].get("charPrIDRef")
+    )
 
 
 def test_render_hwpx_replaces_all_tokens_and_preserves_package(

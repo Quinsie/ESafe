@@ -806,7 +806,7 @@ body {{
     {_incident_line("발생일시", payload.incident.occurred_at)}
     {_incident_line("발생장소", payload.incident.location)}
     {_incident_line("사고원인", payload.incident.cause)}
-    <p class="incident-line"><span class="incident-bullet">ㅇ</span> 상황개요</p>
+    <p class="incident-line"><span class="incident-bullet">ㅇ</span> 상황개요:</p>
     <p class="incident-summary">{_escaped(payload.incident.summary)}</p>
     <p class="incident-summary">{_escaped(payload.incident.detail)}</p>
   </section>

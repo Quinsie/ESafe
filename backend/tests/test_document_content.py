@@ -165,6 +165,7 @@ def test_incident_pdf_html_uses_hwpx_layout_contract() -> None:
     assert "Noto Serif CJK KR" in html
     assert "background: #eef4fa" not in html
     assert payload.review.warning in html
+    assert "\uc0c1\ud669\uac1c\uc694:" in html
 
 
 def test_multiline_incident_lists_become_independent_numbered_items() -> None:
