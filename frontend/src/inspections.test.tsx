@@ -255,6 +255,8 @@ describe("inspection planning", () => {
     await userEvent.click(screen.getByRole("button", { name: "확정 요청 · 검토 승인으로 이동" }));
     expect(await screen.findByRole("heading", { name: "승인 전 설명 확인" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "1. 점검계획 사실" })).toBeInTheDocument();
+    expect(screen.getByText("20개소 · 순번 1~20")).toBeInTheDocument();
+    expect(screen.getByText("20개소 · 순번 21~40")).toBeInTheDocument();
     expect(screen.getByText(/익명 점검반 내부 수행과업 2건 생성/)).toBeInTheDocument();
     await waitFor(() => expect(window.location.pathname).toBe(`/demo/approvals/${approvalId}`));
   });

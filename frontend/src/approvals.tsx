@@ -401,6 +401,18 @@ function ApprovalDetail({
     data.evidenceStatus === "INSUFFICIENT" || data.evidenceStatus === "CONFLICT";
   const isDocument = data.targetType === "DOCUMENT_DRAFT" && data.document !== null;
   const isInspection = data.targetType === "INSPECTION_SCENARIO" && data.inspection !== null;
+  const inspectionTeamRanges =
+    data.inspection?.teams.reduce<
+      Array<ApprovalInspection["teams"][number] & { displayFirst: number; displayLast: number }>
+    >((ranges, team) => {
+      const displayFirst = (ranges.at(-1)?.displayLast ?? 0) + 1;
+      ranges.push({
+        ...team,
+        displayFirst,
+        displayLast: displayFirst + team.targetCount - 1,
+      });
+      return ranges;
+    }, []) ?? [];
   const canDecide =
     data.status === "APPROVAL_PENDING" && data.contentMatches && reason.trim().length > 0;
   const canDiscard =
@@ -566,12 +578,12 @@ function ApprovalDetail({
                 </dl>
                 <p>{data.inspection.explanation.strategy}</p>
                 <div className="approval-inspection-teams">
-                  {data.inspection.teams.map((team) => (
+                  {inspectionTeamRanges.map((team) => (
                     <div key={team.teamNumber}>
                       <strong>점검반 {team.teamNumber}</strong>
                       <span>
-                        {team.targetCount.toLocaleString()}개소 · 순번 {team.firstOrder}~
-                        {team.lastOrder}
+                        {team.targetCount.toLocaleString()}개소 · 순번 {team.displayFirst}~
+                        {team.displayLast}
                       </span>
                     </div>
                   ))}
