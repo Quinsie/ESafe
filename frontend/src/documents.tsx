@@ -194,6 +194,13 @@ const variantLabels: Record<DocumentVariant, string> = {
   INSPECTION_REQUEST: "현장점검 요청 공문",
 };
 
+const caseDocumentVariants: DocumentVariant[] = [
+  "INCIDENT_REPORT",
+  "CRISIS_ASSESSMENT",
+  "BASIC_NOTICE",
+  "BASIC_PLAN",
+];
+
 const familyLabels: Record<DocumentFamily, string> = {
   SITUATION_REPORT: "보고서",
   OFFICIAL_NOTICE: "공문",
@@ -333,7 +340,7 @@ function NewDocument({
         <small>{caseQuery.data?.primaryRegion?.fullName ?? "지역 확인 필요"}</small>
       </section>
       <section className="document-variant-grid" aria-label="문서 종류 선택">
-        {(Object.keys(variantLabels) as DocumentVariant[]).map((item) => (
+        {caseDocumentVariants.map((item) => (
           <button
             aria-pressed={variant === item}
             className={variant === item ? "selected" : ""}
@@ -488,8 +495,8 @@ function DocumentEditor({ documentId, runtime }: { documentId: string; runtime: 
       </div>
       <section className="panel document-context-strip">
         <div>
-          <span>Case</span>
-          <strong>{data.caseNumber ?? data.caseId ?? "연결 없음"}</strong>
+          <span>연결 기준</span>
+          <strong>{data.caseNumber ?? data.caseId ?? "지역·건물 독립 문서"}</strong>
         </div>
         <div>
           <span>문서 계열</span>
@@ -638,7 +645,7 @@ function DocumentEditor({ documentId, runtime }: { documentId: string; runtime: 
               </label>
             </div>
           </fieldset>
-          {data.variant === "BASIC_NOTICE" ? (
+          {data.variant === "BASIC_NOTICE" || data.variant === "INSPECTION_REQUEST" ? (
             <fieldset disabled={!editable || save.isPending}>
               <legend>공문 발송 설정</legend>
               <div className="document-field-grid">

@@ -162,6 +162,31 @@ def test_incident_pdf_html_uses_hwpx_layout_contract() -> None:
     assert payload.review.warning in html
 
 
+def test_official_notice_pdf_uses_public_document_layout() -> None:
+    payload = build_standalone_document_payload(
+        variant="INSPECTION_REQUEST",
+        target={
+            "name": "문흥동 공간아파트",
+            "address": "광주광역시 북구",
+            "regionName": "광주광역시 북구",
+            "regionalRank": 1,
+            "topPercentile": 0.01,
+            "finalScore": 0.99,
+            "riskBandLabel": "최상위 위험",
+            "facilityCount": 3,
+        },
+        now=NOW,
+    )
+
+    html = render_document_html(payload, "REVIEW")
+
+    assert '@page { size: A4; margin: 18mm 18mm 15mm; }' in html
+    assert 'class="official-brand"' in html
+    assert 'class="official-meta"' in html
+    assert "한국전기안전공사 사장" in html
+    assert "background: #eef4fa" not in html
+
+
 @pytest.mark.parametrize(
     ("variant", "target", "title_part"),
     [
@@ -175,7 +200,7 @@ def test_incident_pdf_html_uses_hwpx_layout_contract() -> None:
                 "activeCaseCount": 0,
                 "topBuildings": ["문흥동 공간아파트 · 광주·전남 1위"],
             },
-            "지역",
+            "전기재해 예방 위험 분석 보고서",
         ),
         (
             "BUILDING_ANALYSIS",
@@ -189,7 +214,7 @@ def test_incident_pdf_html_uses_hwpx_layout_contract() -> None:
                 "riskBandLabel": "최상위 위험",
                 "facilityCount": 3,
             },
-            "건물",
+            "전기재해 예방 위험 분석 보고서",
         ),
         (
             "INSPECTION_REQUEST",

@@ -890,6 +890,119 @@ def _notice_body(payload: DocumentPayload) -> str:
     )
 
 
+def _official_notice_html(payload: DocumentPayload, stage: ArtifactStage) -> str:
+    warning = payload.review.warning if stage == "REVIEW" else ""
+    warning_html = (
+        f'<div class="official-warning">{_escaped(warning)}</div>' if warning else ""
+    )
+    return f"""<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>{_escaped(payload.document.title)}</title>
+<style>
+@page {{ size: A4; margin: 18mm 18mm 15mm; }}
+* {{ box-sizing: border-box; }}
+html, body {{ margin: 0; padding: 0; }}
+body {{
+  color: #000;
+  font-family: "Noto Serif CJK KR", "Batang", serif;
+  font-size: 12pt;
+  line-height: 1.65;
+  word-break: keep-all;
+}}
+.official-document {{ width: 174mm; min-height: 264mm; margin: 0 auto; }}
+.official-brand {{
+  margin: 0 0 13mm;
+  text-align: center;
+  font-family: "Noto Sans CJK KR", "Malgun Gothic", sans-serif;
+  font-size: 24pt;
+  font-weight: 900;
+  letter-spacing: 0.18em;
+}}
+.official-meta {{
+  display: grid;
+  grid-template-columns: 19mm 1fr;
+  border-top: 0.35mm solid #000;
+  border-bottom: 0.35mm solid #000;
+}}
+.official-meta dt,
+.official-meta dd {{
+  min-height: 9mm;
+  margin: 0;
+  padding: 1.3mm 2mm;
+  border-bottom: 0.12mm solid #000;
+}}
+.official-meta dt {{ font-weight: 800; }}
+.official-meta > :nth-last-child(-n + 2) {{ border-bottom: 0; }}
+.official-title {{ font-weight: 800; }}
+.official-body {{ min-height: 118mm; padding: 8mm 3mm 4mm; }}
+.official-body p {{ margin: 0 0 5mm; white-space: pre-wrap; }}
+.official-body h2 {{ margin: 5mm 0 1.5mm; font-size: 12pt; }}
+.official-body ol {{ margin: 0 0 4mm; padding-left: 8mm; }}
+.official-attachment {{ margin-top: 8mm; }}
+.official-sender {{
+  margin: 11mm 0 12mm;
+  text-align: center;
+  font-family: "Noto Sans CJK KR", "Malgun Gothic", sans-serif;
+  font-size: 18pt;
+  font-weight: 900;
+  letter-spacing: 0.12em;
+}}
+.official-admin {{
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  border-top: 0.35mm solid #000;
+  border-bottom: 0.35mm solid #000;
+  font-size: 9.5pt;
+}}
+.official-admin div {{ min-height: 8mm; padding: 1.3mm 2mm; }}
+.official-admin span {{ display: inline-block; min-width: 17mm; font-weight: 700; }}
+.official-warning {{
+  margin: 3mm 0;
+  padding: 2mm 3mm;
+  border: 0.2mm solid #8b1f1f;
+  color: #7a1d1d;
+  font-weight: 700;
+}}
+</style>
+</head>
+<body>
+<article class="official-document">
+  <h1 class="official-brand">한국전기안전공사</h1>
+  <dl class="official-meta">
+    <dt>수신</dt><dd>{_incident_value(payload.notice.recipient)}</dd>
+    <dt>(경유)</dt><dd>{_incident_value(payload.notice.delivery_route)}</dd>
+    <dt>제목</dt><dd class="official-title">{_escaped(payload.document.title)}</dd>
+  </dl>
+  <section class="official-body">
+    <p>{_escaped(payload.notice.opening)}</p>
+    <h2>1. 관련 근거</h2>
+    {_html_list(payload.notice.grounds, empty_label="사용자 입력")}
+    <h2>2. 요청 사항</h2>
+    {_html_list(payload.notice.request, empty_label="사용자 입력")}
+    <p>회신 기한: {_incident_value(payload.notice.deadline)}</p>
+    <div class="official-attachment">
+      <strong>붙임</strong>
+      {_html_list(payload.attachments.items, empty_label="없음")}
+    </div>
+    {warning_html}
+  </section>
+  <div class="official-sender">한국전기안전공사 사장</div>
+  <div class="official-admin">
+    <div><span>문서번호</span>{_incident_value(payload.document.number)}</div>
+    <div><span>시행일자</span>{_escaped(payload.document.date)}</div>
+    <div><span>작성자</span>{_incident_value(payload.author.name)}</div>
+    <div><span>승인자</span>{_incident_value(payload.author.approver)}</div>
+    <div><span>전화</span>{_incident_value(payload.contact.phone)}</div>
+    <div><span>전자우편</span>{_incident_value(payload.contact.email)}</div>
+  </div>
+</article>
+</body>
+</html>
+"""
+
+
 def _plan_body(payload: DocumentPayload) -> str:
     return (
         _section(
@@ -921,6 +1034,8 @@ def _plan_body(payload: DocumentPayload) -> str:
 def render_document_html(payload: DocumentPayload, stage: ArtifactStage) -> str:
     if payload.variant in {"INCIDENT_REPORT", "REGION_ANALYSIS", "BUILDING_ANALYSIS"}:
         return _incident_report_html(payload, stage)
+    if payload.variant in {"BASIC_NOTICE", "INSPECTION_REQUEST"}:
+        return _official_notice_html(payload, stage)
     body_by_variant = {
         "INCIDENT_REPORT": _report_body,
         "CRISIS_ASSESSMENT": _crisis_body,
