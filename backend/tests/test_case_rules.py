@@ -59,7 +59,7 @@ def test_on_hold_is_preserved_until_the_source_resolves() -> None:
     )
 
 
-def test_point_signal_uses_default_one_kilometre_operational_radius() -> None:
+def test_point_signal_uses_default_one_hundred_metre_building_radius() -> None:
     scope = select_impact_scope(
         SignalFacts(
             event_type=EventType.FIRE_DISPATCH,
@@ -70,7 +70,7 @@ def test_point_signal_uses_default_one_kilometre_operational_radius() -> None:
         )
     )
     assert scope.scope_type is ImpactScopeType.RADIUS
-    assert scope.radius_m == 1000
+    assert scope.radius_m == 100
     assert scope.region_codes == ()
 
 

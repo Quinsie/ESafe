@@ -774,17 +774,31 @@ async def run_demo_fixture_step(
         scenario_id,
         source_time,
     )
-    result = await _store_success(
-        engine,
-        settings,
-        poll_id,
-        batch,
-        scenario_id,
-        run_type="DEMO_SCENARIO_STEP",
-        trigger_type="USER",
-        audit_action="DEMO_FIXTURE_REPLAYED",
-        reason_code=f"GENERATION_{generation}_STEP_{step_ordinal}",
-    )
+    try:
+        result = await _store_success(
+            engine,
+            settings,
+            poll_id,
+            batch,
+            scenario_id,
+            run_type="DEMO_SCENARIO_STEP",
+            trigger_type="USER",
+            audit_action="DEMO_FIXTURE_REPLAYED",
+            reason_code=f"GENERATION_{generation}_STEP_{step_ordinal}",
+        )
+    except Exception:
+        async with engine.begin() as connection:
+            await connection.execute(
+                text(
+                    """
+                    DELETE FROM source_poll
+                    WHERE poll_id = :poll_id
+                      AND result = 'RUNNING'
+                    """
+                ),
+                {"poll_id": poll_id},
+            )
+        raise
     return {**result, "pollId": str(poll_id), "reused": False}
 
 

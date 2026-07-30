@@ -12,6 +12,7 @@ from app.api.auth import AuthError
 from app.api.auth import router as auth_router
 from app.api.automation import router as automation_router
 from app.api.cases import router as cases_router
+from app.api.data_extract import router as data_extract_router
 from app.api.demo import router as demo_router
 from app.api.documents import router as documents_router
 from app.api.health import router as health_router
@@ -19,6 +20,7 @@ from app.api.home import router as home_router
 from app.api.inspections import router as inspections_router
 from app.api.responses import envelope
 from app.api.similarity import router as similarity_router
+from app.api.sld_analysis import router as sld_analysis_router
 from app.api.spatial import router as spatial_router
 from app.api.workflow import router as workflow_router
 from app.config import get_settings
@@ -61,9 +63,11 @@ app.include_router(approvals_router)
 app.include_router(health_router)
 app.include_router(automation_router)
 app.include_router(home_router)
+app.include_router(data_extract_router)
 app.include_router(spatial_router)
 app.include_router(inspections_router)
 app.include_router(similarity_router)
+app.include_router(sld_analysis_router)
 app.include_router(cases_router)
 app.include_router(workflow_router)
 app.include_router(demo_router)

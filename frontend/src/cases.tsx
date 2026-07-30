@@ -1,21 +1,11 @@
 import { useQuery } from "@tanstack/react-query";
-import {
-  AttributionControl,
-  LngLatBounds,
-  Map as MapLibreMap,
-  NavigationControl,
-  type StyleSpecification,
-  setWorkerUrl,
-} from "maplibre-gl";
-import mapWorkerUrl from "maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url";
-import "maplibre-gl/dist/maplibre-gl.css";
-import { type FormEvent, useEffect, useRef, useState } from "react";
+import type { MultiPolygon, Polygon } from "geojson";
+import { type FormEvent, useMemo, useState } from "react";
 import { ApiError, apiRequest } from "./api";
 import { formatKst } from "./home";
+import { type NaverMapConfigData, type NaverPolygonItem, NaverPolygonMap } from "./naver_maps";
 import type { ProfileRuntime } from "./profile";
 import { AppLink, navigateInternal } from "./router";
-
-setWorkerUrl(mapWorkerUrl);
 
 interface CaseItem {
   caseId: string;
@@ -124,6 +114,7 @@ interface ImpactBuilding {
   roadAddress: string | null;
   lotAddress: string;
   centroid: [number, number];
+  geometry: Polygon | MultiPolygon | null;
   matchReason: "EXACT" | "RADIUS" | "ADMIN_REGION";
   distanceM: number | null;
   isIncidentBuilding: boolean;
@@ -180,17 +171,7 @@ interface TimelineData {
   total: number;
 }
 
-interface MapProvider {
-  id: "vworld" | "osm";
-  name: string;
-  urlTemplate: string;
-  attribution: string;
-}
-
-interface MapConfigData {
-  providers: MapProvider[];
-  preferredProvider: "vworld" | "osm";
-}
+type MapConfigData = NaverMapConfigData;
 
 interface CaseFilters {
   status: string;
@@ -586,145 +567,42 @@ function CaseList({ currentPath, runtime }: { currentPath: string; runtime: Prof
   );
 }
 
-function supportsWebGl(): boolean {
-  return typeof navigator !== "undefined" && !navigator.userAgent.toLowerCase().includes("jsdom");
-}
-
-function impactStyle(
-  provider: MapProvider,
-  impact: ImpactBuilding[],
-  location: [number, number] | null,
-): StyleSpecification {
-  const sources: StyleSpecification["sources"] = {
-    basemap: {
-      type: "raster",
-      tiles: [provider.urlTemplate],
-      tileSize: 256,
-      attribution: provider.attribution,
-    },
-    impact: {
-      type: "geojson",
-      data: {
-        type: "FeatureCollection",
-        features: impact.map((item) => ({
-          type: "Feature",
-          id: item.buildingId,
-          geometry: { type: "Point", coordinates: item.centroid },
-          properties: {
-            buildingId: item.buildingId,
-            incident: item.isIncidentBuilding,
-            highRisk: item.isHighRisk,
-          },
-        })),
-      },
-    },
-  };
-  if (location) {
-    sources.caseLocation = {
-      type: "geojson",
-      data: {
-        type: "Feature",
-        geometry: { type: "Point", coordinates: location },
-        properties: {},
-      },
-    };
-  }
-  const layers: StyleSpecification["layers"] = [
-    { id: "basemap", type: "raster", source: "basemap" },
-    {
-      id: "impact-points",
-      type: "circle",
-      source: "impact",
-      paint: {
-        "circle-radius": ["case", ["get", "incident"], 11, 7],
-        "circle-color": [
-          "case",
-          ["get", "incident"],
-          "#d52229",
-          ["get", "highRisk"],
-          "#e56a00",
-          "#2873bd",
-        ],
-        "circle-stroke-color": "#ffffff",
-        "circle-stroke-width": 2,
-      },
-    },
-  ];
-  if (location) {
-    layers.push({
-      id: "case-location",
-      type: "circle",
-      source: "caseLocation",
-      paint: {
-        "circle-radius": 17,
-        "circle-color": "rgba(213,34,41,0.16)",
-        "circle-stroke-color": "#d52229",
-        "circle-stroke-width": 3,
-      },
-    });
-  }
-  return { version: 8, sources, layers };
-}
-
-function ImpactMap({
-  detail,
-  impact,
-  runtime,
-}: {
-  detail: CaseDetailData;
-  impact: ImpactBuilding[];
-  runtime: ProfileRuntime;
-}) {
-  const container = useRef<HTMLDivElement>(null);
+function ImpactMap({ impact, runtime }: { impact: ImpactBuilding[]; runtime: ProfileRuntime }) {
   const config = useQuery({
     queryKey: ["map-config", runtime.profile],
     queryFn: () => apiRequest<MapConfigData>(runtime, "/map/config").then((result) => result.data),
     staleTime: 5 * 60_000,
   });
-  const provider =
-    config.data?.providers.find((item) => item.id === config.data?.preferredProvider) ??
-    config.data?.providers[0];
-  const enabled = supportsWebGl();
-  const location = detail.location?.coordinates ?? null;
+  const polygons = useMemo<NaverPolygonItem[]>(
+    () =>
+      impact
+        .filter(
+          (item): item is ImpactBuilding & { geometry: Polygon | MultiPolygon } =>
+            item.geometry?.type === "Polygon" || item.geometry?.type === "MultiPolygon",
+        )
+        .map((item) => ({
+          id: item.buildingId,
+          center: item.centroid,
+          title: item.name,
+          geometry: item.geometry,
+          isIncidentBuilding: item.isIncidentBuilding,
+        })),
+    [impact],
+  );
 
-  useEffect(() => {
-    if (!enabled || !provider || !container.current || (!location && impact.length === 0)) return;
-    const center = location ?? impact[0].centroid;
-    const map = new MapLibreMap({
-      container: container.current,
-      style: impactStyle(provider, impact, location),
-      center,
-      zoom: detail.impactScope?.scopeType === "ADMIN_REGION" ? 8 : 13,
-      attributionControl: false,
-    });
-    map.addControl(new NavigationControl({ showCompass: false }), "top-left");
-    map.addControl(
-      new AttributionControl({
-        compact: true,
-        customAttribution: provider.attribution,
-      }),
-      "bottom-right",
-    );
-    map.on("load", () => {
-      const bounds = new LngLatBounds();
-      if (location) bounds.extend(location);
-      for (const item of impact) bounds.extend(item.centroid);
-      if (!bounds.isEmpty()) map.fitBounds(bounds, { padding: 55, maxZoom: 15, duration: 0 });
-    });
-    return () => map.remove();
-  }, [detail.impactScope?.scopeType, enabled, impact, location, provider]);
-
-  if (!location && impact.length === 0)
-    return <div className="case-map-fallback">표시할 위치 또는 영향 건물이 없습니다.</div>;
-  if (!enabled)
-    return (
-      <div className="case-map-fallback">
-        브라우저 지도 대신 오른쪽의 실제 영향 건물 목록을 사용합니다.
-      </div>
-    );
+  if (polygons.length === 0)
+    return <div className="case-map-fallback">화재 좌표 100m 이내에 정합된 건물이 없습니다.</div>;
   if (config.isError)
     return <div className="case-map-fallback">배경지도 설정을 불러오지 못했습니다.</div>;
-  return <div className="case-map" ref={container} />;
+  return (
+    <NaverPolygonMap
+      className="case-map"
+      fallbackMessage="브라우저 지도 대신 오른쪽의 100m 이내 건물 목록을 사용합니다."
+      initialZoom={18}
+      keyId={config.data?.naverMapsNcpKeyId}
+      polygons={polygons}
+    />
+  );
 }
 
 function CaseDetail({
@@ -744,11 +622,11 @@ function CaseDetail({
     refetchInterval: 30_000,
   });
   const impact = useQuery({
-    queryKey: ["case-impact", runtime.profile, caseId, 10],
+    queryKey: ["case-impact", runtime.profile, caseId, 100],
     queryFn: () =>
       apiRequest<ImpactData>(
         runtime,
-        `/cases/${caseId}/impact-buildings?page=1&pageSize=100&riskThreshold=10&sort=priority`,
+        `/cases/${caseId}/impact-buildings?page=1&pageSize=100&sort=distance`,
       ).then((result) => result.data),
     staleTime: 15_000,
     refetchInterval: 30_000,
@@ -830,12 +708,11 @@ function CaseDetail({
           <div className="case-section-heading">
             <div>
               <h2>사건 위치·영향 건물</h2>
-              <p>실제 배경지도와 현재 페이지의 실제 건물 좌표입니다.</p>
+              <p>화재 건물은 빨간색, 반경 100m의 주변 건물은 주황색으로 표시합니다.</p>
             </div>
             <div className="case-map-legend">
-              <span className="incident">사건 건물</span>
-              <span className="high">상위 10%</span>
-              <span className="impact">영향 건물</span>
+              <span className="incident">화재 건물</span>
+              <span className="impact">100m 주변 건물</span>
             </div>
           </div>
           {impact.isError ? (
@@ -843,16 +720,16 @@ function CaseDetail({
               {queryMessage(impact.error, "영향 건물을 불러오지 못했습니다.")}
             </div>
           ) : (
-            <ImpactMap detail={item} impact={impact.data?.items ?? []} runtime={runtime} />
+            <ImpactMap impact={impact.data?.items ?? []} runtime={runtime} />
           )}
         </section>
         <section className="panel case-impact-panel">
           <div className="case-section-heading">
             <div>
-              <h2>관제 우선 건물</h2>
-              <p>사건 건물 우선, 이후 고정 v27.1 점수 순입니다.</p>
+              <h2>화재 주변 건물</h2>
+              <p>화재 건물 우선, 이후 건물 외곽까지의 거리순입니다.</p>
             </div>
-            <span>상위 10% 필터</span>
+            <span>반경 100m · 전체</span>
           </div>
           {impact.isLoading ? (
             <div className="case-inline-state">영향 건물을 확인하고 있습니다.</div>
@@ -867,7 +744,7 @@ function CaseDetail({
             </div>
           ) : (
             <ol className="case-impact-list">
-              {impact.data.items.slice(0, 10).map((building) => (
+              {impact.data.items.map((building) => (
                 <li key={building.buildingId}>
                   <span>{building.priorityOrder}</span>
                   <div>
@@ -876,9 +753,7 @@ function CaseDetail({
                   </div>
                   <div>
                     <b className="case-impact-basis">
-                      {building.isIncidentBuilding
-                        ? "사건 건물"
-                        : `상위 ${building.risk.topPercentile.toFixed(2)}%`}
+                      {building.isIncidentBuilding ? "화재 건물" : "100m 주변"}
                     </b>
                     <small>
                       {building.distanceM === null
@@ -900,9 +775,8 @@ function CaseDetail({
           )}
           {impact.data ? (
             <p className="case-impact-caption">
-              영향 {impact.data.summary.impactBuildings.toLocaleString("ko-KR")}개 · 고위험{" "}
-              {impact.data.summary.highRiskBuildings.toLocaleString("ko-KR")}개 · 현재 필터{" "}
-              {impact.data.total.toLocaleString("ko-KR")}개
+              화재 건물 {impact.data.summary.incidentBuildings.toLocaleString("ko-KR")}개 · 100m
+              이내 전체 {impact.data.summary.impactBuildings.toLocaleString("ko-KR")}개
             </p>
           ) : null}
         </section>

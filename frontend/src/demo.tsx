@@ -113,7 +113,7 @@ function useDemoController(runtime: ProfileRuntime) {
         body: JSON.stringify(body),
       });
     },
-    onSuccess: async () => {
+    onSettled: async () => {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["demo-scenarios", runtime.profile] }),
         queryClient.invalidateQueries({ queryKey: ["home-briefing", runtime.profile] }),

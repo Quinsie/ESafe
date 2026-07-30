@@ -758,6 +758,7 @@ async def case_impact_buildings(
                                    building.road_address,
                                    building.lot_address,
                                    building.building_name,
+                                   ST_AsGeoJSON(building.geometry, 8) AS geometry,
                                    ST_X(building.centroid) AS longitude,
                                    ST_Y(building.centroid) AS latitude,
                                    risk.final_score,
@@ -828,6 +829,7 @@ async def case_impact_buildings(
                     "roadAddress": row["road_address"],
                     "lotAddress": row["lot_address"],
                     "centroid": [float(row["longitude"]), float(row["latitude"])],
+                    "geometry": _geojson(row["geometry"]),
                     "matchReason": row["match_reason"],
                     "distanceM": (
                         round(float(row["distance_m"]), 1)

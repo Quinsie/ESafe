@@ -244,12 +244,18 @@ services:
       ESAFE_SESSION_SECRET: ${ESAFE_SESSION_SECRET_LIVE}
       ESAFE_COOKIE_SECURE: ${ESAFE_COOKIE_SECURE:-false}
       ESAFE_PUBLIC_ORIGINS: ${ESAFE_PUBLIC_ORIGINS:-http://127.0.0.1:8080}
-      VWORLD_TILE_URL: ${VWORLD_TILE_URL:-}
+      NAVER_MAPS_NCP_KEY_ID: ${NAVER_MAPS_NCP_KEY_ID:-}
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db-live:5432/${LIVE_DATABASE_NAME}
       REDIS_URL: redis://:${REDIS_PASSWORD}@redis-live:6379/0
       CELERY_BROKER_URL: redis://:${REDIS_PASSWORD}@redis-live:6379/0
       CELERY_RESULT_BACKEND: redis://:${REDIS_PASSWORD}@redis-live:6379/1
       CELERY_QUEUE: live
+      UPSTAGE_DOCUMENT_MODEL: ${UPSTAGE_DOCUMENT_MODEL:-ocr}
+      SLD_STORAGE_ROOT: /srv/esafe/storage/sld
+      SLD_MAX_UPLOAD_BYTES: ${SLD_MAX_UPLOAD_BYTES:-26214400}
+      SLD_MAX_REGION_OCR_CROPS: ${SLD_MAX_REGION_OCR_CROPS:-24}
+      SLD_REGION_RENDER_DPI: ${SLD_REGION_RENDER_DPI:-300}
+      SLD_REGION_CROP_UPSCALE: ${SLD_REGION_CROP_UPSCALE:-2}
       LOG_LEVEL: INFO
     volumes:
       - ./storage/live:/srv/esafe/storage
@@ -275,12 +281,18 @@ services:
       ESAFE_SESSION_SECRET: ${ESAFE_SESSION_SECRET_DEMO}
       ESAFE_COOKIE_SECURE: ${ESAFE_COOKIE_SECURE:-false}
       ESAFE_PUBLIC_ORIGINS: ${ESAFE_PUBLIC_ORIGINS:-http://127.0.0.1:8080}
-      VWORLD_TILE_URL: ${VWORLD_TILE_URL:-}
+      NAVER_MAPS_NCP_KEY_ID: ${NAVER_MAPS_NCP_KEY_ID:-}
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db-demo:5432/${DEMO_DATABASE_NAME}
       REDIS_URL: redis://:${REDIS_PASSWORD}@redis-demo:6379/0
       CELERY_BROKER_URL: redis://:${REDIS_PASSWORD}@redis-demo:6379/0
       CELERY_RESULT_BACKEND: redis://:${REDIS_PASSWORD}@redis-demo:6379/1
       CELERY_QUEUE: demo
+      UPSTAGE_DOCUMENT_MODEL: ${UPSTAGE_DOCUMENT_MODEL:-ocr}
+      SLD_STORAGE_ROOT: /srv/esafe/storage/sld
+      SLD_MAX_UPLOAD_BYTES: ${SLD_MAX_UPLOAD_BYTES:-26214400}
+      SLD_MAX_REGION_OCR_CROPS: ${SLD_MAX_REGION_OCR_CROPS:-24}
+      SLD_REGION_RENDER_DPI: ${SLD_REGION_RENDER_DPI:-300}
+      SLD_REGION_CROP_UPSCALE: ${SLD_REGION_CROP_UPSCALE:-2}
       LOG_LEVEL: INFO
     volumes:
       - ./storage/demo:/srv/esafe/storage
@@ -396,6 +408,118 @@ services:
         condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "celery -A app.celery_app:celery_app inspect ping --timeout=5 | grep -q pong"]
+      interval: 20s
+      timeout: 10s
+      start_period: 25s
+      retries: 5
+
+  sld-worker-live:
+    <<: *backend-common
+    command:
+      - celery
+      - -A
+      - app.celery_app:celery_app
+      - worker
+      - --loglevel=INFO
+      - --queues=live-sld
+      - --hostname=sld-worker-live@%h
+      - --concurrency=1
+    environment:
+      ESAFE_PROFILE: LIVE
+      ESAFE_SESSION_SECRET: ${ESAFE_SESSION_SECRET_LIVE}
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db-live:5432/${LIVE_DATABASE_NAME}
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis-live:6379/0
+      CELERY_BROKER_URL: redis://:${REDIS_PASSWORD}@redis-live:6379/0
+      CELERY_RESULT_BACKEND: redis://:${REDIS_PASSWORD}@redis-live:6379/1
+      CELERY_QUEUE: live
+      AI_CONTROL_DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db-control:5432/${CONTROL_DATABASE_NAME:-esafe_control}
+      UPSTAGE_API_KEY: ${UPSTAGE_API_KEY}
+      UPSTAGE_BASE_URL: ${UPSTAGE_BASE_URL:-https://api.upstage.ai/v1}
+      UPSTAGE_CHAT_MODEL: ${UPSTAGE_CHAT_MODEL:-solar-pro3}
+      UPSTAGE_DOCUMENT_MODEL: ${UPSTAGE_DOCUMENT_MODEL:-ocr}
+      UPSTAGE_CHAT_TIMEOUT_SECONDS: ${UPSTAGE_CHAT_TIMEOUT_SECONDS:-300}
+      UPSTAGE_DOCUMENT_TIMEOUT_SECONDS: ${UPSTAGE_DOCUMENT_TIMEOUT_SECONDS:-300}
+      UPSTAGE_COST_HARD_STOP_USD: ${UPSTAGE_COST_HARD_STOP_USD:-450}
+      SLD_STORAGE_ROOT: /srv/esafe/storage/sld
+      SLD_MAX_REGION_OCR_CROPS: ${SLD_MAX_REGION_OCR_CROPS:-24}
+      SLD_REGION_RENDER_DPI: ${SLD_REGION_RENDER_DPI:-300}
+      SLD_REGION_CROP_UPSCALE: ${SLD_REGION_CROP_UPSCALE:-2}
+    volumes:
+      - ./storage/live:/srv/esafe/storage
+    networks:
+      - live-backend
+      - ai-control
+      - outbound
+    depends_on:
+      db-live:
+        condition: service_healthy
+      migrate-live:
+        condition: service_completed_successfully
+      migrate-control:
+        condition: service_completed_successfully
+      redis-live:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - celery -A app.celery_app:celery_app inspect ping --timeout=5
+          --destination=sld-worker-live@$$HOSTNAME | grep -q pong
+      interval: 20s
+      timeout: 10s
+      start_period: 25s
+      retries: 5
+
+  sld-worker-demo:
+    <<: *backend-common
+    command:
+      - celery
+      - -A
+      - app.celery_app:celery_app
+      - worker
+      - --loglevel=INFO
+      - --queues=demo-sld
+      - --hostname=sld-worker-demo@%h
+      - --concurrency=1
+    environment:
+      ESAFE_PROFILE: DEMO
+      ESAFE_SESSION_SECRET: ${ESAFE_SESSION_SECRET_DEMO}
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db-demo:5432/${DEMO_DATABASE_NAME}
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis-demo:6379/0
+      CELERY_BROKER_URL: redis://:${REDIS_PASSWORD}@redis-demo:6379/0
+      CELERY_RESULT_BACKEND: redis://:${REDIS_PASSWORD}@redis-demo:6379/1
+      CELERY_QUEUE: demo
+      AI_CONTROL_DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db-control:5432/${CONTROL_DATABASE_NAME:-esafe_control}
+      UPSTAGE_API_KEY: ${UPSTAGE_API_KEY}
+      UPSTAGE_BASE_URL: ${UPSTAGE_BASE_URL:-https://api.upstage.ai/v1}
+      UPSTAGE_CHAT_MODEL: ${UPSTAGE_CHAT_MODEL:-solar-pro3}
+      UPSTAGE_DOCUMENT_MODEL: ${UPSTAGE_DOCUMENT_MODEL:-ocr}
+      UPSTAGE_CHAT_TIMEOUT_SECONDS: ${UPSTAGE_CHAT_TIMEOUT_SECONDS:-300}
+      UPSTAGE_DOCUMENT_TIMEOUT_SECONDS: ${UPSTAGE_DOCUMENT_TIMEOUT_SECONDS:-300}
+      UPSTAGE_COST_HARD_STOP_USD: ${UPSTAGE_COST_HARD_STOP_USD:-450}
+      SLD_STORAGE_ROOT: /srv/esafe/storage/sld
+      SLD_MAX_REGION_OCR_CROPS: ${SLD_MAX_REGION_OCR_CROPS:-24}
+      SLD_REGION_RENDER_DPI: ${SLD_REGION_RENDER_DPI:-300}
+      SLD_REGION_CROP_UPSCALE: ${SLD_REGION_CROP_UPSCALE:-2}
+    volumes:
+      - ./storage/demo:/srv/esafe/storage
+    networks:
+      - demo-backend
+      - ai-control
+      - outbound
+    depends_on:
+      db-demo:
+        condition: service_healthy
+      migrate-demo:
+        condition: service_completed_successfully
+      migrate-control:
+        condition: service_completed_successfully
+      redis-demo:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - celery -A app.celery_app:celery_app inspect ping --timeout=5
+          --destination=sld-worker-demo@$$HOSTNAME | grep -q pong
       interval: 20s
       timeout: 10s
       start_period: 25s

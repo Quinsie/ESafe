@@ -121,7 +121,7 @@ function mapConfigEnvelope() {
     preferredProvider: "osm",
     fallbackActive: true,
     fallbackReason: "VWORLD_NOT_CONFIGURED",
-    buildingZoom: { minimum: 14, maximum: 20 },
+    buildingZoom: { minimum: 16, maximum: 20 },
   });
 }
 
@@ -180,6 +180,7 @@ function mapRegionsEnvelope(level: "SIDO" | "SIGUNGU" = "SIDO") {
     })),
   });
 }
+
 function riskRankingsEnvelope(level = "SIGUNGU") {
   return envelope({
     level,
@@ -206,6 +207,7 @@ function riskRankingsEnvelope(level = "SIGUNGU") {
     pagination: { page: 1, pageSize: 24, total: 1, totalPages: 1 },
   });
 }
+
 function regionDetailEnvelope() {
   return envelope({
     regionCode: "29170",
@@ -417,6 +419,7 @@ describe("App authentication boundary", () => {
     expect(await screen.findByRole("region", { name: "체험 시나리오 리모컨" })).toBeVisible();
     expect(screen.getByText("체험 리모컨")).toBeVisible();
     expect(screen.getByRole("link", { name: "체험 시나리오" })).toBeVisible();
+    expect(screen.getByRole("link", { name: "자료 추출" })).toBeVisible();
     expect(screen.getByRole("button", { name: "시작" })).toBeEnabled();
     expect(screen.getByRole("button", { name: "다음 단계" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "초기화" })).toBeEnabled();
@@ -574,6 +577,8 @@ describe("App authentication boundary", () => {
     expect(
       screen.getByText("지도 렌더링을 지원하지 않는 환경입니다.", { exact: false }),
     ).toBeVisible();
+    expect(screen.getByText("건물 영역을 클릭하면 지도 안에서 거리뷰가 열립니다.")).toBeVisible();
+    expect(screen.queryByRole("group", { name: "지도 보기 방식" })).toBeNull();
     expect(await screen.findByText("광주광역시")).toBeVisible();
     expect(screen.queryByText("완료되지 않은 행동을 실제 기능처럼 표시하지 않습니다.")).toBeNull();
   });

@@ -1,9 +1,10 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import { useState } from "react";
-import { apiRequest } from "./api";
+import { ApiError, apiRequest } from "./api";
 import type { ProfileRuntime } from "./profile";
 import { AppLink, currentInternalLocation, navigateInternal, safeReturnTo } from "./router";
+import { SldAnalysisPanel } from "./sld_analysis";
 
 type StandaloneDocumentVariant = "REGION_ANALYSIS" | "BUILDING_ANALYSIS" | "INSPECTION_REQUEST";
 
@@ -40,7 +41,11 @@ function StandaloneDocumentButton({
         {create.isPending ? "초안 만드는 중…" : children}
       </button>
       {create.isError ? (
-        <small role="alert">문서 초안을 만들지 못했습니다. 다시 시도해 주세요.</small>
+        <small role="alert">
+          {create.error instanceof ApiError
+            ? `${create.error.message} (${create.error.code})`
+            : "문서 초안을 만들지 못했습니다. 다시 시도해 주세요."}
+        </small>
       ) : null}
     </div>
   );
@@ -363,7 +368,7 @@ function RegionDetail({
     const [path, query = ""] = mapTarget.split("?", 2);
     const params = new URLSearchParams(query);
     params.set("level", "building");
-    params.set("zoom", "14");
+    params.set("zoom", "16");
     return `${path}?${params.toString()}`;
   })();
   const currentLocation = currentInternalLocation(runtime);
@@ -577,6 +582,7 @@ function BuildingDetail({
   runtime: ProfileRuntime;
   buildingId: string;
 }) {
+  const [showSldAnalysis, setShowSldAnalysis] = useState(false);
   const building = useQuery({
     queryKey: ["analysis-building", runtime.profile, buildingId],
     queryFn: () =>
@@ -625,6 +631,14 @@ function BuildingDetail({
           </p>
         </div>
         <div className="analysis-heading-actions">
+          <button
+            aria-expanded={showSldAnalysis}
+            className="outline-action"
+            onClick={() => setShowSldAnalysis((visible) => !visible)}
+            type="button"
+          >
+            단선결선도 분석
+          </button>
           <AppLink
             className="outline-action"
             currentPath={currentPath}
@@ -643,6 +657,7 @@ function BuildingDetail({
           </AppLink>
         </div>
       </div>
+      {showSldAnalysis ? <SldAnalysisPanel buildingId={buildingId} runtime={runtime} /> : null}
       <aside className="analysis-contract-note">
         기준 위험도는 v27.1 · 2026-03 · 향후 60일 광주·전남 상대순위입니다. 현재 신호는 기준점수를
         변경하지 않습니다.

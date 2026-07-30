@@ -56,11 +56,17 @@ docker compose config --quiet
 - `ESAFE_SESSION_SECRET_LIVE`, `ESAFE_SESSION_SECRET_DEMO`: 프로필별 독립 세션 서명값
 - `UPSTAGE_API_KEY`: Solar Pro 3 및 Solar Embedding 2 호출 키
 - `DATA_GO_KR_SERVICE_KEY`: 기상특보·재난문자 공공 API 인증키
+- `NAVER_MAPS_NCP_KEY_ID`: NAVER Maps JavaScript API의 ncpKeyId. Cloud 콘솔의 Web 서비스 URL에는 포트와 경로를 제외한 `http://127.0.0.1`, `http://localhost` 및 실제 공개 origin을 등록
 - `NFDS_ENABLED`: `false`이면 다음 관련 서비스 재시작부터 NFDS 외부 호출만 중단
 - `ESAFE_COOKIE_SECURE`: Quick Tunnel 공개 배포에서는 반드시 `true`; 로컬 HTTP 전용 격리 환경에서만 `false`
 - `UPSTAGE_CHAT_TIMEOUT_SECONDS`: 비동기 대응안 생성의 provider 응답 제한시간
+- `UPSTAGE_DOCUMENT_MODEL`, `UPSTAGE_DOCUMENT_TIMEOUT_SECONDS`: 단선결선도 전용
+  Upstage OCR 모델과 응답 제한시간
+- `SLD_MAX_UPLOAD_BYTES`: 건물상세 단선결선도 업로드 크기 제한(기본 25MB)
+- `SLD_MAX_REGION_OCR_CROPS`, `SLD_REGION_RENDER_DPI`, `SLD_REGION_CROP_UPSCALE`:
+  단선결선도 외함 Crop의 최대 수, 원본 렌더 DPI(기본 300), OCR용 확대 배율(기본 2배)
 
-키와 내부 비용 설정은 브라우저·사용자 API·로그에 노출하지 않는다. 개인정보가 포함된 자료는 서버 내부 비식별 검증을 통과한 사본만 Upstage에 전송한다. Quick Tunnel을 시작하기 전에 `ESAFE_COOKIE_SECURE=true`인지 확인한다.
+비밀키와 내부 비용 설정은 브라우저·사용자 API·로그에 노출하지 않는다. `NAVER_MAPS_NCP_KEY_ID`는 브라우저 SDK 로드에 쓰는 공개 식별자이므로 허용 Web 서비스 URL로 사용처를 제한한다. NAVER Client Secret은 JavaScript 지도 SDK에 사용하지 않으며 저장소나 브라우저에 넣지 않는다. 개인정보가 포함된 자료는 서버 내부 비식별 검증을 통과한 사본만 Upstage에 전송한다. Quick Tunnel을 시작하기 전에 `ESAFE_COOKIE_SECURE=true`인지 확인한다.
 
 ### 공용 로그인 비밀번호 교체
 
@@ -124,6 +130,30 @@ docker compose ps
 
 Compose의 공통 이미지 때문에 위 네 build 대상이 백엔드, 데이터베이스, 문서 런타임과 프런트 gateway 이미지를 모두 만든다. migration 서비스는 기동 의존관계에서 LIVE·DEMO·비용원장을 현재 schema로 올리고 seed를 멱등 적용한다.
 
+Windows Docker Desktop 로컬 통합 환경은 저장소 루트의 최종 런처로 같은 구성을
+재빌드·검증할 수 있다.
+
+```powershell
+& ".\launch-scenario1-fix.cmd"
+```
+
+이 런처는 API, 일반·SLD·문서 worker, gateway를 재빌드하고 LIVE·DEMO migration을
+적용한다. 이어서 기존 실패 문서 산출물을 한 번 재시도하고 다음 일곱 문서 유형의
+REVIEW HWPX·PDF 생성과 인증된 다운로드까지 실제 DEMO API로 확인한다.
+
+- 지역 분석 보고서
+- 건물 분석 보고서
+- 현장점검 요청
+- 사고·상황 보고서
+- 위기상황판단
+- 한국전기안전공사 공문
+- 대응 계획서
+
+독립 문서 유형이 HTTP 500으로 실패했던 기존 DB에는
+`20260731_0020_restore_standalone_document_constraints`가 문서 유형 제약을 다시
+확정한다. 새 설치에도 같은 migration chain을 적용하므로 PC별 수동 SQL은 필요하지
+않다.
+
 내부 접속:
 
 - LIVE: `http://127.0.0.1:8080/live/`
@@ -178,12 +208,13 @@ docker compose logs --tail=100 worker-live scheduler-live
 ### 2. 위험지도와 분석
 
 1. `위험 지도`에서 광주시·전남도 → 시·군·구 → 읍·면·동 → 건물 순으로 확대한다. 다음 단계가 나타나면 이전 단계의 색칠은 사라져 지도가 겹치지 않는다.
-2. 행정구역을 누르면 바로 확대되지 않고 현재 단계에서 선택·강조된다. 상세 카드의 단계별 확대 버튼 또는 지도 휠 확대를 사용해 다음 단계로 이동한다.
-3. 건물을 지도나 목록에서 선택하면 양쪽 선택 상태가 동기화된다. 지도는 건물을 중앙에 두고 실제 외곽을 포함하는 파란 원을 표시하며, 목록은 해당 행으로 이동해 강조를 유지한다.
+2. NAVER 지도에서 확대·축소와 일반/위성 지도 유형을 사용할 수 있다. 행정구역을 선택한 뒤 상세 카드의 단계별 확대 버튼 또는 지도 휠 확대를 사용해 다음 단계로 이동한다.
+3. 건물을 지도나 목록에서 선택하면 양쪽 선택 상태가 동기화된다. `거리뷰` 또는 선택 건물의 `거리뷰 열기`로 주변 300m 이내 파노라마를 지도 안에서 확인한다.
 4. 모든 행정단계의 `지역 분석 보기`는 지역 상세로, 건물 단계의 `건물 분석 보기`는 건물 상세로 이동한다.
 5. `위험 분석`에서는 광역시·도, 시·군·구, 읍·면·동, 건물 순위를 전환해 확인한다. 지역은 상위 10% 건물 수, 건물은 광주·전남 모델 순위를 기준으로 한다.
 6. 분석 화면에서 상대점수, 광주·전남 순위, 상위 백분위, 연결 시설을 확인한다.
-7. `과거 사고사례`, `유사 위험시설`, `후보 시설 비교`에서 조건별 참고사례를 확인한다. 유사도는 확률이나 인과관계가 아니다.
+7. 보고서 보기는 동일 사실을 읽기 쉬운 분석 보고 형태로 제시한다.
+8. `과거 사고사례`, `유사 위험시설`, `후보 시설 비교`에서 조건별 참고사례를 확인한다. 유사도는 확률이나 인과관계가 아니다.
 
 ### 3. 점검계획
 
@@ -216,6 +247,11 @@ LLM은 사건 존재·중복·지역·거리·위험순위·상태 전이를 결
 8. `보고서·산출물`에서 같은 승인 버전의 HWPX와 PDF를 내려받는다.
 9. 시스템은 실제 이메일·전자공문을 보내지 않는다. 외부 전달 후 수신처·시각·방법·메모를 수동 발송 기록으로 남긴다.
 
+초안 생성 오류가 발생하면 화면에 API 오류 메시지와 오류 코드를 함께 표시한다.
+문서 생성은 API의 초안·버전 등록과 `live-documents` 또는 `demo-documents` Celery
+queue의 HWPX·PDF 렌더링으로 분리되므로, 초안 생성 HTTP 오류와 산출물 실패를 구분해
+확인한다.
+
 ### 6. DEMO 시나리오
 
 1. DEMO 왼쪽 사이드바의 `WORKFLOW` 아래 `체험 시나리오`에서 여섯 시나리오의 단계와 기대 결과를 확인한다.
@@ -245,7 +281,7 @@ LLM은 사건 존재·중복·지역·거리·위험순위·상태 전이를 결
 ./scripts/test-restore.sh
 ```
 
-`smoke.sh`는 LIVE·DEMO 로그인, 217,238개 기준자산, 홈, 지도, 지역·건물, 유사사례, 인증·CSRF, schema와 프로필 격리를 검사한다. 릴리스 증적은 `artifacts/test-reports/<release-id>`에 보관하며 이미지에 포함하지 않는다.
+`smoke.sh`는 LIVE·DEMO 로그인, 217,238개 기준자산, 홈, 지도, 지역·건물, 유사사례, 인증·CSRF, schema와 프로필 격리를 검사한다. Windows 최종 런처는 여기에 문서 worker readiness, 기존 실패 산출물 재시도, 일곱 문서 유형의 HWPX·PDF 생성·다운로드 검사를 추가한다. 릴리스 증적은 `artifacts/test-reports/<release-id>`에 보관하며 이미지에 포함하지 않는다.
 
 ## 운영과 장애 대응
 
@@ -261,6 +297,10 @@ docker compose restart api-live api-demo worker-live worker-demo scheduler-live 
 - NFDS 호출만 즉시 중단하려면 `.env`의 `NFDS_ENABLED=false`로 바꾸고 `scheduler-live worker-live api-live`를 재시작한다. 기존 신호와 Case는 보존된다.
 - AI 비용 하드 중단이나 Upstage 장애가 발생해도 기존 근거·캐시·초안 조회와 결정적 Case 처리는 유지된다.
 - 비동기 작업이 멈추면 Redis, worker, scheduler 순으로 상태와 로그를 확인한다. 같은 입력은 멱등키와 캐시로 중복 실행을 억제한다.
+- 지역·건물 분석 보고서와 현장점검 요청이 모두 초안 생성 단계에서 HTTP 500이면
+  document worker보다 먼저 DB migration head와 `ck_document_draft_variant`,
+  `ck_document_draft_family_variant` 제약을 확인한다. 로컬 통합 환경은 최종 런처를
+  다시 실행해 복구 migration을 적용한다.
 - 외부 주소 장애 시 앱을 재생성하지 말고 먼저 `./scripts/verify-tunnel.sh`와 tunnel 로그를 확인한다.
 
 시작·중지·업데이트:
@@ -284,6 +324,9 @@ docker compose up -d --no-build
 - 로그인이 반복 실패하면 입력값을 확인하고 제한시간이 지난 뒤 다시 시도한다. 비밀번호 노출이 의심되면 `rotate-public-password.sh`를 실행한다.
 - `소스 지연` 또는 `수집 장애`면 `worker-live`, `scheduler-live` 로그와 제공처 응답을 확인한다. LIVE에 fixture를 넣어 숨기지 않는다.
 - 문서 산출물 한 형식만 실패하면 화면의 재시도를 사용하고 document worker 로그를 확인한다. 승인본을 직접 덮어쓰지 않는다.
+- 문서 초안 자체가 생성되지 않으면 API 로그와 migration head를 먼저 확인한다. HWPX와
+  PDF가 `DOCUMENT_TEMPLATE_VERSION_MISMATCH`로 함께 실패하면 API와 document worker를
+  같은 commit 이미지로 재빌드·재생성한다.
 - 공개 주소만 열리지 않으면 앱을 재배포하지 말고 tunnel health와 `public-url.txt`를 먼저 확인한다. 주소가 바뀌면 새 값만 안내한다.
 - DB·Redis가 비정상이면 쓰기를 반복하지 말고 healthcheck, 최근 백업 checksum, 복원시험 결과 순으로 확인한다.
 

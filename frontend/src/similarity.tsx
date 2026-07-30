@@ -1,20 +1,9 @@
 import { useQuery } from "@tanstack/react-query";
-import {
-  AttributionControl,
-  LngLatBounds,
-  Map as MapLibreMap,
-  NavigationControl,
-  type StyleSpecification,
-  setWorkerUrl,
-} from "maplibre-gl";
-import mapWorkerUrl from "maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url";
-import "maplibre-gl/dist/maplibre-gl.css";
-import { type FormEvent, useEffect, useRef, useState } from "react";
+import { type FormEvent, useMemo, useState } from "react";
 import { apiRequest } from "./api";
+import { type NaverMapConfigData, type NaverPoint, NaverPointMap } from "./naver_maps";
 import type { ProfileRuntime } from "./profile";
 import { AppLink, navigateInternal } from "./router";
-
-setWorkerUrl(mapWorkerUrl);
 
 interface MatchComponent {
   code: string;
@@ -112,17 +101,7 @@ interface ComparisonData {
   };
 }
 
-interface MapProvider {
-  id: "vworld" | "osm";
-  name: string;
-  urlTemplate: string;
-  attribution: string;
-}
-
-interface MapConfigData {
-  providers: MapProvider[];
-  preferredProvider: "vworld" | "osm";
-}
+type MapConfigData = NaverMapConfigData;
 
 interface RegionCollection {
   features: Array<{ properties: { regionCode: string; fullName: string } }>;
@@ -593,76 +572,6 @@ function IncidentSearch({
   );
 }
 
-function supportsWebGl(): boolean {
-  return typeof navigator !== "undefined" && !navigator.userAgent.toLowerCase().includes("jsdom");
-}
-
-function candidateStyle(provider: MapProvider, candidates: Candidate[]): StyleSpecification {
-  return {
-    version: 8,
-    sources: {
-      basemap: {
-        type: "raster",
-        tiles: [provider.urlTemplate],
-        tileSize: 256,
-        attribution: provider.attribution,
-      },
-      candidates: {
-        type: "geojson",
-        data: {
-          type: "FeatureCollection",
-          features: candidates.map((item) => ({
-            type: "Feature",
-            id: item.buildingId,
-            geometry: { type: "Point", coordinates: item.center },
-            properties: {
-              buildingId: item.buildingId,
-              riskBand: item.risk.riskBand,
-              score: item.conditionMatch.score,
-            },
-          })),
-        },
-      },
-    },
-    layers: [
-      { id: "basemap", type: "raster", source: "basemap" },
-      {
-        id: "candidate-points",
-        type: "circle",
-        source: "candidates",
-        paint: {
-          "circle-radius": 9,
-          "circle-color": [
-            "match",
-            ["get", "riskBand"],
-            "TOP_1",
-            "#c9232c",
-            "HIGH_1_10",
-            "#e66b2f",
-            "WATCH_10_25",
-            "#efb43c",
-            "#4676a8",
-          ],
-          "circle-stroke-color": "#ffffff",
-          "circle-stroke-width": 2,
-        },
-      },
-      {
-        id: "candidate-selected",
-        type: "circle",
-        source: "candidates",
-        filter: ["==", ["get", "buildingId"], ""],
-        paint: {
-          "circle-radius": 15,
-          "circle-color": "rgba(0,0,0,0)",
-          "circle-stroke-color": "#0b1e34",
-          "circle-stroke-width": 4,
-        },
-      },
-    ],
-  };
-}
-
 function CandidateMap({
   candidates,
   selectedId,
@@ -674,76 +583,39 @@ function CandidateMap({
   onSelect: (id: string) => void;
   runtime: ProfileRuntime;
 }) {
-  const container = useRef<HTMLDivElement>(null);
-  const mapRef = useRef<MapLibreMap | null>(null);
-  const onSelectRef = useRef(onSelect);
-  const selectedIdRef = useRef(selectedId);
-  onSelectRef.current = onSelect;
-  selectedIdRef.current = selectedId;
   const config = useQuery({
     queryKey: ["map-config", runtime.profile],
     queryFn: () => apiRequest<MapConfigData>(runtime, "/map/config").then((result) => result.data),
     staleTime: 5 * 60_000,
   });
-  const enabled = supportsWebGl();
-  const provider =
-    config.data?.providers.find((item) => item.id === config.data?.preferredProvider) ??
-    config.data?.providers[0];
-
-  useEffect(() => {
-    if (!enabled || !container.current || !provider || candidates.length === 0) return;
-    const map = new MapLibreMap({
-      container: container.current,
-      style: candidateStyle(provider, candidates),
-      center: candidates[0].center,
-      zoom: 8,
-      attributionControl: false,
-    });
-    mapRef.current = map;
-    map.addControl(new NavigationControl({ showCompass: false }), "top-left");
-    map.addControl(
-      new AttributionControl({ compact: true, customAttribution: provider.attribution }),
-      "bottom-right",
-    );
-    map.on("load", () => {
-      const bounds = new LngLatBounds();
-      for (const item of candidates) bounds.extend(item.center);
-      if (!bounds.isEmpty()) map.fitBounds(bounds, { padding: 60, maxZoom: 14, duration: 0 });
-      map.setFilter("candidate-selected", [
-        "==",
-        ["get", "buildingId"],
-        selectedIdRef.current ?? "",
-      ]);
-      map.on("click", "candidate-points", (event) => {
-        const id = event.features?.[0]?.properties?.buildingId as string | undefined;
-        if (id) onSelectRef.current(id);
-      });
-      map.on("mouseenter", "candidate-points", () => {
-        map.getCanvas().style.cursor = "pointer";
-      });
-      map.on("mouseleave", "candidate-points", () => {
-        map.getCanvas().style.cursor = "";
-      });
-    });
-    return () => {
-      map.remove();
-      mapRef.current = null;
-    };
-  }, [candidates, enabled, provider]);
-
-  useEffect(() => {
-    const map = mapRef.current;
-    if (map?.getLayer("candidate-selected"))
-      map.setFilter("candidate-selected", ["==", ["get", "buildingId"], selectedId ?? ""]);
-  }, [selectedId]);
-
-  if (!enabled)
-    return (
-      <div className="candidate-map-fallback">
-        브라우저 지도 대신 오른쪽 실제 후보 목록을 사용합니다.
-      </div>
-    );
-  return <div className="candidate-map" ref={container} />;
+  const points = useMemo<NaverPoint[]>(
+    () =>
+      candidates.map((item) => ({
+        id: item.buildingId,
+        center: item.center,
+        title: item.name,
+        tone:
+          item.risk.riskBand === "TOP_1"
+            ? "danger"
+            : item.risk.riskBand === "HIGH_1_10"
+              ? "warning"
+              : item.risk.riskBand === "WATCH_10_25"
+                ? "neutral"
+                : "primary",
+      })),
+    [candidates],
+  );
+  return (
+    <NaverPointMap
+      className="candidate-map"
+      fallbackMessage="브라우저 지도 대신 오른쪽 실제 후보 목록을 사용합니다."
+      initialZoom={8}
+      keyId={config.data?.naverMapsNcpKeyId}
+      onSelect={onSelect}
+      points={points}
+      selectedId={selectedId}
+    />
+  );
 }
 
 function CandidateExplorer({

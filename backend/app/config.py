@@ -39,7 +39,10 @@ class Settings(BaseSettings):
         default="http://127.0.0.1:8080",
         alias="ESAFE_PUBLIC_ORIGINS",
     )
-    vworld_tile_url: str | None = Field(default=None, alias="VWORLD_TILE_URL")
+    naver_maps_ncp_key_id: str = Field(
+        default="",
+        alias="NAVER_MAPS_NCP_KEY_ID",
+    )
     nfds_enabled: bool = Field(default=True, alias="NFDS_ENABLED")
     data_go_kr_service_key: SecretStr | None = Field(
         default=None,
@@ -56,6 +59,16 @@ class Settings(BaseSettings):
         ge=30.0,
         le=300.0,
         alias="UPSTAGE_CHAT_TIMEOUT_SECONDS",
+    )
+    upstage_document_model: str = Field(
+        default="ocr",
+        alias="UPSTAGE_DOCUMENT_MODEL",
+    )
+    upstage_document_timeout_seconds: float = Field(
+        default=300.0,
+        ge=30.0,
+        le=600.0,
+        alias="UPSTAGE_DOCUMENT_TIMEOUT_SECONDS",
     )
     upstage_embed_query_model: str = Field(
         default="solar-embedding-2-query",
@@ -77,6 +90,34 @@ class Settings(BaseSettings):
     document_storage_root: str = Field(
         default="/srv/esafe/storage/documents",
         alias="DOCUMENT_STORAGE_ROOT",
+    )
+    sld_storage_root: str = Field(
+        default="/srv/esafe/storage/sld",
+        alias="SLD_STORAGE_ROOT",
+    )
+    sld_max_upload_bytes: int = Field(
+        default=25 * 1024 * 1024,
+        ge=1024,
+        le=100 * 1024 * 1024,
+        alias="SLD_MAX_UPLOAD_BYTES",
+    )
+    sld_max_region_ocr_crops: int = Field(
+        default=24,
+        ge=1,
+        le=64,
+        alias="SLD_MAX_REGION_OCR_CROPS",
+    )
+    sld_region_render_dpi: int = Field(
+        default=300,
+        ge=144,
+        le=600,
+        alias="SLD_REGION_RENDER_DPI",
+    )
+    sld_region_crop_upscale: float = Field(
+        default=2.0,
+        ge=1.0,
+        le=4.0,
+        alias="SLD_REGION_CROP_UPSCALE",
     )
     document_pdf_renderer: str = Field(
         default="/app/document_runtime/render_pdf.mjs",

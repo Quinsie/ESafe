@@ -1,35 +1,18 @@
 import { useQuery } from "@tanstack/react-query";
 import type { Feature, FeatureCollection, MultiPolygon, Polygon } from "geojson";
-import {
-  AttributionControl,
-  type GeoJSONSource,
-  type MapGeoJSONFeature,
-  Map as MapLibreMap,
-  type MapMouseEvent,
-  NavigationControl,
-  type StyleSpecification,
-  setWorkerUrl,
-} from "maplibre-gl";
-import mapWorkerUrl from "maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url";
-import "maplibre-gl/dist/maplibre-gl.css";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { apiRequest } from "./api";
+import {
+  loadNaverMaps,
+  moveNaverMap,
+  type NaverMapConfigData,
+  NaverPanoramaView,
+  supportsNaverMaps,
+} from "./naver_maps";
 import type { ProfileRuntime } from "./profile";
 import { AppLink, currentInternalLocation } from "./router";
 
-interface MapProvider {
-  id: "vworld" | "osm";
-  name: string;
-  urlTemplate: string;
-  attribution: string;
-  priority: number;
-}
-
-interface MapConfigData {
-  providers: MapProvider[];
-  preferredProvider: "vworld" | "osm";
-  fallbackActive: boolean;
-  fallbackReason: "VWORLD_NOT_CONFIGURED" | null;
+interface MapConfigData extends NaverMapConfigData {
   buildingZoom: { minimum: number; maximum: number };
   neighborhoodZoom: { minimum: number; maximum: number };
 }
@@ -97,13 +80,28 @@ interface BuildingListData {
   pagination: { page: number; pageSize: number; total: number; totalPages: number };
 }
 
+interface BuildingFeatureProperties {
+  buildingId: string;
+  regionCode: string;
+  label: string;
+  finalScore: number;
+  regionalRank: number;
+  topPercentile: number;
+  riskBand: string;
+}
+
+interface BuildingFeatureCollection
+  extends FeatureCollection<Polygon | MultiPolygon, BuildingFeatureProperties> {
+  truncated: boolean;
+  limit: number;
+}
+
 interface BuildingDetailData {
   buildingId: string;
   name: string;
   lotAddress: string;
   roadAddress: string | null;
   center: [number, number];
-  bounds: [number, number, number, number];
   risk: BuildingListItem["risk"];
   currentSignals: { activeCaseCount: number; urgentCaseCount: number; hasCurrentSignal: boolean };
 }
@@ -122,59 +120,9 @@ const riskNames: Record<string, string> = {
   GENERAL: "일반",
 };
 
-const emptyCollection: FeatureCollection = { type: "FeatureCollection", features: [] };
-
 const DISTRICT_ZOOM = 8.5;
 const NEIGHBORHOOD_ZOOM = 11.5;
-const BUILDING_ZOOM = 14;
-
-function selectionRing(
-  center: [number, number],
-  bounds: [number, number, number, number],
-): Feature<Polygon> {
-  const [lng, lat] = center;
-  const [west, south, east, north] = bounds;
-  const metersPerLng = 111_320 * Math.cos((lat * Math.PI) / 180);
-  const metersPerLat = 110_540;
-  const radiusMeters =
-    Math.max(
-      15,
-      ...[
-        [west, south],
-        [west, north],
-        [east, south],
-        [east, north],
-      ].map(([cornerLng, cornerLat]) =>
-        Math.hypot((cornerLng - lng) * metersPerLng, (cornerLat - lat) * metersPerLat),
-      ),
-    ) * 1.35;
-  const coordinates = Array.from({ length: 65 }, (_, index) => {
-    const angle = (index / 64) * Math.PI * 2;
-    return [
-      lng + (Math.cos(angle) * radiusMeters) / metersPerLng,
-      lat + (Math.sin(angle) * radiusMeters) / metersPerLat,
-    ];
-  });
-  return {
-    type: "Feature",
-    properties: {},
-    geometry: { type: "Polygon", coordinates: [coordinates] },
-  };
-}
-
-function nextRegionZoom(level: RegionProperties["level"]): number {
-  if (level === "SIDO") return DISTRICT_ZOOM + 0.4;
-  if (level === "SIGUNGU") return NEIGHBORHOOD_ZOOM + 0.4;
-  return BUILDING_ZOOM + 0.4;
-}
-
-function nextRegionLabel(level: RegionProperties["level"]): string {
-  if (level === "SIDO") return "시·군·구 단위로 확대";
-  if (level === "SIGUNGU") return "읍·면·동 단위로 확대";
-  return "건물 단위로 확대";
-}
-
-setWorkerUrl(mapWorkerUrl);
+const BUILDING_ZOOM = 16;
 
 function initialNumber(name: string, fallback: number): number {
   const raw = new URLSearchParams(window.location.search).get(name);
@@ -186,102 +134,27 @@ function currentSelection(name: string): string | null {
   return new URLSearchParams(window.location.search).get(name);
 }
 
-function rasterStyle(provider: MapProvider, runtime: ProfileRuntime): StyleSpecification {
-  return {
-    version: 8,
-    sources: {
-      basemap: {
-        type: "raster",
-        tiles: [provider.urlTemplate],
-        tileSize: 256,
-        attribution: provider.attribution,
-      },
-      admin: { type: "geojson", data: emptyCollection },
-      selection: { type: "geojson", data: emptyCollection },
-      buildings: {
-        type: "vector",
-        tiles: [`${window.location.origin}${runtime.apiBase}/map/buildings/{z}/{x}/{y}.mvt`],
-        minzoom: 14,
-        maxzoom: 20,
-      },
-    },
-    layers: [
-      { id: "basemap", type: "raster", source: "basemap" },
-      {
-        id: "admin-fill",
-        type: "fill",
-        source: "admin",
-        maxzoom: BUILDING_ZOOM,
-        paint: {
-          "fill-color": [
-            "interpolate",
-            ["linear"],
-            ["coalesce", ["get", "top10Share"], 0],
-            5,
-            "#dbe7f2",
-            15,
-            "#f1b88b",
-            30,
-            "#ce3d3d",
-          ],
-          "fill-opacity": 0.66,
-        },
-      },
-      {
-        id: "admin-line",
-        type: "line",
-        source: "admin",
-        maxzoom: BUILDING_ZOOM,
-        paint: { "line-color": "#264b73", "line-width": 1.8 },
-      },
-      {
-        id: "admin-selected",
-        type: "line",
-        source: "admin",
-        maxzoom: BUILDING_ZOOM,
-        filter: ["==", ["get", "regionCode"], ""],
-        paint: { "line-color": "#005fcc", "line-width": 4 },
-      },
-      {
-        id: "building-fill",
-        type: "fill",
-        source: "buildings",
-        "source-layer": "buildings",
-        minzoom: 14,
-        paint: {
-          "fill-color": [
-            "match",
-            ["get", "risk_band"],
-            "TOP_1",
-            "#c9232c",
-            "HIGH_1_10",
-            "#e66b2f",
-            "WATCH_10_25",
-            "#efb43c",
-            "#7d9ab5",
-          ],
-          "fill-opacity": ["case", ["boolean", ["get", "has_current_signal"], false], 0.95, 0.72],
-          "fill-outline-color": "#4e6175",
-        },
-      },
-      {
-        id: "building-selected",
-        type: "line",
-        source: "buildings",
-        "source-layer": "buildings",
-        minzoom: 14,
-        filter: ["==", ["get", "building_id"], ""],
-        paint: { "line-color": "#005fcc", "line-width": 4 },
-      },
-      {
-        id: "building-selection-ring",
-        type: "line",
-        source: "selection",
-        minzoom: 14,
-        paint: { "line-color": "#0877e1", "line-width": 2, "line-opacity": 0.95 },
-      },
-    ],
-  };
+function adminFillColor(share: number): string {
+  if (share >= 30) return "#ce3d3d";
+  if (share >= 15) return "#f1b88b";
+  return "#dbe7f2";
+}
+
+function buildingFillColor(riskBand: string): string {
+  return (
+    {
+      TOP_1: "#c9232c",
+      HIGH_1_10: "#e66b2f",
+      WATCH_10_25: "#efb43c",
+      GENERAL: "#7d9ab5",
+    }[riskBand] ?? "#7d9ab5"
+  );
+}
+
+function clearDataLayer(layer: naver.maps.Data | null): void {
+  for (const feature of layer?.getAllFeature() ?? []) {
+    layer?.removeFeature(feature);
+  }
 }
 function updateMapUrl(
   viewport: ViewportState,
@@ -313,10 +186,6 @@ function updateMapUrl(
     params.delete("building");
   }
   window.history.replaceState({}, "", `${window.location.pathname}?${params.toString()}`);
-}
-
-function supportsWebGl(): boolean {
-  return typeof navigator !== "undefined" && !navigator.userAgent.toLowerCase().includes("jsdom");
 }
 
 function useSpatialData(runtime: ProfileRuntime, bbox: string | null, zoom: number) {
@@ -389,10 +258,9 @@ export function RiskMap({
   runtime: ProfileRuntime;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
-  const mapRef = useRef<MapLibreMap | null>(null);
-  const buildingItemRefs = useRef(new Map<string, HTMLLIElement>());
-  const lastCenteredBuildingRef = useRef<string | null>(null);
-  const lastScrolledBuildingRef = useRef<string | null>(null);
+  const mapRef = useRef<naver.maps.Map | null>(null);
+  const adminLayerRef = useRef<naver.maps.Data | null>(null);
+  const buildingLayerRef = useRef<naver.maps.Data | null>(null);
   const selectionRef = useRef({
     region: currentSelection("region"),
     building: currentSelection("building"),
@@ -407,11 +275,11 @@ export function RiskMap({
   });
   const initialViewportRef = useRef(viewport);
   const overlayRef = useRef<RegionCollection | undefined>(undefined);
-  const [activeProviderId, setActiveProviderId] = useState<"vworld" | "osm" | null>(null);
-  const [backgroundFallback, setBackgroundFallback] = useState(false);
   const [overlayError, setOverlayError] = useState<string | null>(null);
-  const [mapStyleReady, setMapStyleReady] = useState(false);
-  const [webGlReady] = useState(supportsWebGl);
+  const [mapLoadError, setMapLoadError] = useState(false);
+  const [mapReady, setMapReady] = useState(false);
+  const [mapSupported] = useState(supportsNaverMaps);
+  const [panoramaPosition, setPanoramaPosition] = useState<[number, number] | null>(null);
   const { config, provinces, districts, neighborhoods } = useSpatialData(
     runtime,
     viewport.bbox,
@@ -433,146 +301,179 @@ export function RiskMap({
   selectionRef.current = { region: selectedRegion, building: selectedBuilding };
 
   useEffect(() => {
-    if (config.data && activeProviderId === null) {
-      setActiveProviderId(config.data.preferredProvider);
-      setBackgroundFallback(config.data.fallbackActive);
-    }
-  }, [activeProviderId, config.data]);
-
-  const activeProvider = config.data?.providers.find((item) => item.id === activeProviderId);
-  const osmProvider = config.data?.providers.find((item) => item.id === "osm");
-
-  useEffect(() => {
-    if (!webGlReady || !containerRef.current || !activeProvider) {
+    const keyId = config.data?.naverMapsNcpKeyId;
+    if (!mapSupported || !containerRef.current || !keyId) {
       return;
     }
-    const map = new MapLibreMap({
-      container: containerRef.current,
-      style: rasterStyle(activeProvider, runtime),
-      center: [initialViewportRef.current.lng, initialViewportRef.current.lat],
-      zoom: initialViewportRef.current.zoom,
-      minZoom: 6.5,
-      maxZoom: 20,
-      attributionControl: false,
-    });
-    mapRef.current = map;
-    map.addControl(new NavigationControl({ showCompass: false }), "top-left");
-    map.addControl(
-      new AttributionControl({
-        compact: true,
-        customAttribution: activeProvider.attribution,
-      }),
-      "bottom-right",
-    );
+    let cancelled = false;
+    let map: naver.maps.Map | null = null;
+    let adminLayer: naver.maps.Data | null = null;
+    let buildingLayer: naver.maps.Data | null = null;
+    let listeners: naver.maps.MapEventListener[] = [];
+    setMapLoadError(false);
+    loadNaverMaps(keyId)
+      .then(() => {
+        if (cancelled || !containerRef.current) {
+          return;
+        }
+        map = new naver.maps.Map(containerRef.current, {
+          center: new naver.maps.LatLng(
+            initialViewportRef.current.lat,
+            initialViewportRef.current.lng,
+          ),
+          zoom: Math.round(initialViewportRef.current.zoom),
+          minZoom: 6,
+          maxZoom: 21,
+          zoomControl: true,
+          zoomControlOptions: {
+            position: naver.maps.Position.TOP_LEFT,
+            style: naver.maps.ZoomControlStyle.SMALL,
+          },
+          mapTypeControl: true,
+          scaleControl: true,
+          scrollWheel: true,
+          pinchZoom: true,
+        });
+        mapRef.current = map;
+        adminLayer = new naver.maps.Data();
+        buildingLayer = new naver.maps.Data();
+        adminLayerRef.current = adminLayer;
+        buildingLayerRef.current = buildingLayer;
+        adminLayer.setMap(map);
+        buildingLayer.setMap(map);
+        adminLayer.setStyle((feature) => ({
+          fillColor: adminFillColor(Number(feature.getProperty("top10Share") ?? 0)),
+          fillOpacity: 0.38,
+          strokeColor: "#264b73",
+          strokeWeight: 2,
+          clickable: true,
+        }));
+        buildingLayer.setStyle((feature) => {
+          const selected = feature.getProperty("buildingId") === selectionRef.current.building;
+          return {
+            fillColor: buildingFillColor(String(feature.getProperty("riskBand") ?? "GENERAL")),
+            fillOpacity: selected ? 0.64 : 0.48,
+            strokeColor: selected ? "#005fcc" : "#4e6175",
+            strokeWeight: selected ? 4 : 1,
+            clickable: true,
+            zIndex: selected ? 20 : 10,
+          };
+        });
 
-    const captureViewport = () => {
-      const center = map.getCenter();
-      const bounds = map.getBounds();
-      const next = {
-        lng: center.lng,
-        lat: center.lat,
-        zoom: map.getZoom(),
-        bbox: [bounds.getWest(), bounds.getSouth(), bounds.getEast(), bounds.getNorth()]
-          .map((value) => value.toFixed(6))
-          .join(","),
-      };
-      setViewport(next);
-      updateMapUrl(next, selectionRef.current.region, selectionRef.current.building);
-    };
-
-    const chooseRegion = (event: MapMouseEvent & { features?: MapGeoJSONFeature[] }) => {
-      const feature = event.features?.[0];
-      const code = feature?.properties?.regionCode as string | undefined;
-      const center = feature?.properties?.center as [number, number] | string | undefined;
-      if (!code) {
-        return;
-      }
-      const parsedCenter =
-        typeof center === "string" ? (JSON.parse(center) as [number, number]) : center;
-      setSelectedRegion(code);
-      setSelectedBuilding(null);
-      if (parsedCenter) map.easeTo({ center: parsedCenter, zoom: map.getZoom(), duration: 350 });
-    };
-
-    const chooseBuilding = (event: MapMouseEvent & { features?: MapGeoJSONFeature[] }) => {
-      const feature = event.features?.[0];
-      const buildingId = feature?.properties?.building_id as string | undefined;
-      if (!buildingId) {
-        return;
-      }
-      setSelectedBuilding(buildingId);
-      map.setFilter("building-selected", ["==", ["get", "building_id"], buildingId]);
-    };
-
-    map.on("load", () => {
-      setMapStyleReady(true);
-      const adminSource = map.getSource("admin") as GeoJSONSource | undefined;
-      const initialOverlay = overlayRef.current;
-      if (initialOverlay) {
-        adminSource?.setData(initialOverlay);
-      }
-      map.setFilter("building-selected", [
-        "==",
-        ["get", "building_id"],
-        selectionRef.current.building ?? "",
-      ]);
-      map.setFilter("admin-selected", [
-        "==",
-        ["get", "regionCode"],
-        selectionRef.current.region ?? "",
-      ]);
-      captureViewport();
-      map.on("click", "admin-fill", chooseRegion);
-      map.on("click", "building-fill", chooseBuilding);
-      map.on("mouseenter", "admin-fill", () => {
-        map.getCanvas().style.cursor = "pointer";
+        const captureViewport = () => {
+          if (!map) return;
+          const center = map.getCenter() as naver.maps.LatLng;
+          const bounds = map.getBounds() as naver.maps.LatLngBounds;
+          const next = {
+            lng: center.lng(),
+            lat: center.lat(),
+            zoom: map.getZoom(),
+            bbox: [bounds.west(), bounds.south(), bounds.east(), bounds.north()]
+              .map((value) => value.toFixed(6))
+              .join(","),
+          };
+          setViewport(next);
+          updateMapUrl(next, selectionRef.current.region, selectionRef.current.building);
+        };
+        listeners.push(naver.maps.Event.addListener(map, "idle", captureViewport));
+        listeners.push(
+          naver.maps.Event.addListener(adminLayer, "click", (event: naver.maps.PointerEvent) => {
+            const code = event.feature.getProperty("regionCode") as string | undefined;
+            const center = event.feature.getProperty("center") as
+              | [number, number]
+              | string
+              | undefined;
+            if (!code) return;
+            const parsedCenter =
+              typeof center === "string" ? (JSON.parse(center) as [number, number]) : center;
+            const level = event.feature.getProperty("level") as string | undefined;
+            setSelectedRegion(code);
+            setSelectedBuilding(null);
+            setPanoramaPosition(null);
+            if (parsedCenter) {
+              moveNaverMap(
+                map,
+                parsedCenter,
+                level === "SIDO"
+                  ? 9
+                  : level === "SIGUNGU"
+                    ? NEIGHBORHOOD_ZOOM + 0.7
+                    : BUILDING_ZOOM + 0.5,
+              );
+            }
+          }),
+        );
+        listeners.push(
+          naver.maps.Event.addListener(buildingLayer, "click", (event: naver.maps.PointerEvent) => {
+            const buildingId = event.feature.getProperty("buildingId") as string | undefined;
+            if (!buildingId) return;
+            setSelectedBuilding(buildingId);
+            if (event.coord instanceof naver.maps.LatLng) {
+              setPanoramaPosition([event.coord.lng(), event.coord.lat()]);
+            } else if (map) {
+              const center = map.getCenter() as naver.maps.LatLng;
+              setPanoramaPosition([center.lng(), center.lat()]);
+            }
+          }),
+        );
+        const initialOverlay = overlayRef.current;
+        if (initialOverlay) {
+          adminLayer.addGeoJson(initialOverlay, false);
+        }
+        captureViewport();
+        setMapReady(true);
+      })
+      .catch(() => {
+        if (!cancelled) setMapLoadError(true);
       });
-      map.on("mouseenter", "building-fill", () => {
-        map.getCanvas().style.cursor = "pointer";
-      });
-      map.on("mouseleave", "admin-fill", () => {
-        map.getCanvas().style.cursor = "";
-      });
-      map.on("mouseleave", "building-fill", () => {
-        map.getCanvas().style.cursor = "";
-      });
-    });
-    map.on("moveend", captureViewport);
-    map.on("error", (event) => {
-      const sourceId = (event as unknown as { sourceId?: string }).sourceId;
-      if (sourceId === "basemap" && activeProvider.id === "vworld" && osmProvider) {
-        setBackgroundFallback(true);
-        setActiveProviderId("osm");
-      } else if (sourceId === "buildings") {
-        setOverlayError("건물 폴리곤을 불러오지 못했습니다. 지도를 이동하거나 다시 시도해 주세요.");
-      }
-    });
-
     return () => {
-      setMapStyleReady(false);
-      map.remove();
+      cancelled = true;
+      const sdk = (
+        globalThis as typeof globalThis & {
+          naver?: typeof naver;
+        }
+      ).naver;
+      if (sdk) sdk.maps.Event.removeListener(listeners);
+      listeners = [];
+      adminLayer?.setMap(null);
+      buildingLayer?.setMap(null);
+      map?.destroy();
+      adminLayerRef.current = null;
+      buildingLayerRef.current = null;
       mapRef.current = null;
+      setMapReady(false);
     };
-  }, [activeProvider, osmProvider, runtime, webGlReady]);
+  }, [config.data?.naverMapsNcpKeyId, mapSupported]);
 
   useEffect(() => {
-    const map = mapRef.current;
-    if (!map?.isStyleLoaded()) {
-      return;
-    }
-    const source = map.getSource("admin") as GeoJSONSource | undefined;
-    source?.setData(overlay ?? emptyCollection);
-  }, [overlay]);
+    if (!mapReady) return;
+    const frame = requestAnimationFrame(() => mapRef.current?.refresh());
+    return () => cancelAnimationFrame(frame);
+  }, [mapReady]);
 
   useEffect(() => {
-    const map = mapRef.current;
-    if (!map?.getLayer("building-selected")) {
-      return;
-    }
-    map.setFilter("building-selected", ["==", ["get", "building_id"], selectedBuilding ?? ""]);
-    map.setFilter("admin-selected", ["==", ["get", "regionCode"], selectedRegion ?? ""]);
+    if (!mapReady) return;
+    const layer = adminLayerRef.current;
+    if (!layer) return;
+    clearDataLayer(layer);
+    if (overlay) layer.addGeoJson(overlay, false);
+  }, [mapReady, overlay]);
+
+  useEffect(() => {
+    if (!mapReady) return;
+    buildingLayerRef.current?.setStyle((feature) => {
+      const selected = feature.getProperty("buildingId") === selectedBuilding;
+      return {
+        fillColor: buildingFillColor(String(feature.getProperty("riskBand") ?? "GENERAL")),
+        fillOpacity: selected ? 0.64 : 0.48,
+        strokeColor: selected ? "#005fcc" : "#4e6175",
+        strokeWeight: selected ? 4 : 1,
+        clickable: true,
+        zIndex: selected ? 20 : 10,
+      };
+    });
     updateMapUrl(viewport, selectedRegion, selectedBuilding);
-  }, [selectedBuilding, selectedRegion, viewport]);
+  }, [mapReady, selectedBuilding, selectedRegion, viewport]);
 
   const buildingList = useQuery({
     queryKey: ["map-building-list", runtime.profile, viewport.bbox, viewport.zoom],
@@ -580,6 +481,17 @@ export function RiskMap({
       apiRequest<BuildingListData>(
         runtime,
         `/map/buildings?bbox=${encodeURIComponent(viewport.bbox ?? "")}&zoom=${viewport.zoom.toFixed(2)}&pageSize=50&sort=rank`,
+      ).then((result) => result.data),
+    enabled: Boolean(viewport.bbox) && viewport.zoom >= BUILDING_ZOOM,
+    placeholderData: (previous) => previous,
+    staleTime: 60_000,
+  });
+  const buildingFeatures = useQuery({
+    queryKey: ["map-building-features", runtime.profile, viewport.bbox, viewport.zoom],
+    queryFn: () =>
+      apiRequest<BuildingFeatureCollection>(
+        runtime,
+        `/map/building-features?bbox=${encodeURIComponent(viewport.bbox ?? "")}&zoom=${viewport.zoom.toFixed(2)}&limit=2000`,
       ).then((result) => result.data),
     enabled: Boolean(viewport.bbox) && viewport.zoom >= BUILDING_ZOOM,
     placeholderData: (previous) => previous,
@@ -594,53 +506,31 @@ export function RiskMap({
     enabled: Boolean(selectedBuilding),
     staleTime: 60_000,
   });
-  const visibleBuildings = useMemo(() => {
-    const items = [...(buildingList.data?.items ?? [])];
-    const detail = selectedDetail.data;
-    if (detail && !items.some((item) => item.buildingId === detail.buildingId)) {
-      items.push({
-        buildingId: detail.buildingId,
-        regionCode: "",
-        name: detail.name,
-        roadAddress: detail.roadAddress,
-        lotAddress: detail.lotAddress,
-        center: detail.center,
-        risk: detail.risk,
-        hasCurrentSignal: detail.currentSignals.hasCurrentSignal,
-        monitoringPriority: "NORMAL",
-      });
-      items.sort((left, right) => left.risk.regionalRank - right.risk.regionalRank);
+
+  useEffect(() => {
+    if (!mapReady) return;
+    const layer = buildingLayerRef.current;
+    if (!layer) return;
+    clearDataLayer(layer);
+    if (viewport.zoom >= BUILDING_ZOOM && buildingFeatures.data) {
+      layer.addGeoJson(buildingFeatures.data, false);
     }
-    return items;
-  }, [buildingList.data?.items, selectedDetail.data]);
+  }, [buildingFeatures.data, mapReady, viewport.zoom]);
 
   useEffect(() => {
-    if (!mapStyleReady) return;
-    const detail = selectedDetail.data;
-    const map = mapRef.current;
-    if (!detail || !map || lastCenteredBuildingRef.current === detail.buildingId) return;
-    lastCenteredBuildingRef.current = detail.buildingId;
-    map.flyTo({
-      center: detail.center,
-      zoom: Math.max(map.getZoom(), 16),
-      duration: 450,
-    });
-  }, [mapStyleReady, selectedDetail.data]);
-
-  useEffect(() => {
-    if (!mapStyleReady) return;
-    const detail = selectedDetail.data;
-    const map = mapRef.current;
-    if (!map?.isStyleLoaded()) return;
-    const source = map.getSource("selection") as GeoJSONSource | undefined;
-    source?.setData(detail ? selectionRing(detail.center, detail.bounds) : emptyCollection);
-  }, [mapStyleReady, selectedDetail.data]);
-
-  useEffect(() => {
-    if (selectedBuilding) return;
-    lastCenteredBuildingRef.current = null;
-    lastScrolledBuildingRef.current = null;
-  }, [selectedBuilding]);
+    if (buildingFeatures.isError) {
+      setOverlayError("건물 폴리곤을 불러오지 못했습니다. 지도를 이동하거나 다시 시도해 주세요.");
+    } else if (buildingFeatures.data?.truncated) {
+      setOverlayError(
+        `현재 화면의 건물이 ${buildingFeatures.data.limit.toLocaleString("ko-KR")}개를 넘어 상위 위험 건물만 표시합니다. 더 확대해 주세요.`,
+      );
+    } else if (
+      overlayError?.startsWith("건물 폴리곤") ||
+      overlayError?.startsWith("현재 화면의 건물")
+    ) {
+      setOverlayError(null);
+    }
+  }, [buildingFeatures.data, buildingFeatures.isError, overlayError]);
 
   const visibleRegions = useMemo(
     () =>
@@ -679,20 +569,22 @@ export function RiskMap({
   const chooseRegionFromList = (feature: RegionFeature) => {
     setSelectedRegion(feature.properties.regionCode);
     setSelectedBuilding(null);
-    mapRef.current?.flyTo({
-      center: feature.properties.center,
-      zoom: mapRef.current.getZoom(),
-      duration: 350,
-    });
+    setPanoramaPosition(null);
+    moveNaverMap(
+      mapRef.current,
+      feature.properties.center,
+      feature.properties.level === "SIDO"
+        ? 9
+        : feature.properties.level === "SIGUNGU"
+          ? NEIGHBORHOOD_ZOOM + 0.7
+          : BUILDING_ZOOM + 0.5,
+    );
   };
 
   const chooseBuildingFromList = (building: BuildingListItem) => {
     setSelectedBuilding(building.buildingId);
-    mapRef.current?.flyTo({
-      center: building.center,
-      zoom: Math.max(viewport.zoom, 16),
-      duration: 450,
-    });
+    setPanoramaPosition(building.center);
+    moveNaverMap(mapRef.current, building.center, Math.max(viewport.zoom, 16));
   };
 
   const retryOverlay = () => {
@@ -702,6 +594,7 @@ export function RiskMap({
     if (viewport.bbox && viewport.zoom >= NEIGHBORHOOD_ZOOM && viewport.zoom < BUILDING_ZOOM)
       void neighborhoods.refetch();
     void buildingList.refetch();
+    void buildingFeatures.refetch();
   };
 
   return (
@@ -748,10 +641,7 @@ export function RiskMap({
           <div className="map-toolbar">
             <div>
               <strong>{levelLabel} 위험도</strong>
-              <span>
-                {activeProvider?.name ?? "배경 준비 중"}
-                {backgroundFallback ? " · 대체 배경" : " · 우선 배경"}
-              </span>
+              <span>건물 영역을 클릭하면 지도 안에서 거리뷰가 열립니다.</span>
             </div>
             <fieldset className="map-legend">
               <legend className="sr-only">위험구간 범례</legend>
@@ -769,6 +659,17 @@ export function RiskMap({
               </button>
             </div>
           ) : null}
+          {!config.isLoading && !config.data?.naverMapsNcpKeyId ? (
+            <div className="map-layer-error" role="alert">
+              NAVER_MAPS_NCP_KEY_ID가 설정되지 않았습니다.
+            </div>
+          ) : null}
+          {mapLoadError ? (
+            <div className="map-layer-error" role="alert">
+              네이버 지도 SDK를 불러오지 못했습니다. 네이버 Cloud의 Web 서비스 URL 등록과 ncpKeyId를
+              확인하세요.
+            </div>
+          ) : null}
           {provinces.isError ||
           districts.isError ||
           (neighborhoods.isError &&
@@ -782,15 +683,36 @@ export function RiskMap({
               </button>
             </div>
           ) : null}
-          {!webGlReady ? (
+          {!mapSupported ? (
             <div className="map-webgl-fallback" role="status">
               지도 렌더링을 지원하지 않는 환경입니다. 우측 실제 지역 목록으로 동일 대상을 선택할 수
               있습니다.
             </div>
           ) : null}
           <div className="map-canvas" ref={containerRef} />
+          {panoramaPosition ? (
+            <section className="map-panorama-overlay" aria-label="선택 건물 거리뷰">
+              <header>
+                <div>
+                  <strong>{selectedDetail.data?.name ?? "선택 건물"}</strong>
+                  <span>건물 주변 네이버 거리뷰</span>
+                </div>
+                <button
+                  aria-label="거리뷰 닫기"
+                  onClick={() => setPanoramaPosition(null)}
+                  type="button"
+                >
+                  닫기
+                </button>
+              </header>
+              <NaverPanoramaView
+                keyId={config.data?.naverMapsNcpKeyId}
+                position={panoramaPosition}
+              />
+            </section>
+          ) : null}
           <div className="map-attribution-note">
-            위험도는 발생확률이 아닌 광주·전남 내 상대점수·순위입니다.
+            지도·거리뷰 © NAVER Cloud · 위험도는 발생확률이 아닌 광주·전남 내 상대점수·순위입니다.
           </div>
         </section>
 
@@ -816,27 +738,35 @@ export function RiskMap({
                 상위 10% {selectedRegionFeature.properties.top10Count.toLocaleString("ko-KR")}개
               </p>
               <div>
-                <AppLink
-                  className="outline-action"
-                  currentPath={currentPath}
-                  runtime={runtime}
-                  to={`/regions/${selectedRegionFeature.properties.regionCode}?returnTo=${returnToMap}`}
-                >
-                  지역 분석 보기
-                </AppLink>
-                <button
-                  className="primary-map-action"
-                  onClick={() =>
-                    mapRef.current?.flyTo({
-                      center: selectedRegionFeature.properties.center,
-                      zoom: nextRegionZoom(selectedRegionFeature.properties.level),
-                      duration: 600,
-                    })
-                  }
-                  type="button"
-                >
-                  {nextRegionLabel(selectedRegionFeature.properties.level)}
-                </button>
+                {selectedRegionFeature.properties.level !== "EUPMYEONDONG" ? (
+                  <AppLink
+                    className="outline-action"
+                    currentPath={currentPath}
+                    runtime={runtime}
+                    to={`/regions/${selectedRegionFeature.properties.regionCode}?returnTo=${returnToMap}`}
+                  >
+                    지역 분석 보기
+                  </AppLink>
+                ) : null}
+                {selectedRegionFeature.properties.level !== "SIDO" ? (
+                  <button
+                    className="primary-map-action"
+                    onClick={() =>
+                      moveNaverMap(
+                        mapRef.current,
+                        selectedRegionFeature.properties.center,
+                        selectedRegionFeature.properties.level === "SIGUNGU"
+                          ? NEIGHBORHOOD_ZOOM + 0.7
+                          : BUILDING_ZOOM + 0.5,
+                      )
+                    }
+                    type="button"
+                  >
+                    {selectedRegionFeature.properties.level === "SIGUNGU"
+                      ? "읍·면·동 단계로 확대"
+                      : "건물 단계로 확대"}
+                  </button>
+                ) : null}
               </div>
             </section>
           ) : null}
@@ -860,14 +790,16 @@ export function RiskMap({
                   <dd>상위 {selectedDetail.data.risk.topPercentile.toFixed(2)}%</dd>
                 </div>
               </dl>
-              <AppLink
-                className="primary-action"
-                currentPath={currentPath}
-                runtime={runtime}
-                to={`/buildings/${selectedDetail.data.buildingId}?returnTo=${returnToMap}`}
-              >
-                건물 분석 보기
-              </AppLink>
+              <div className="map-selection-actions">
+                <AppLink
+                  className="primary-action"
+                  currentPath={currentPath}
+                  runtime={runtime}
+                  to={`/buildings/${selectedDetail.data.buildingId}?returnTo=${returnToMap}`}
+                >
+                  건물 분석 보기
+                </AppLink>
+              </div>
             </section>
           ) : null}
 
@@ -875,12 +807,7 @@ export function RiskMap({
             {viewport.zoom < BUILDING_ZOOM ? (
               <ol>
                 {visibleRegions.map((feature, index) => (
-                  <li
-                    className={
-                      selectedRegion === feature.properties.regionCode ? "is-selected" : undefined
-                    }
-                    key={feature.properties.regionCode}
-                  >
+                  <li key={feature.properties.regionCode}>
                     <button onClick={() => chooseRegionFromList(feature)} type="button">
                       <span className="region-rank">{index + 1}</span>
                       <span>
@@ -899,27 +826,10 @@ export function RiskMap({
               <div className="map-list-message">현재 화면의 건물을 불러오는 중입니다.</div>
             ) : buildingList.isError ? (
               <div className="map-list-message error">건물 목록을 불러오지 못했습니다.</div>
-            ) : visibleBuildings.length ? (
+            ) : buildingList.data?.items.length ? (
               <ol>
-                {visibleBuildings.map((building) => (
-                  <li
-                    className={selectedBuilding === building.buildingId ? "is-selected" : undefined}
-                    key={building.buildingId}
-                    ref={(element) => {
-                      if (element) {
-                        buildingItemRefs.current.set(building.buildingId, element);
-                        if (
-                          selectedBuilding === building.buildingId &&
-                          lastScrolledBuildingRef.current !== building.buildingId
-                        ) {
-                          lastScrolledBuildingRef.current = building.buildingId;
-                          element.scrollIntoView({ block: "nearest", behavior: "smooth" });
-                        }
-                      } else {
-                        buildingItemRefs.current.delete(building.buildingId);
-                      }
-                    }}
-                  >
+                {buildingList.data.items.map((building) => (
+                  <li key={building.buildingId}>
                     <button onClick={() => chooseBuildingFromList(building)} type="button">
                       <span className={`risk-marker ${building.risk.riskBand.toLowerCase()}`} />
                       <span>

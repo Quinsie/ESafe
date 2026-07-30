@@ -423,6 +423,40 @@ async def _execute(
     )
 
 
+async def _pause_failed_step(
+    connection: AsyncConnection,
+    *,
+    playback_id: UUID,
+    previous_step: int,
+    now: datetime,
+) -> dict[str, Any]:
+    return dict(
+        (
+            await connection.execute(
+                text(
+                    """
+                    UPDATE demo_playback
+                    SET status = 'PAUSED',
+                        current_step = :previous_step,
+                        paused_at = :now,
+                        version = version + 1,
+                        updated_at = :now
+                    WHERE demo_playback_id = :id
+                    RETURNING *
+                    """
+                ),
+                {
+                    "previous_step": previous_step,
+                    "now": now,
+                    "id": playback_id,
+                },
+            )
+        )
+        .mappings()
+        .one()
+    )
+
+
 async def next_scenario_step(
     engine: AsyncEngine,
     settings: Settings,
@@ -475,18 +509,22 @@ async def next_scenario_step(
     except Exception as error:
         async with engine.begin() as connection:
             now = datetime.now(UTC)
-            await connection.execute(
-                text(
-                    "UPDATE demo_playback SET status='PAUSED',paused_at=:now,updated_at=:now WHERE demo_playback_id=:id"
-                ),
-                {"now": now, "id": reserved["demo_playback_id"]},
+            failed = await _pause_failed_step(
+                connection,
+                playback_id=UUID(str(reserved["demo_playback_id"])),
+                previous_step=ordinal - 1,
+                now=now,
             )
             await _event(
                 connection,
                 UUID(str(reserved["demo_playback_id"])),
                 "NEXT",
                 idempotency_key,
-                {"status": "FAILED", "errorClass": type(error).__name__},
+                {
+                    "status": "FAILED",
+                    "errorClass": type(error).__name__,
+                    "playback": _contract(failed, len(steps)),
+                },
                 step,
             )
         raise

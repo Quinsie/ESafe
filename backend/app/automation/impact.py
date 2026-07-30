@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncConnection
 
 from app.automation.case_rules import (
     ALLOWED_RADII_M,
+    DEFAULT_POINT_RADIUS_M,
     IMPACT_RULE_VERSION,
     ImpactScopeType,
 )
@@ -174,39 +175,58 @@ async def _insert_radius_buildings(
             ),
             spatial_matches AS (
                 SELECT b.building_id,
-                       ST_Distance(b.centroid::geography, p.location::geography) AS distance_m,
+                       ST_Distance(b.geometry::geography, p.location::geography) AS distance_m,
+                       ST_Covers(b.geometry, p.location) AS point_cover_candidate,
                        (
-                           ST_Covers(b.geometry, p.location)
-                           OR (
-                               p.normalized_address IS NOT NULL
-                               AND p.normalized_address <> ''
-                               AND p.normalized_address IN (
-                                   regexp_replace(coalesce(b.road_address, ''), '\\s+', '', 'g'),
-                                   regexp_replace(coalesce(b.lot_address, ''), '\\s+', '', 'g')
-                               )
+                           p.normalized_address IS NOT NULL
+                           AND p.normalized_address <> ''
+                           AND p.normalized_address IN (
+                               regexp_replace(coalesce(b.road_address, ''), '\\s+', '', 'g'),
+                               regexp_replace(coalesce(b.lot_address, ''), '\\s+', '', 'g')
                            )
-                       ) AS exact_candidate
+                       ) AS address_candidate,
+                       ST_Area(b.geometry::geography) AS footprint_area_m2
                 FROM case_point p
                 JOIN building b
                   ON ST_DWithin(
-                      b.centroid::geography,
+                      b.geometry::geography,
                       p.location::geography,
                       :radius_m
                   )
             ),
-            exact_count AS (
-                SELECT count(1) FILTER (WHERE exact_candidate) AS value
+            candidate_stats AS (
+                SELECT count(1) FILTER (WHERE point_cover_candidate) AS cover_count,
+                       count(1) FILTER (WHERE address_candidate) AS address_count
                 FROM spatial_matches
+            ),
+            exact_ranked AS (
+                SELECT m.*,
+                       row_number() OVER (
+                           ORDER BY point_cover_candidate DESC,
+                                    address_candidate DESC,
+                                    footprint_area_m2 ASC,
+                                    distance_m ASC,
+                                    building_id
+                       ) AS exact_priority
+                FROM spatial_matches m
             ),
             ranked AS (
                 SELECT m.building_id,
                        r.risk_snapshot_id,
                        m.distance_m,
-                       (m.exact_candidate AND c.value = 1) AS is_incident_building,
+                       (
+                           (c.cover_count > 0
+                            AND m.point_cover_candidate
+                            AND m.exact_priority = 1)
+                           OR
+                           (c.cover_count = 0
+                            AND c.address_count = 1
+                            AND m.address_candidate)
+                       ) AS is_incident_building,
                        (r.top_percentile <= 10.0) AS is_high_risk,
                        r.final_score
-                FROM spatial_matches m
-                CROSS JOIN exact_count c
+                FROM exact_ranked m
+                CROSS JOIN candidate_stats c
                 JOIN building_risk_snapshot r ON r.building_id = m.building_id
                 WHERE r.reference_month = DATE '2026-03-01'
                   AND r.horizon_days = 60
@@ -217,7 +237,8 @@ async def _insert_radius_buildings(
             ordered AS (
                 SELECT *,
                        row_number() OVER (
-                           ORDER BY is_incident_building DESC, final_score DESC, building_id
+                           ORDER BY is_incident_building DESC, distance_m ASC,
+                                    final_score DESC, building_id
                        ) AS priority_order
                 FROM ranked
             )
@@ -340,10 +361,10 @@ async def _missing_region_codes(
 async def rebuild_case_impact(
     connection: AsyncConnection,
     case_id: UUID,
-    radius_m: int = 1000,
+    radius_m: int = DEFAULT_POINT_RADIUS_M,
 ) -> ImpactResult:
     if radius_m not in ALLOWED_RADII_M:
-        raise ValueError("radius_m must be one of 500, 1000, 3000, or 5000")
+        raise ValueError("radius_m must be one of 100, 500, 1000, 3000, or 5000")
     case_row = await _load_case(connection, case_id)
     await _assert_risk_contract(connection)
     await connection.execute(

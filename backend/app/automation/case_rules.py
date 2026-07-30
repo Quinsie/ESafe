@@ -4,10 +4,10 @@ from typing import Final
 
 from app.signals.contracts import EventType, SourceStatus
 
-DEFAULT_POINT_RADIUS_M: Final = 1000
-ALLOWED_RADII_M: Final = frozenset({500, 1000, 3000, 5000})
+DEFAULT_POINT_RADIUS_M: Final = 100
+ALLOWED_RADII_M: Final = frozenset({100, 500, 1000, 3000, 5000})
 CASE_RULE_VERSION: Final = "case-lifecycle-v1"
-IMPACT_RULE_VERSION: Final = "case-impact-v1"
+IMPACT_RULE_VERSION: Final = "case-impact-v3-fire-building-100m"
 
 
 class CaseStatus(StrEnum):
@@ -80,7 +80,7 @@ def select_impact_scope(
     radius_m: int = DEFAULT_POINT_RADIUS_M,
 ) -> ImpactScope:
     if radius_m not in ALLOWED_RADII_M:
-        raise ValueError("radius_m must be one of 500, 1000, 3000, or 5000")
+        raise ValueError("radius_m must be one of 100, 500, 1000, 3000, or 5000")
     if signal.longitude is not None:
         return ImpactScope(
             scope_type=ImpactScopeType.RADIUS,
