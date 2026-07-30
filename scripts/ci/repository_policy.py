@@ -12,6 +12,12 @@ from typing import Iterable
 MAX_GIT_BLOB_BYTES = 100 * 1024 * 1024
 MAX_SECRET_SCAN_BYTES = 2 * 1024 * 1024
 ALLOWED_MARKDOWN = {"README.md"}
+ALLOWED_WORKFLOWS = {".github/workflows/trusted-required-gates.yml"}
+PROTECTED_CI_PATHS = {
+    ".github/workflows/trusted-required-gates.yml",
+    "scripts/ci/repository_policy.py",
+    "scripts/ci/test_repository_policy.py",
+}
 FORBIDDEN_ROOTS = {"artifacts", "backups", "data", "docs", "secrets", "storage"}
 CONVENTIONAL_SUBJECT = re.compile(
     r"^(?:feat|fix|perf|refactor|test|docs|build|ci|chore|revert)"
@@ -87,6 +93,8 @@ def forbidden_path_reason(path: PurePosixPath) -> str | None:
         return f"{path.parts[0]}/ is runtime, source-data, or local-control storage"
     if path.name.startswith(".env") and value != ".env.example":
         return "runtime environment files must not be tracked"
+    if path.parts[:2] == (".github", "workflows") and value not in ALLOWED_WORKFLOWS:
+        return "only the trusted base-controlled required workflow is allowed"
     if path.suffix.lower() == ".md" and value not in ALLOWED_MARKDOWN:
         return "the remote repository keeps README.md as its only independent document"
     return None
@@ -349,6 +357,9 @@ def check_diff_and_commits(base_sha: str, pr_title: str) -> list[str]:
     if not base_sha:
         return errors
     try:
+        changed_paths = set(
+            git("diff", "--name-only", f"{base_sha}...HEAD").splitlines()
+        )
         subprocess.run(
             ("git", "diff", "--check", f"{base_sha}...HEAD"),
             check=True,
@@ -357,6 +368,12 @@ def check_diff_and_commits(base_sha: str, pr_title: str) -> list[str]:
     except subprocess.CalledProcessError as error:
         errors.append(f"cannot validate PR range from {base_sha}: {error}")
         return errors
+    protected_changes = sorted(changed_paths & PROTECTED_CI_PATHS)
+    if protected_changes:
+        errors.append(
+            "protected CI policy files cannot be changed by a normal PR: "
+            + ", ".join(protected_changes)
+        )
     for subject in subjects:
         if subject.startswith("Merge "):
             continue
