@@ -16,7 +16,7 @@ from zipfile import ZIP_STORED, BadZipFile, ZipFile, ZipInfo
 from lxml import etree
 
 HWPX_MIMETYPE = b"application/hwp+zip"
-TEMPLATE_VERSION = "2026-07-29-v1"
+TEMPLATE_VERSION = "2026-07-30-v2"
 MAX_MEMBER_BYTES = 64 * 1024 * 1024
 MAX_PACKAGE_BYTES = 256 * 1024 * 1024
 REQUIRED_MEMBERS = frozenset(
@@ -88,6 +88,12 @@ class TemplateDefinition:
 
 INCIDENT_REPORT_REPLACEMENTS: Mapping[int, str] = {
     0: "{{document.title}}",
+    3: "결",
+    4: "재",
+    5: "상황요원",
+    6: "상황실장",
+    7: "부  장",
+    8: "처  장",
     12: "{{document.date}}",
     15: "1. 사고 개요",
     16: " ㅇ 발생일시: {{incident.occurredAt}}",
@@ -367,13 +373,13 @@ def _local_name(element: etree._Element) -> str:
     return cast(str, etree.QName(element).localname.lower())
 
 
-def _drop_cached_line_layout(root: etree._Element) -> None:
+def _invalidate_cached_line_layout(root: etree._Element) -> None:
+    # Hancom 2018 needs the layout container to trigger paragraph reflow.
+    # Keep each marker but discard stale line metrics after replacing text.
     for element in tuple(root.iter()):
-        if _local_name(element) != "linesegarray":
-            continue
-        parent = element.getparent()
-        if parent is not None:
-            parent.remove(element)
+        if _local_name(element) == "linesegarray":
+            for child in tuple(element):
+                element.remove(child)
 
 
 def _text_nodes(root: etree._Element) -> list[etree._Element]:
@@ -721,7 +727,7 @@ def render_hwpx(
                             element.tail,
                         )
                 if info.filename == "Contents/section0.xml":
-                    _drop_cached_line_layout(root)
+                    _invalidate_cached_line_layout(root)
                 data = _serialize_xml(root, data)
             elif suffix == ".txt":
                 try:
