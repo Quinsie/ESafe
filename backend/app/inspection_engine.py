@@ -99,7 +99,8 @@ def _ranked_sql(scenario_type: str) -> str:
                        row_number() OVER (
                            ORDER BY group_position, final_score DESC,
                                     region_code, facility_type, building_id
-                       ) AS target_order
+                       ) AS target_order,
+                       count(*) OVER () AS candidate_count
                 FROM grouped
             )
         """
@@ -109,7 +110,8 @@ def _ranked_sql(scenario_type: str) -> str:
             SELECT candidate.*,
                    row_number() OVER (
                        ORDER BY final_score DESC, regional_rank, building_id
-                   ) AS target_order
+                   ) AS target_order,
+                   count(*) OVER () AS candidate_count
             FROM inspection_candidate candidate
             {eligibility}
         )
@@ -165,7 +167,17 @@ async def _insert_scenario_targets(
                    {included_expression},
                    CASE WHEN {included_expression} THEN target_order END,
                    CASE WHEN {included_expression}
-                        THEN ((target_order - 1) % :team_count) + 1 END,
+                        THEN ((target_order - 1) / GREATEST(
+                            1,
+                            CEIL(
+                                (
+                                    CASE
+                                        WHEN :expanded THEN candidate_count
+                                        ELSE LEAST(candidate_count, :capacity)
+                                    END
+                                )::numeric / :team_count
+                            )::integer
+                        )) + 1 END,
                    CASE WHEN {included_expression} THEN
                        CASE
                            WHEN forced_inclusion THEN 'USER_SELECTED_BUILDING'
@@ -184,6 +196,7 @@ async def _insert_scenario_targets(
             "scenario_id": str(scenario_id),
             "capacity": int(simulation["total_capacity"]),
             "team_count": int(simulation["team_count"]),
+            "expanded": expanded,
             "scenario_type": scenario_type,
         },
     )
