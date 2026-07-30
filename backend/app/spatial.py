@@ -92,6 +92,15 @@ def _risk(row: Any) -> dict[str, Any]:
     }
 
 
+def _risk_reference() -> dict[str, Any]:
+    return {
+        "referenceMonth": "2026-03",
+        "horizonDays": HORIZON_DAYS,
+        "lineageVersion": LINEAGE_VERSION,
+        "isProbability": False,
+    }
+
+
 async def region_features(
     engine: AsyncEngine,
     level: Literal["SIDO", "SIGUNGU", "EUPMYEONDONG"],
@@ -356,6 +365,172 @@ async def viewport_buildings(
         }
 
     return await asyncio.wait_for(query(), timeout=max(timeout_seconds, 2.5))
+
+
+async def risk_rankings(
+    engine: AsyncEngine,
+    level: Literal["SIDO", "SIGUNGU", "EUPMYEONDONG", "BUILDING"],
+    page: int,
+    page_size: int,
+    timeout_seconds: float,
+) -> dict[str, Any]:
+    async def query() -> dict[str, Any]:
+        params = {"level": level, "limit": page_size, "offset": (page - 1) * page_size}
+        async with engine.connect() as connection:
+            if level == "BUILDING":
+                total = int(
+                    (
+                        await connection.execute(
+                            text(
+                                """
+                                SELECT count(*)
+                                FROM building_risk_snapshot
+                                WHERE reference_month = DATE '2026-03-01'
+                                  AND horizon_days = 60
+                                  AND lineage_version = 'v27.1-focus-2026-03-60d'
+                                """
+                            )
+                        )
+                    ).scalar_one()
+                )
+                rows = (
+                    await connection.execute(
+                        text(
+                            """
+                            SELECT b.building_id AS entity_id,
+                                   coalesce(nullif(b.building_name, ''), b.lot_address) AS name,
+                                   coalesce(b.road_address, b.lot_address) AS full_name,
+                                   a.full_name AS region_name,
+                                   r.final_score, r.regional_rank,
+                                   r.top_percentile, r.risk_band
+                            FROM building_risk_snapshot r
+                            JOIN building b ON b.building_id = r.building_id
+                            JOIN admin_region a ON a.region_code = b.region_code
+                            WHERE r.reference_month = DATE '2026-03-01'
+                              AND r.horizon_days = 60
+                              AND r.lineage_version = 'v27.1-focus-2026-03-60d'
+                            ORDER BY r.regional_rank, b.building_id
+                            LIMIT :limit OFFSET :offset
+                            """
+                        ),
+                        params,
+                    )
+                ).mappings().all()
+                items = [
+                    {
+                        "entityType": "BUILDING",
+                        "entityId": str(row["entity_id"]),
+                        "level": "BUILDING",
+                        "name": row["name"],
+                        "fullName": row["full_name"],
+                        "regionName": row["region_name"],
+                        "rankingPosition": int(row["regional_rank"]),
+                        "buildingCount": 1,
+                        "top1Count": 1 if row["risk_band"] == "TOP_1" else 0,
+                        "top10Count": (
+                            1 if float(row["top_percentile"]) <= 10 else 0
+                        ),
+                        "top10Share": (
+                            100.0 if float(row["top_percentile"]) <= 10 else 0.0
+                        ),
+                        "scoreP99": float(row["final_score"]),
+                        "finalScore": float(row["final_score"]),
+                        "topPercentile": float(row["top_percentile"]),
+                        "riskBand": row["risk_band"],
+                    }
+                    for row in rows
+                ]
+            else:
+                total = int(
+                    (
+                        await connection.execute(
+                            text(
+                                """
+                                SELECT count(*)
+                                FROM region_risk_summary r
+                                JOIN admin_region a ON a.region_code = r.region_code
+                                WHERE a.level = :level
+                                  AND r.reference_month = DATE '2026-03-01'
+                                  AND r.horizon_days = 60
+                                  AND r.lineage_version = 'v27.1-focus-2026-03-60d'
+                                """
+                            ),
+                            params,
+                        )
+                    ).scalar_one()
+                )
+                rows = (
+                    await connection.execute(
+                        text(
+                            """
+                            SELECT a.region_code AS entity_id, a.name, a.full_name,
+                                   r.building_count, r.top_1_count, r.top_10_count,
+                                   r.score_p99,
+                                   row_number() OVER (
+                                     ORDER BY r.top_10_count DESC, a.region_code
+                                   ) AS ranking_position
+                            FROM region_risk_summary r
+                            JOIN admin_region a ON a.region_code = r.region_code
+                            WHERE a.level = :level
+                              AND r.reference_month = DATE '2026-03-01'
+                              AND r.horizon_days = 60
+                              AND r.lineage_version = 'v27.1-focus-2026-03-60d'
+                            ORDER BY r.top_10_count DESC, a.region_code
+                            LIMIT :limit OFFSET :offset
+                            """
+                        ),
+                        params,
+                    )
+                ).mappings().all()
+                items = [
+                    {
+                        "entityType": "REGION",
+                        "entityId": row["entity_id"],
+                        "level": level,
+                        "name": row["name"],
+                        "fullName": row["full_name"],
+                        "regionName": row["full_name"],
+                        "rankingPosition": int(row["ranking_position"]),
+                        "buildingCount": int(row["building_count"]),
+                        "top1Count": int(row["top_1_count"]),
+                        "top10Count": int(row["top_10_count"]),
+                        "top10Share": round(
+                            int(row["top_10_count"])
+                            / max(1, int(row["building_count"]))
+                            * 100,
+                            2,
+                        ),
+                        "scoreP99": (
+                            float(row["score_p99"])
+                            if row["score_p99"] is not None
+                            else None
+                        ),
+                        "finalScore": None,
+                        "topPercentile": None,
+                        "riskBand": None,
+                    }
+                    for row in rows
+                ]
+        return {
+            "level": level,
+            "rankingBasis": (
+                "GWANGJU_JEONNAM_REGIONAL_RANK"
+                if level == "BUILDING"
+                else "TOP_10_BUILDING_COUNT"
+            ),
+            "items": items,
+            "pagination": {
+                "page": page,
+                "pageSize": page_size,
+                "total": total,
+                "totalPages": math.ceil(total / page_size) if total else 0,
+            },
+            "riskReference": _risk_reference(),
+        }
+
+    return await asyncio.wait_for(query(), timeout=max(timeout_seconds, 2.5))
+
+
 async def region_detail(
     engine: AsyncEngine,
     region_code: str,

@@ -31,6 +31,7 @@ def test_spatial_endpoints_require_authentication() -> None:
             "/api/v1/map/neighborhoods?bbox=126.8,35.1,126.9,35.2",
             "/api/v1/map/buildings/14/13964/6488.mvt",
             "/api/v1/map/buildings?bbox=126.8,35.1,126.9,35.2&zoom=14",
+            "/api/v1/risk-rankings?level=SIGUNGU",
             "/api/v1/regions/29170",
             f"/api/v1/buildings/{uuid4()}",
         ):
@@ -76,20 +77,28 @@ def test_spatial_contracts_are_independent(monkeypatch) -> None:
     region = {"regionCode": "29170", "name": "북구", "topBuildings": []}
     building_id = uuid4()
     building = {"buildingId": str(building_id), "name": "건물명 미등록"}
+    rankings = {
+        "level": "SIGUNGU",
+        "rankingBasis": "TOP_10_BUILDING_COUNT",
+        "items": [{"entityId": "29170", "rankingPosition": 1}],
+    }
     monkeypatch.setattr("app.api.spatial.region_features", AsyncMock(return_value=collection))
     monkeypatch.setattr("app.api.spatial.region_detail", AsyncMock(return_value=region))
     monkeypatch.setattr("app.api.spatial.building_detail", AsyncMock(return_value=building))
     monkeypatch.setattr("app.api.spatial.building_tile", AsyncMock(return_value=b"mvt"))
+    monkeypatch.setattr("app.api.spatial.risk_rankings", AsyncMock(return_value=rankings))
     try:
         with TestClient(app) as client:
             regions_response = client.get("/api/v1/map/regions")
             region_response = client.get("/api/v1/regions/29170")
             building_response = client.get(f"/api/v1/buildings/{building_id}")
             tile_response = client.get("/api/v1/map/buildings/14/13964/6488.mvt")
+            rankings_response = client.get("/api/v1/risk-rankings?level=SIGUNGU")
         assert regions_response.json()["data"] == collection
         assert region_response.json()["data"] == region
         assert building_response.json()["data"] == building
         assert tile_response.content == b"mvt"
+        assert rankings_response.json()["data"] == rankings
         assert tile_response.headers["content-type"].startswith(
             "application/vnd.mapbox-vector-tile"
         )

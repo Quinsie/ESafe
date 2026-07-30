@@ -1,4 +1,4 @@
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Path, Query, Request
@@ -18,6 +18,7 @@ from app.spatial import (
     parse_region_bbox,
     region_detail,
     region_features,
+    risk_rankings,
     viewport_buildings,
 )
 
@@ -159,6 +160,25 @@ async def map_building_list(
         )
     except SpatialContractError as error:
         return _spatial_error(request, error)
+    return envelope(request, data)
+
+
+@router.get("/risk-rankings")
+async def get_risk_rankings(
+    request: Request,
+    _: Session,
+    level: Literal["SIDO", "SIGUNGU", "EUPMYEONDONG", "BUILDING"],
+    page: Annotated[int, Query(ge=1)] = 1,
+    page_size: Annotated[int, Query(alias="pageSize", ge=1, le=100)] = 24,
+) -> Any:
+    settings = request.app.state.settings
+    data = await risk_rankings(
+        request.app.state.db_engine,
+        level,
+        page,
+        page_size,
+        settings.health_timeout_seconds,
+    )
     return envelope(request, data)
 
 

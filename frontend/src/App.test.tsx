@@ -180,6 +180,32 @@ function mapRegionsEnvelope(level: "SIDO" | "SIGUNGU" = "SIDO") {
     })),
   });
 }
+function riskRankingsEnvelope(level = "SIGUNGU") {
+  return envelope({
+    level,
+    rankingBasis: level === "BUILDING" ? "GWANGJU_JEONNAM_REGIONAL_RANK" : "TOP_10_BUILDING_COUNT",
+    items: [
+      {
+        entityType: level === "BUILDING" ? "BUILDING" : "REGION",
+        entityId: level === "BUILDING" ? "00000000-0000-4000-8000-000000000001" : "29170",
+        level,
+        name: level === "BUILDING" ? "문흥동 공간아파트" : "북구",
+        fullName: level === "BUILDING" ? "문흥동 공간아파트" : "광주광역시 북구",
+        regionName: "광주광역시 북구",
+        rankingPosition: 1,
+        buildingCount: level === "BUILDING" ? 1 : 27585,
+        top1Count: 563,
+        top10Count: 5953,
+        top10Share: 21.58,
+        scoreP99: 0.969365,
+        finalScore: level === "BUILDING" ? 0.99 : null,
+        topPercentile: level === "BUILDING" ? 0.01 : null,
+        riskBand: level === "BUILDING" ? "TOP_1" : null,
+      },
+    ],
+    pagination: { page: 1, pageSize: 24, total: 1, totalPages: 1 },
+  });
+}
 function regionDetailEnvelope() {
   return envelope({
     regionCode: "29170",
@@ -225,6 +251,7 @@ function buildingDetailEnvelope() {
     roadAddress: "광주광역시 북구 문흥동 996-2",
     lotAddress: "광주광역시 북구 문흥동 996-2",
     center: [126.91, 35.19],
+    bounds: [126.9099, 35.1899, 126.9101, 35.1901],
     geometryStatus: "MATCHED",
     attributes: {
       mainUseName: "공동주택",
@@ -338,6 +365,10 @@ function installAuthenticatedFetch(failedEndpoint?: string) {
       if (url.includes("/map/districts")) {
         return response(mapRegionsEnvelope("SIGUNGU"));
       }
+      if (url.includes("/risk-rankings")) {
+        const level = new URL(url, "http://localhost").searchParams.get("level") ?? "SIGUNGU";
+        return response(riskRankingsEnvelope(level));
+      }
       throw new Error(`unexpected request: ${url}`);
     }),
   );
@@ -437,6 +468,10 @@ describe("App authentication boundary", () => {
       if (url.includes("/map/districts")) {
         return response(mapRegionsEnvelope("SIGUNGU"));
       }
+      if (url.includes("/risk-rankings")) {
+        const level = new URL(url, "http://localhost").searchParams.get("level") ?? "SIGUNGU";
+        return response(riskRankingsEnvelope(level));
+      }
       throw new Error(`unexpected request: ${url}`);
     });
     vi.stubGlobal("fetch", fetchMock);
@@ -474,6 +509,24 @@ describe("App authentication boundary", () => {
     expect(screen.getAllByText("0.969365").length).toBeGreaterThan(0);
     expect(screen.getByText("문흥동 공간아파트")).toBeVisible();
     expect(screen.getAllByText("발생확률 아님").length).toBeGreaterThan(0);
+  });
+
+  it("switches risk rankings across all administrative and building levels", async () => {
+    installAuthenticatedFetch();
+    const user = userEvent.setup();
+    renderApp("/demo/regions");
+
+    expect(await screen.findByRole("heading", { name: "위험 분석" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "시·군·구" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    expect(screen.getByText("광주광역시 북구")).toBeVisible();
+
+    await user.click(screen.getByRole("button", { name: "건물" }));
+    expect(await screen.findByText("문흥동 공간아파트")).toBeVisible();
+    expect(screen.getByText("광주·전남 모델 순위")).toBeVisible();
+    expect(screen.getByRole("link", { name: "건물 분석 보기" })).toBeVisible();
   });
 
   it("renders REG-01B from the actual building and facility contract", async () => {

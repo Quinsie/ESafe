@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import type { Feature, FeatureCollection, MultiPolygon } from "geojson";
+import type { Feature, FeatureCollection, MultiPolygon, Polygon } from "geojson";
 import {
   AttributionControl,
   type GeoJSONSource,
@@ -103,6 +103,7 @@ interface BuildingDetailData {
   lotAddress: string;
   roadAddress: string | null;
   center: [number, number];
+  bounds: [number, number, number, number];
   risk: BuildingListItem["risk"];
   currentSignals: { activeCaseCount: number; urgentCaseCount: number; hasCurrentSignal: boolean };
 }
@@ -127,6 +128,52 @@ const DISTRICT_ZOOM = 8.5;
 const NEIGHBORHOOD_ZOOM = 11.5;
 const BUILDING_ZOOM = 14;
 
+function selectionRing(
+  center: [number, number],
+  bounds: [number, number, number, number],
+): Feature<Polygon> {
+  const [lng, lat] = center;
+  const [west, south, east, north] = bounds;
+  const metersPerLng = 111_320 * Math.cos((lat * Math.PI) / 180);
+  const metersPerLat = 110_540;
+  const radiusMeters =
+    Math.max(
+      15,
+      ...[
+        [west, south],
+        [west, north],
+        [east, south],
+        [east, north],
+      ].map(([cornerLng, cornerLat]) =>
+        Math.hypot((cornerLng - lng) * metersPerLng, (cornerLat - lat) * metersPerLat),
+      ),
+    ) * 1.35;
+  const coordinates = Array.from({ length: 65 }, (_, index) => {
+    const angle = (index / 64) * Math.PI * 2;
+    return [
+      lng + (Math.cos(angle) * radiusMeters) / metersPerLng,
+      lat + (Math.sin(angle) * radiusMeters) / metersPerLat,
+    ];
+  });
+  return {
+    type: "Feature",
+    properties: {},
+    geometry: { type: "Polygon", coordinates: [coordinates] },
+  };
+}
+
+function nextRegionZoom(level: RegionProperties["level"]): number {
+  if (level === "SIDO") return DISTRICT_ZOOM + 0.4;
+  if (level === "SIGUNGU") return NEIGHBORHOOD_ZOOM + 0.4;
+  return BUILDING_ZOOM + 0.4;
+}
+
+function nextRegionLabel(level: RegionProperties["level"]): string {
+  if (level === "SIDO") return "시·군·구 단위로 확대";
+  if (level === "SIGUNGU") return "읍·면·동 단위로 확대";
+  return "건물 단위로 확대";
+}
+
 setWorkerUrl(mapWorkerUrl);
 
 function initialNumber(name: string, fallback: number): number {
@@ -150,6 +197,7 @@ function rasterStyle(provider: MapProvider, runtime: ProfileRuntime): StyleSpeci
         attribution: provider.attribution,
       },
       admin: { type: "geojson", data: emptyCollection },
+      selection: { type: "geojson", data: emptyCollection },
       buildings: {
         type: "vector",
         tiles: [`${window.location.origin}${runtime.apiBase}/map/buildings/{z}/{x}/{y}.mvt`],
@@ -187,6 +235,14 @@ function rasterStyle(provider: MapProvider, runtime: ProfileRuntime): StyleSpeci
         paint: { "line-color": "#264b73", "line-width": 1.8 },
       },
       {
+        id: "admin-selected",
+        type: "line",
+        source: "admin",
+        maxzoom: BUILDING_ZOOM,
+        filter: ["==", ["get", "regionCode"], ""],
+        paint: { "line-color": "#005fcc", "line-width": 4 },
+      },
+      {
         id: "building-fill",
         type: "fill",
         source: "buildings",
@@ -216,6 +272,13 @@ function rasterStyle(provider: MapProvider, runtime: ProfileRuntime): StyleSpeci
         minzoom: 14,
         filter: ["==", ["get", "building_id"], ""],
         paint: { "line-color": "#005fcc", "line-width": 4 },
+      },
+      {
+        id: "building-selection-ring",
+        type: "line",
+        source: "selection",
+        minzoom: 14,
+        paint: { "line-color": "#0877e1", "line-width": 2, "line-opacity": 0.95 },
       },
     ],
   };
@@ -327,6 +390,9 @@ export function RiskMap({
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<MapLibreMap | null>(null);
+  const buildingItemRefs = useRef(new Map<string, HTMLLIElement>());
+  const lastCenteredBuildingRef = useRef<string | null>(null);
+  const lastScrolledBuildingRef = useRef<string | null>(null);
   const selectionRef = useRef({
     region: currentSelection("region"),
     building: currentSelection("building"),
@@ -344,6 +410,7 @@ export function RiskMap({
   const [activeProviderId, setActiveProviderId] = useState<"vworld" | "osm" | null>(null);
   const [backgroundFallback, setBackgroundFallback] = useState(false);
   const [overlayError, setOverlayError] = useState<string | null>(null);
+  const [mapStyleReady, setMapStyleReady] = useState(false);
   const [webGlReady] = useState(supportsWebGl);
   const { config, provinces, districts, neighborhoods } = useSpatialData(
     runtime,
@@ -424,19 +491,7 @@ export function RiskMap({
         typeof center === "string" ? (JSON.parse(center) as [number, number]) : center;
       setSelectedRegion(code);
       setSelectedBuilding(null);
-      if (parsedCenter) {
-        const level = feature?.properties?.level;
-        map.flyTo({
-          center: parsedCenter,
-          zoom:
-            level === "SIDO"
-              ? 9
-              : level === "SIGUNGU"
-                ? NEIGHBORHOOD_ZOOM + 0.7
-                : BUILDING_ZOOM + 0.5,
-          duration: 600,
-        });
-      }
+      if (parsedCenter) map.easeTo({ center: parsedCenter, zoom: map.getZoom(), duration: 350 });
     };
 
     const chooseBuilding = (event: MapMouseEvent & { features?: MapGeoJSONFeature[] }) => {
@@ -450,6 +505,7 @@ export function RiskMap({
     };
 
     map.on("load", () => {
+      setMapStyleReady(true);
       const adminSource = map.getSource("admin") as GeoJSONSource | undefined;
       const initialOverlay = overlayRef.current;
       if (initialOverlay) {
@@ -459,6 +515,11 @@ export function RiskMap({
         "==",
         ["get", "building_id"],
         selectionRef.current.building ?? "",
+      ]);
+      map.setFilter("admin-selected", [
+        "==",
+        ["get", "regionCode"],
+        selectionRef.current.region ?? "",
       ]);
       captureViewport();
       map.on("click", "admin-fill", chooseRegion);
@@ -488,6 +549,7 @@ export function RiskMap({
     });
 
     return () => {
+      setMapStyleReady(false);
       map.remove();
       mapRef.current = null;
     };
@@ -508,6 +570,7 @@ export function RiskMap({
       return;
     }
     map.setFilter("building-selected", ["==", ["get", "building_id"], selectedBuilding ?? ""]);
+    map.setFilter("admin-selected", ["==", ["get", "regionCode"], selectedRegion ?? ""]);
     updateMapUrl(viewport, selectedRegion, selectedBuilding);
   }, [selectedBuilding, selectedRegion, viewport]);
 
@@ -531,6 +594,53 @@ export function RiskMap({
     enabled: Boolean(selectedBuilding),
     staleTime: 60_000,
   });
+  const visibleBuildings = useMemo(() => {
+    const items = [...(buildingList.data?.items ?? [])];
+    const detail = selectedDetail.data;
+    if (detail && !items.some((item) => item.buildingId === detail.buildingId)) {
+      items.push({
+        buildingId: detail.buildingId,
+        regionCode: "",
+        name: detail.name,
+        roadAddress: detail.roadAddress,
+        lotAddress: detail.lotAddress,
+        center: detail.center,
+        risk: detail.risk,
+        hasCurrentSignal: detail.currentSignals.hasCurrentSignal,
+        monitoringPriority: "NORMAL",
+      });
+      items.sort((left, right) => left.risk.regionalRank - right.risk.regionalRank);
+    }
+    return items;
+  }, [buildingList.data?.items, selectedDetail.data]);
+
+  useEffect(() => {
+    if (!mapStyleReady) return;
+    const detail = selectedDetail.data;
+    const map = mapRef.current;
+    if (!detail || !map || lastCenteredBuildingRef.current === detail.buildingId) return;
+    lastCenteredBuildingRef.current = detail.buildingId;
+    map.flyTo({
+      center: detail.center,
+      zoom: Math.max(map.getZoom(), 16),
+      duration: 450,
+    });
+  }, [mapStyleReady, selectedDetail.data]);
+
+  useEffect(() => {
+    if (!mapStyleReady) return;
+    const detail = selectedDetail.data;
+    const map = mapRef.current;
+    if (!map?.isStyleLoaded()) return;
+    const source = map.getSource("selection") as GeoJSONSource | undefined;
+    source?.setData(detail ? selectionRing(detail.center, detail.bounds) : emptyCollection);
+  }, [mapStyleReady, selectedDetail.data]);
+
+  useEffect(() => {
+    if (selectedBuilding) return;
+    lastCenteredBuildingRef.current = null;
+    lastScrolledBuildingRef.current = null;
+  }, [selectedBuilding]);
 
   const visibleRegions = useMemo(
     () =>
@@ -571,13 +681,8 @@ export function RiskMap({
     setSelectedBuilding(null);
     mapRef.current?.flyTo({
       center: feature.properties.center,
-      zoom:
-        feature.properties.level === "SIDO"
-          ? 9
-          : feature.properties.level === "SIGUNGU"
-            ? NEIGHBORHOOD_ZOOM + 0.7
-            : BUILDING_ZOOM + 0.5,
-      duration: 600,
+      zoom: mapRef.current.getZoom(),
+      duration: 350,
     });
   };
 
@@ -711,36 +816,27 @@ export function RiskMap({
                 상위 10% {selectedRegionFeature.properties.top10Count.toLocaleString("ko-KR")}개
               </p>
               <div>
-                {selectedRegionFeature.properties.level !== "EUPMYEONDONG" ? (
-                  <AppLink
-                    className="outline-action"
-                    currentPath={currentPath}
-                    runtime={runtime}
-                    to={`/regions/${selectedRegionFeature.properties.regionCode}?returnTo=${returnToMap}`}
-                  >
-                    지역 분석 보기
-                  </AppLink>
-                ) : null}
-                {selectedRegionFeature.properties.level !== "SIDO" ? (
-                  <button
-                    className="primary-map-action"
-                    onClick={() =>
-                      mapRef.current?.flyTo({
-                        center: selectedRegionFeature.properties.center,
-                        zoom:
-                          selectedRegionFeature.properties.level === "SIGUNGU"
-                            ? NEIGHBORHOOD_ZOOM + 0.7
-                            : BUILDING_ZOOM + 0.5,
-                        duration: 600,
-                      })
-                    }
-                    type="button"
-                  >
-                    {selectedRegionFeature.properties.level === "SIGUNGU"
-                      ? "읍·면·동 단계로 확대"
-                      : "건물 단계로 확대"}
-                  </button>
-                ) : null}
+                <AppLink
+                  className="outline-action"
+                  currentPath={currentPath}
+                  runtime={runtime}
+                  to={`/regions/${selectedRegionFeature.properties.regionCode}?returnTo=${returnToMap}`}
+                >
+                  지역 분석 보기
+                </AppLink>
+                <button
+                  className="primary-map-action"
+                  onClick={() =>
+                    mapRef.current?.flyTo({
+                      center: selectedRegionFeature.properties.center,
+                      zoom: nextRegionZoom(selectedRegionFeature.properties.level),
+                      duration: 600,
+                    })
+                  }
+                  type="button"
+                >
+                  {nextRegionLabel(selectedRegionFeature.properties.level)}
+                </button>
               </div>
             </section>
           ) : null}
@@ -779,7 +875,12 @@ export function RiskMap({
             {viewport.zoom < BUILDING_ZOOM ? (
               <ol>
                 {visibleRegions.map((feature, index) => (
-                  <li key={feature.properties.regionCode}>
+                  <li
+                    className={
+                      selectedRegion === feature.properties.regionCode ? "is-selected" : undefined
+                    }
+                    key={feature.properties.regionCode}
+                  >
                     <button onClick={() => chooseRegionFromList(feature)} type="button">
                       <span className="region-rank">{index + 1}</span>
                       <span>
@@ -798,10 +899,27 @@ export function RiskMap({
               <div className="map-list-message">현재 화면의 건물을 불러오는 중입니다.</div>
             ) : buildingList.isError ? (
               <div className="map-list-message error">건물 목록을 불러오지 못했습니다.</div>
-            ) : buildingList.data?.items.length ? (
+            ) : visibleBuildings.length ? (
               <ol>
-                {buildingList.data.items.map((building) => (
-                  <li key={building.buildingId}>
+                {visibleBuildings.map((building) => (
+                  <li
+                    className={selectedBuilding === building.buildingId ? "is-selected" : undefined}
+                    key={building.buildingId}
+                    ref={(element) => {
+                      if (element) {
+                        buildingItemRefs.current.set(building.buildingId, element);
+                        if (
+                          selectedBuilding === building.buildingId &&
+                          lastScrolledBuildingRef.current !== building.buildingId
+                        ) {
+                          lastScrolledBuildingRef.current = building.buildingId;
+                          element.scrollIntoView({ block: "nearest", behavior: "smooth" });
+                        }
+                      } else {
+                        buildingItemRefs.current.delete(building.buildingId);
+                      }
+                    }}
+                  >
                     <button onClick={() => chooseBuildingFromList(building)} type="button">
                       <span className={`risk-marker ${building.risk.riskBand.toLowerCase()}`} />
                       <span>

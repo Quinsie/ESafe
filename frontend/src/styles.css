@@ -1725,9 +1725,15 @@ input:focus-visible {
 }
 
 .map-list li button:hover,
-.map-list li button:focus-visible {
+.map-list li button:focus-visible,
+.map-list li.is-selected button {
   border-color: #5a8fc9;
   background: #f3f8fe;
+}
+
+.map-list li.is-selected button {
+  border-color: #0877e1;
+  box-shadow: 0 0 0 2px rgb(8 119 225 / 16%);
 }
 
 .map-list li button > span:nth-child(2) {
@@ -2094,6 +2100,62 @@ input:focus-visible {
   display: grid;
   gap: 14px;
   grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+.analysis-level-tabs {
+  display: flex;
+  margin-bottom: 10px;
+  padding: 4px;
+  border: 1px solid #cbd7e4;
+  border-radius: 7px;
+  background: #eef3f8;
+  gap: 4px;
+}
+.analysis-level-tabs button {
+  min-height: 38px;
+  flex: 1;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  color: #53677f;
+  background: transparent;
+  cursor: pointer;
+  font-weight: 800;
+}
+.analysis-level-tabs button.is-active {
+  border-color: #8eb0d4;
+  color: #123f70;
+  background: #fff;
+  box-shadow: 0 1px 4px rgb(33 70 108 / 12%);
+}
+.analysis-ranking-basis {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+  color: #2d4f74;
+}
+.analysis-ranking-basis span {
+  color: var(--muted);
+  font-size: 12px;
+}
+.analysis-ranking-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-top: 16px;
+  gap: 14px;
+}
+.analysis-ranking-pagination button {
+  min-width: 72px;
+  min-height: 36px;
+  border: 1px solid #afc0d2;
+  border-radius: 5px;
+  color: #264e79;
+  background: #fff;
+  cursor: pointer;
+}
+.analysis-ranking-pagination button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
 }
 .region-index-grid article {
   display: grid;

@@ -1,5 +1,6 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
 import type { ReactNode } from "react";
+import { useState } from "react";
 import { apiRequest } from "./api";
 import type { ProfileRuntime } from "./profile";
 import { AppLink, currentInternalLocation, navigateInternal, safeReturnTo } from "./router";
@@ -52,25 +53,36 @@ interface RiskValue {
   riskBand: string;
 }
 
-interface RegionListItem {
-  properties: {
-    regionCode: string;
-    fullName: string;
-    buildingCount: number;
-    top1Count: number;
-    top10Count: number;
-    scoreP99: number | null;
-    activeCaseCount: number;
-  };
+type RankingLevel = "SIDO" | "SIGUNGU" | "EUPMYEONDONG" | "BUILDING";
+
+interface RiskRankingItem {
+  entityType: "REGION" | "BUILDING";
+  entityId: string;
+  level: RankingLevel;
+  name: string;
+  fullName: string;
+  regionName: string;
+  rankingPosition: number;
+  buildingCount: number;
+  top1Count: number;
+  top10Count: number;
+  top10Share: number;
+  scoreP99: number | null;
+  finalScore: number | null;
+  topPercentile: number | null;
+  riskBand: string | null;
 }
 
-interface RegionCollection {
-  features: RegionListItem[];
+interface RiskRankingData {
+  level: RankingLevel;
+  rankingBasis: "TOP_10_BUILDING_COUNT" | "GWANGJU_JEONNAM_REGIONAL_RANK";
+  items: RiskRankingItem[];
+  pagination: { page: number; pageSize: number; total: number; totalPages: number };
 }
 
 interface RegionDetailData {
   regionCode: string;
-  level: "SIDO" | "SIGUNGU";
+  level: "SIDO" | "SIGUNGU" | "EUPMYEONDONG";
   name: string;
   fullName: string;
   parent: { regionCode: string; fullName: string } | null;
@@ -182,29 +194,41 @@ function AnalysisError({ retry }: { retry: () => void }) {
 }
 
 function RegionIndex({ currentPath, runtime }: { currentPath: string; runtime: ProfileRuntime }) {
-  const regions = useQuery({
-    queryKey: ["analysis-region-index", runtime.profile],
-    queryFn: async () => {
-      const [gwangju, jeonnam] = await Promise.all([
-        apiRequest<RegionCollection>(runtime, "/map/districts?parentCode=29"),
-        apiRequest<RegionCollection>(runtime, "/map/districts?parentCode=46"),
-      ]);
-      return [...gwangju.data.features, ...jeonnam.data.features].sort(
-        (left, right) =>
-          right.properties.top10Count - left.properties.top10Count ||
-          left.properties.regionCode.localeCompare(right.properties.regionCode),
-      );
-    },
+  const initialLevel = new URLSearchParams(window.location.search).get("level");
+  const [level, setLevel] = useState<RankingLevel>(
+    initialLevel === "SIDO" ||
+      initialLevel === "SIGUNGU" ||
+      initialLevel === "EUPMYEONDONG" ||
+      initialLevel === "BUILDING"
+      ? initialLevel
+      : "SIGUNGU",
+  );
+  const [page, setPage] = useState(1);
+  const rankings = useQuery({
+    queryKey: ["analysis-risk-rankings", runtime.profile, level, page],
+    queryFn: () =>
+      apiRequest<RiskRankingData>(
+        runtime,
+        `/risk-rankings?level=${level}&page=${page}&pageSize=24`,
+      ).then((result) => result.data),
     staleTime: 5 * 60_000,
+    placeholderData: (previous) => previous,
   });
-  if (regions.isLoading) return <AnalysisLoading />;
-  if (regions.isError) return <AnalysisError retry={() => void regions.refetch()} />;
+  if (rankings.isLoading) return <AnalysisLoading />;
+  if (rankings.isError || !rankings.data)
+    return <AnalysisError retry={() => void rankings.refetch()} />;
+  const levelLabels: Record<RankingLevel, string> = {
+    SIDO: "광역시·도",
+    SIGUNGU: "시·군·구",
+    EUPMYEONDONG: "읍·면·동",
+    BUILDING: "건물",
+  };
   return (
     <main className="page analysis-page" id="main-content">
       <div className="page-heading analysis-heading">
         <div>
           <h1>위험 분석</h1>
-          <p>광주·전남 모델 대상 지역의 실제 기준 위험분포에서 분석할 지역을 선택합니다.</p>
+          <p>광주·전남의 광역시·도, 시·군·구, 읍·면·동과 건물 순위를 비교합니다.</p>
         </div>
         <AppLink className="outline-action" currentPath={currentPath} runtime={runtime} to="/map">
           통합 위험지도
@@ -213,45 +237,101 @@ function RegionIndex({ currentPath, runtime }: { currentPath: string; runtime: P
       <aside className="analysis-contract-note">
         v27.1 · 2026-03 · 향후 60일 상대점수입니다. 발생확률이나 실시간 재난점수가 아닙니다.
       </aside>
-      <section className="region-index-grid" aria-label="분석 지역 목록">
-        {regions.data?.map((feature, index) => {
-          const item = feature.properties;
+      <nav className="analysis-level-tabs" aria-label="위험 분석 단위">
+        {(Object.keys(levelLabels) as RankingLevel[]).map((item) => (
+          <button
+            aria-pressed={level === item}
+            className={level === item ? "is-active" : ""}
+            key={item}
+            onClick={() => {
+              setLevel(item);
+              setPage(1);
+              const params = new URLSearchParams(window.location.search);
+              params.set("level", item);
+              window.history.replaceState({}, "", `${window.location.pathname}?${params}`);
+            }}
+            type="button"
+          >
+            {levelLabels[item]}
+          </button>
+        ))}
+      </nav>
+      <div className="analysis-ranking-basis">
+        <strong>{levelLabels[level]} 위험 순위</strong>
+        <span>
+          {rankings.data.rankingBasis === "GWANGJU_JEONNAM_REGIONAL_RANK"
+            ? "광주·전남 모델 순위"
+            : "상위 10% 건물 수 기준"}
+        </span>
+      </div>
+      <section className="region-index-grid" aria-label={`${levelLabels[level]} 위험 순위`}>
+        {rankings.data.items.map((item) => {
+          const isBuilding = item.entityType === "BUILDING";
           return (
-            <article key={item.regionCode}>
-              <div className="region-index-rank">{index + 1}</div>
+            <article key={item.entityId}>
+              <div className="region-index-rank">{item.rankingPosition}</div>
               <div>
                 <h2>{item.fullName}</h2>
                 <p>
-                  건물 {item.buildingCount.toLocaleString("ko-KR")}개 · 상위 10%{" "}
-                  {item.top10Count.toLocaleString("ko-KR")}개
+                  {isBuilding
+                    ? item.regionName
+                    : `건물 ${item.buildingCount.toLocaleString("ko-KR")}개 · 상위 10% ${item.top10Count.toLocaleString("ko-KR")}개`}
                 </p>
               </div>
               <dl>
                 <div>
-                  <dt>상위 1%</dt>
-                  <dd>{item.top1Count.toLocaleString("ko-KR")}개</dd>
+                  <dt>{isBuilding ? "위험구간" : "상위 10% 비중"}</dt>
+                  <dd>
+                    {isBuilding
+                      ? riskNames[item.riskBand ?? "GENERAL"]
+                      : `${item.top10Share.toFixed(1)}%`}
+                  </dd>
                 </div>
                 <div>
-                  <dt>p99 점수</dt>
-                  <dd>{formatScore(item.scoreP99)}</dd>
+                  <dt>{isBuilding ? "상위 백분위" : "p99 점수"}</dt>
+                  <dd>
+                    {isBuilding && item.topPercentile !== null
+                      ? `상위 ${item.topPercentile.toFixed(2)}%`
+                      : formatScore(item.scoreP99)}
+                  </dd>
                 </div>
                 <div>
-                  <dt>활성 Case</dt>
-                  <dd>{item.activeCaseCount.toLocaleString("ko-KR")}건</dd>
+                  <dt>{isBuilding ? "상대점수" : "상위 1%"}</dt>
+                  <dd>
+                    {isBuilding
+                      ? formatScore(item.finalScore)
+                      : `${item.top1Count.toLocaleString("ko-KR")}개`}
+                  </dd>
                 </div>
               </dl>
               <AppLink
                 className="primary-action"
                 currentPath={currentPath}
                 runtime={runtime}
-                to={`/regions/${item.regionCode}`}
+                to={isBuilding ? `/buildings/${item.entityId}` : `/regions/${item.entityId}`}
               >
-                지역 분석 보기
+                {isBuilding ? "건물 분석 보기" : "지역 분석 보기"}
               </AppLink>
             </article>
           );
         })}
       </section>
+      <div className="analysis-ranking-pagination">
+        <button disabled={page <= 1} onClick={() => setPage(page - 1)} type="button">
+          이전
+        </button>
+        <span>
+          {rankings.data.pagination.page} / {rankings.data.pagination.totalPages || 1} · 총{" "}
+          {rankings.data.pagination.total.toLocaleString("ko-KR")}개
+        </span>
+        <button
+          disabled={page >= rankings.data.pagination.totalPages}
+          onClick={() => setPage(page + 1)}
+          type="button"
+        >
+          다음
+        </button>
+      </div>
     </main>
   );
 }
