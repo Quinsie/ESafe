@@ -167,6 +167,29 @@ def test_incident_pdf_html_uses_hwpx_layout_contract() -> None:
     assert payload.review.warning in html
 
 
+def test_multiline_incident_lists_become_independent_numbered_items() -> None:
+    payload = build_standalone_document_payload(
+        variant="BUILDING_ANALYSIS",
+        target={
+            "name": "Test building",
+            "regionName": "Test region",
+            "regionalRank": 1,
+            "topPercentile": 0.01,
+            "finalScore": 0.99,
+            "riskBandLabel": "High",
+        },
+        now=NOW,
+    )
+    payload.response.actions = ["first action\nsecond action", "third action"]
+
+    values = hwpx_values(payload, "REVIEW")
+    html = render_document_html(payload, "REVIEW")
+
+    assert values["response.actions"] == "1. first action\n2. second action\n3. third action"
+    for index, action in enumerate(("first", "second", "third"), 1):
+        assert f'incident-line">{index}. {action} action</p>' in html
+
+
 def test_official_notice_pdf_uses_public_document_layout() -> None:
     payload = build_standalone_document_payload(
         variant="INSPECTION_REQUEST",
