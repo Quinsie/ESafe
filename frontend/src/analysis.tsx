@@ -1,7 +1,7 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import { useState } from "react";
-import { apiRequest } from "./api";
+import { ApiError, apiRequest } from "./api";
 import type { ProfileRuntime } from "./profile";
 import { AppLink, currentInternalLocation, navigateInternal, safeReturnTo } from "./router";
 import { SldAnalysisPanel } from "./sld_analysis";
@@ -41,7 +41,11 @@ function StandaloneDocumentButton({
         {create.isPending ? "초안 만드는 중…" : children}
       </button>
       {create.isError ? (
-        <small role="alert">문서 초안을 만들지 못했습니다. 다시 시도해 주세요.</small>
+        <small role="alert">
+          {create.error instanceof ApiError
+            ? `${create.error.message} (${create.error.code})`
+            : "문서 초안을 만들지 못했습니다. 다시 시도해 주세요."}
+        </small>
       ) : null}
     </div>
   );

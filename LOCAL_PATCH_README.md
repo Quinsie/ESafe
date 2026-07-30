@@ -109,11 +109,17 @@
 ### 5. Docker와 최종 적용 런처
 
 - LIVE/DEMO에 단선결선도 전용 Celery worker를 추가했다.
-- API, 일반 worker, SLD worker, gateway를 저장소 Dockerfile과 Compose 정의로
-  빌드·재시작한다.
+- API, 일반 worker, SLD worker, 문서 worker, gateway를 저장소 Dockerfile과
+  Compose 정의로 빌드·재시작한다.
 - `launch-scenario1-fix.cmd`가 `scripts/apply-scenario1-fix.ps1`을 호출한다.
-- 적용 스크립트는 마이그레이션, 컨테이너 상태, DEMO 시나리오 재생, SLD worker
-  실행 가능 여부를 검증한다.
+- 적용 스크립트는 마이그레이션, 컨테이너 상태, DEMO 시나리오 재생, SLD worker와
+  문서 worker 실행 가능 여부를 검증한다.
+- 실패한 기존 DEMO 문서 산출물은 새 문서 worker 기동 후 자동 재시도하고 완료
+  상태까지 확인한다.
+- 지역 분석 보고서, 건물 분석 보고서, 현장점검 요청을 실제 API로 생성한 뒤 각
+  문서의 HWPX·PDF 생성과 다운로드까지 검증한다.
+- DEMO Case를 기준으로 사고·상황 보고서, 위기상황판단, 공문, 대응 계획서도 실제
+  API로 생성하고 HWPX·PDF 생성·다운로드를 동일하게 검증한다.
 - 배포 마지막 단계에서 DS-01의 기존 단선결선도 분석 시도·완료 이력만 비우고 등록된
   원본 도면은 유지한다.
 
@@ -124,8 +130,11 @@
 1. `20260730_0017_sld_analysis`
 2. `20260730_0018_building_sld_documents`
 3. `20260730_0019_fire_impact_radius`
+4. `20260731_0020_restore_standalone_document_constraints`
 
 upstream의 `20260729_0016_standalone_documents` 이후에 순차 적용된다.
+마지막 복구 마이그레이션은 기존 DB의 독립 문서 유형 제약이 이전 상태로 남아 있는
+경우에도 지역·건물 분석 보고서와 현장점검 요청을 허용하도록 제약을 다시 확정한다.
 
 ## 필요한 환경변수
 
@@ -199,7 +208,9 @@ git diff --check
 - 14열 Excel 다운로드 계약
 - Upstage 전용 단선결선도 OCR과 Crop 좌표 복원
 - 결과 도면의 휠 줌, 드래그 이동, 설비군 박스 선택
-- Docker worker 및 API readiness
+- Docker 일반·SLD·문서 worker 및 API readiness
+- 지역·건물 분석 보고서와 현장점검 요청의 REVIEW HWPX·PDF 생성·다운로드
+- Case 기반 4개 문서 유형의 REVIEW HWPX·PDF 생성·다운로드
 
 ## PR 제안
 

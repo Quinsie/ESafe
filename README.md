@@ -130,6 +130,30 @@ docker compose ps
 
 Compose의 공통 이미지 때문에 위 네 build 대상이 백엔드, 데이터베이스, 문서 런타임과 프런트 gateway 이미지를 모두 만든다. migration 서비스는 기동 의존관계에서 LIVE·DEMO·비용원장을 현재 schema로 올리고 seed를 멱등 적용한다.
 
+Windows Docker Desktop 로컬 통합 환경은 저장소 루트의 최종 런처로 같은 구성을
+재빌드·검증할 수 있다.
+
+```powershell
+& ".\launch-scenario1-fix.cmd"
+```
+
+이 런처는 API, 일반·SLD·문서 worker, gateway를 재빌드하고 LIVE·DEMO migration을
+적용한다. 이어서 기존 실패 문서 산출물을 한 번 재시도하고 다음 일곱 문서 유형의
+REVIEW HWPX·PDF 생성과 인증된 다운로드까지 실제 DEMO API로 확인한다.
+
+- 지역 분석 보고서
+- 건물 분석 보고서
+- 현장점검 요청
+- 사고·상황 보고서
+- 위기상황판단
+- 한국전기안전공사 공문
+- 대응 계획서
+
+독립 문서 유형이 HTTP 500으로 실패했던 기존 DB에는
+`20260731_0020_restore_standalone_document_constraints`가 문서 유형 제약을 다시
+확정한다. 새 설치에도 같은 migration chain을 적용하므로 PC별 수동 SQL은 필요하지
+않다.
+
 내부 접속:
 
 - LIVE: `http://127.0.0.1:8080/live/`
@@ -223,6 +247,11 @@ LLM은 사건 존재·중복·지역·거리·위험순위·상태 전이를 결
 8. `보고서·산출물`에서 같은 승인 버전의 HWPX와 PDF를 내려받는다.
 9. 시스템은 실제 이메일·전자공문을 보내지 않는다. 외부 전달 후 수신처·시각·방법·메모를 수동 발송 기록으로 남긴다.
 
+초안 생성 오류가 발생하면 화면에 API 오류 메시지와 오류 코드를 함께 표시한다.
+문서 생성은 API의 초안·버전 등록과 `live-documents` 또는 `demo-documents` Celery
+queue의 HWPX·PDF 렌더링으로 분리되므로, 초안 생성 HTTP 오류와 산출물 실패를 구분해
+확인한다.
+
 ### 6. DEMO 시나리오
 
 1. DEMO 왼쪽 사이드바의 `WORKFLOW` 아래 `체험 시나리오`에서 여섯 시나리오의 단계와 기대 결과를 확인한다.
@@ -252,7 +281,7 @@ LLM은 사건 존재·중복·지역·거리·위험순위·상태 전이를 결
 ./scripts/test-restore.sh
 ```
 
-`smoke.sh`는 LIVE·DEMO 로그인, 217,238개 기준자산, 홈, 지도, 지역·건물, 유사사례, 인증·CSRF, schema와 프로필 격리를 검사한다. 릴리스 증적은 `artifacts/test-reports/<release-id>`에 보관하며 이미지에 포함하지 않는다.
+`smoke.sh`는 LIVE·DEMO 로그인, 217,238개 기준자산, 홈, 지도, 지역·건물, 유사사례, 인증·CSRF, schema와 프로필 격리를 검사한다. Windows 최종 런처는 여기에 문서 worker readiness, 기존 실패 산출물 재시도, 일곱 문서 유형의 HWPX·PDF 생성·다운로드 검사를 추가한다. 릴리스 증적은 `artifacts/test-reports/<release-id>`에 보관하며 이미지에 포함하지 않는다.
 
 ## 운영과 장애 대응
 
@@ -268,6 +297,10 @@ docker compose restart api-live api-demo worker-live worker-demo scheduler-live 
 - NFDS 호출만 즉시 중단하려면 `.env`의 `NFDS_ENABLED=false`로 바꾸고 `scheduler-live worker-live api-live`를 재시작한다. 기존 신호와 Case는 보존된다.
 - AI 비용 하드 중단이나 Upstage 장애가 발생해도 기존 근거·캐시·초안 조회와 결정적 Case 처리는 유지된다.
 - 비동기 작업이 멈추면 Redis, worker, scheduler 순으로 상태와 로그를 확인한다. 같은 입력은 멱등키와 캐시로 중복 실행을 억제한다.
+- 지역·건물 분석 보고서와 현장점검 요청이 모두 초안 생성 단계에서 HTTP 500이면
+  document worker보다 먼저 DB migration head와 `ck_document_draft_variant`,
+  `ck_document_draft_family_variant` 제약을 확인한다. 로컬 통합 환경은 최종 런처를
+  다시 실행해 복구 migration을 적용한다.
 - 외부 주소 장애 시 앱을 재생성하지 말고 먼저 `./scripts/verify-tunnel.sh`와 tunnel 로그를 확인한다.
 
 시작·중지·업데이트:
@@ -291,6 +324,9 @@ docker compose up -d --no-build
 - 로그인이 반복 실패하면 입력값을 확인하고 제한시간이 지난 뒤 다시 시도한다. 비밀번호 노출이 의심되면 `rotate-public-password.sh`를 실행한다.
 - `소스 지연` 또는 `수집 장애`면 `worker-live`, `scheduler-live` 로그와 제공처 응답을 확인한다. LIVE에 fixture를 넣어 숨기지 않는다.
 - 문서 산출물 한 형식만 실패하면 화면의 재시도를 사용하고 document worker 로그를 확인한다. 승인본을 직접 덮어쓰지 않는다.
+- 문서 초안 자체가 생성되지 않으면 API 로그와 migration head를 먼저 확인한다. HWPX와
+  PDF가 `DOCUMENT_TEMPLATE_VERSION_MISMATCH`로 함께 실패하면 API와 document worker를
+  같은 commit 이미지로 재빌드·재생성한다.
 - 공개 주소만 열리지 않으면 앱을 재배포하지 말고 tunnel health와 `public-url.txt`를 먼저 확인한다. 주소가 바뀌면 새 값만 안내한다.
 - DB·Redis가 비정상이면 쓰기를 반복하지 말고 healthcheck, 최근 백업 checksum, 복원시험 결과 순으로 확인한다.
 
